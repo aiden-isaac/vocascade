@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Voice Satellite</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: monospace; background: #0a0a0a; color: #0f0; min-height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; }
+.container { text-align: center; }
+h1 { font-size: 1.5rem; margin-bottom: 1rem; }
+#status { font-size: 1rem; margin: 1rem 0; padding: 0.5rem; border: 1px solid #0f0; border-radius: 4px; min-height: 2em; }
+button { padding: 0.75rem 2rem; font-size: 1rem; font-family: monospace; cursor: pointer; border: 1px solid #0f0; background: transparent; color: #0f0; border-radius: 4px; transition: all 0.2s; }
+button:hover { background: #0f0; color: #0a0a0a; }
+button:disabled { opacity: 0.3; cursor: not-allowed; }
+#log { margin-top: 1rem; font-size: 0.8rem; color: #0a0; max-height: 200px; overflow-y: auto; text-align: left; width: 400px; margin-left: auto; margin-right: auto; }
+.log-entry { padding: 2px 0; border-bottom: 1px solid #111; }
+</style>
+<script src="https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/ort.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@ricky0123/vad-web@0.0.18/dist/bundle.min.js"></script>
+</head>
+<body>
+<div class="container">
+<h1>&#x1F3A4; Voice Satellite</h1>
+<div id="status">Disconnected</div>
+<button id="initBtn" onclick="initSystem()">Start System</button>
+<div id="log"></div>
+</div>
+<script>
+// --- State ---
+let ws = null;
+let myVad = null;
+let isPlayingTTS = false;
+let ignoreSpeech = false;
+let currentAudio = null;
+
+const statusEl = document.getElementById("status");
+const initBtn = document.getElementById("initBtn");
+const logEl = document.getElementById("log");
+
+function log(msg) {
+    const div = document.createElement("div");
+    div.className = "log-entry";
+    div.textContent = new Date().toLocaleTimeString() + " " + msg;
+    logEl.appendChild(div);
+    logEl.scrollTop = logEl.scrollHeight;
+}
+
+function setStatus(msg) {
+    statusEl.textContent = msg;
+}
+
+// Convert Float32Array from VAD (16kHz) to 16-bit PCM
+function floatTo16BitPCM(float32Array) {
+    const buffer = new ArrayBuffer(float32Array.length * 2);
+    const view = new DataView(buffer);
+    let offset = 0;
+    for (let i = 0; i < float32Array.length; i++, offset += 2) {
+        let s = Math.max(-1, Math.min(1, float32Array[i]));
+        view.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
+    }
+    return buffer;
+}
+
+function connectWS() {
+    const proto = location.protocol === "https:" ? "wss:" : "ws:";
+    ws = new WebSocket(proto + "//" + location.host + "/ws");
+
+    ws.binaryType = "arraybuffer";
+
+    ws.onopen = () => {
+        setStatus("Connected to WS");
+        log("WebSocket connected");
+    };
+
+    ws.onclose = () => {
+        setStatus("Disconnected");
+        log("WebSocket closed");
+        setTimeout(connectWS, 3000);
+    };
+
+    ws.onerror = (err) => {
+        log("WebSocket error");
+    };
+
+    ws.onmessage = (event) => {
+        if (typeof event.data === "string") {
+            const msg = JSON.parse(event.data);
+            if (msg.type === "audio") {
+                playAudioChunk(msg.data);
+            }
+        } else if (event.data instanceof ArrayBuffer) {
+            const b64 = btoa(String.fromCharCode(...new Uint8Array(event.data)));
+            playAudioChunk(b64);
+        }
+    };
+}
+
+function playAudioChunk(base64Data) {
+    isPlayingTTS = true;
+
+    const audioDataUrl = `data:audio/wav;base64,${base64Data}`;
+    const audio = new Audio(audioDataUrl);
+    currentAudio = audio;
+
+    audio.play().then(() => {
+        log("Playing TTS audio...");
+    }).catch(err => {
+        log("Play error (autoplay blocked?): " + err);
+        isPlayingTTS = false;
+    });
+
+    audio.addEventListener('ended', () => {
+        currentAudio = null;
+        isPlayingTTS = false;
+        log("TTS playback complete.");
+    });
+
+    audio.addEventListener('error', (e) => {
+        log("Audio error: " + e);
+        currentAudio = null;
+        isPlayingTTS = false;
+    });
+}
+
+function interrupt() {
+    if (currentAudio) {
+        currentAudio.pause();
+        currentAudio.src = '';
+        currentAudio.load();
+        currentAudio = null;
+    }
+    isPlayingTTS = false;
+    if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: "interrupt" }));
+    }
+    log("Interrupted");
+}
+
+async function initSystem() {
+    initBtn.style.display = "none";
+    setStatus("Initializing VAD...");
+    connectWS();
+    
+    try {
+        myVad = await vad.MicVAD.new({
+            workletURL: "https://cdn.jsdelivr.net/npm/@ricky0123/vad-web@0.0.18/dist/vad.worklet.bundle.min.js",
+            modelURL: "https://cdn.jsdelivr.net/npm/@ricky0123/vad-web@0.0.18/dist/silero_vad.onnx",
+            onSpeechStart: () => {
+                if (isPlayingTTS) {
+                    ignoreSpeech = true;
+                    log("Speech detected but TTS is playing, ignoring (half-duplex).");
+                } else {
+                    ignoreSpeech = false;
+                    log("Speech started");
+                }
+            },
+            onSpeechEnd: (audio) => {
+                if (ignoreSpeech) {
+                    ignoreSpeech = false;
+                    return;
+                }
+                log("Speech ended. Sending audio...");
+                const pcmBuffer = floatTo16BitPCM(audio);
+                if (ws && ws.readyState === WebSocket.OPEN) {
+                    ws.send(pcmBuffer);
+                } else {
+                    log("WS not ready.");
+                }
+            }
+        });
+        myVad.start();
+        setStatus("Listening (VAD Active)");
+        log("VAD started successfully.");
+    } catch (e) {
+        setStatus("VAD Error");
+        log("VAD Error: " + e.message);
+    }
+}
+</script>
+</body>
+</html>
