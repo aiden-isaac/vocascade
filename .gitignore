@@ -1,0 +1,21 @@
+# Virtual environments
+venv/
+genie_model_reference/.venv/
+__pycache__/
+**/__pycache__/
+*.pyc
+
+# Secrets
+.env
+*.log
+
+# Large binary model files (keep only the export dirs, not the raw weights)
+genie_model_reference/genie-fauna/export/*.bin
+genie_model_reference/genie-ordis/export/*.bin
+genie_model_reference/GenieData/**/*.bin
+genie_model_reference/GenieData/**/*.json
+genie_model_reference/GenieData/**/averaged_perceptron_tagger_eng.*
+
+# OS / editor
+.DS_Store
+Thumbs.db

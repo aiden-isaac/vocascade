@@ -5,178 +5,313 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Voice Satellite</title>
 <style>
-* { margin: 0; padding: 0; box-sizing: border-box; }
-body { font-family: monospace; background: #0a0a0a; color: #0f0; min-height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; }
-.container { text-align: center; }
-h1 { font-size: 1.5rem; margin-bottom: 1rem; }
-#status { font-size: 1rem; margin: 1rem 0; padding: 0.5rem; border: 1px solid #0f0; border-radius: 4px; min-height: 2em; }
-button { padding: 0.75rem 2rem; font-size: 1rem; font-family: monospace; cursor: pointer; border: 1px solid #0f0; background: transparent; color: #0f0; border-radius: 4px; transition: all 0.2s; }
-button:hover { background: #0f0; color: #0a0a0a; }
-button:disabled { opacity: 0.3; cursor: not-allowed; }
-#log { margin-top: 1rem; font-size: 0.8rem; color: #0a0; max-height: 200px; overflow-y: auto; text-align: left; width: 400px; margin-left: auto; margin-right: auto; }
-.log-entry { padding: 2px 0; border-bottom: 1px solid #111; }
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+    min-height: 100vh;
+    display: grid;
+    place-items: center;
+    background: #08110d;
+    color: #d6ffe5;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+.panel {
+    width: min(92vw, 560px);
+    padding: 28px;
+    border: 1px solid #1f6f43;
+    border-radius: 18px;
+    background: linear-gradient(180deg, #0d1c15, #07100c);
+    box-shadow: 0 24px 80px rgba(0, 0, 0, 0.45);
+}
+h1 { font-size: 1.4rem; letter-spacing: 0.06em; text-transform: uppercase; }
+.subhead { margin-top: 8px; color: #93bda2; line-height: 1.5; }
+#status {
+    margin: 24px 0 16px;
+    padding: 14px;
+    min-height: 48px;
+    border: 1px solid #244f37;
+    border-radius: 12px;
+    background: #07140e;
+    color: #baffcc;
+}
+button {
+    width: 100%;
+    padding: 14px 18px;
+    border: 0;
+    border-radius: 999px;
+    background: #4cff8f;
+    color: #061008;
+    cursor: pointer;
+    font: inherit;
+    font-weight: 700;
+}
+button:disabled { cursor: wait; opacity: 0.55; }
+#log {
+    margin-top: 18px;
+    max-height: 220px;
+    overflow-y: auto;
+    color: #9bd3ad;
+    font-size: 0.86rem;
+    line-height: 1.5;
+}
+.log-entry { padding: 6px 0; border-bottom: 1px solid rgba(76, 255, 143, 0.1); }
 </style>
-<script src="https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/ort.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@ricky0123/vad-web@0.0.18/dist/bundle.min.js"></script>
+<script src="/static/libs/ort.js?v=ort-1.14.0"></script>
+<script src="/static/libs/vad.bundle.min.js?v=vad-0.0.24"></script>
 </head>
 <body>
-<div class="container">
-<h1>&#x1F3A4; Voice Satellite</h1>
-<div id="status">Disconnected</div>
-<button id="initBtn" onclick="initSystem()">Start System</button>
-<div id="log"></div>
-</div>
+<main class="panel">
+    <h1>Voice Satellite</h1>
+    <p class="subhead">Local VAD sends speech to the Qwen voice session. OpenClaw is used only when Qwen requests it as a tool.</p>
+    <div id="status">Idle</div>
+    <button id="startBtn" type="button">Start Listening</button>
+    <div id="log" aria-live="polite"></div>
+</main>
+
 <script>
-// --- State ---
+const ASSET_PATH = "/static/libs/";
+
 let ws = null;
-let myVad = null;
-let isPlayingTTS = false;
-let ignoreSpeech = false;
-let currentAudio = null;
+let micVad = null;
+let audioContext = null;
+let nextAudioStartTime = 0;
+let activeAudioSources = new Set();
 
 const statusEl = document.getElementById("status");
-const initBtn = document.getElementById("initBtn");
+const startBtn = document.getElementById("startBtn");
 const logEl = document.getElementById("log");
 
-function log(msg) {
-    const div = document.createElement("div");
-    div.className = "log-entry";
-    div.textContent = new Date().toLocaleTimeString() + " " + msg;
-    logEl.appendChild(div);
+function setStatus(message) {
+    statusEl.textContent = message;
+}
+
+function log(message) {
+    const entry = document.createElement("div");
+    entry.className = "log-entry";
+    entry.textContent = `${new Date().toLocaleTimeString()} ${message}`;
+    logEl.appendChild(entry);
     logEl.scrollTop = logEl.scrollHeight;
 }
 
-function setStatus(msg) {
-    statusEl.textContent = msg;
-}
-
-// Convert Float32Array from VAD (16kHz) to 16-bit PCM
-function floatTo16BitPCM(float32Array) {
-    const buffer = new ArrayBuffer(float32Array.length * 2);
+function floatTo16BitPCM(audio) {
+    const buffer = new ArrayBuffer(audio.length * 2);
     const view = new DataView(buffer);
-    let offset = 0;
-    for (let i = 0; i < float32Array.length; i++, offset += 2) {
-        let s = Math.max(-1, Math.min(1, float32Array[i]));
-        view.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
+
+    for (let index = 0; index < audio.length; index += 1) {
+        const sample = Math.max(-1, Math.min(1, audio[index]));
+        view.setInt16(
+            index * 2,
+            sample < 0 ? sample * 0x8000 : sample * 0x7fff,
+            true,
+        );
     }
+
     return buffer;
 }
 
-function connectWS() {
-    const proto = location.protocol === "https:" ? "wss:" : "ws:";
-    ws = new WebSocket(proto + "//" + location.host + "/ws");
+function ensureAudioContext() {
+    if (!audioContext) {
+        audioContext = new AudioContext({ sampleRate: 32000 });
+        nextAudioStartTime = audioContext.currentTime;
+    }
+    if (audioContext.state === "suspended") {
+        audioContext.resume();
+    }
+}
 
-    ws.binaryType = "arraybuffer";
+function base64ToBytes(base64) {
+    const binary = atob(base64);
+    const bytes = new Uint8Array(binary.length);
+    for (let index = 0; index < binary.length; index += 1) {
+        bytes[index] = binary.charCodeAt(index);
+    }
+    return bytes;
+}
 
-    ws.onopen = () => {
-        setStatus("Connected to WS");
-        log("WebSocket connected");
-    };
+function enqueuePcmAudio(base64Audio, sampleRate) {
+    ensureAudioContext();
 
-    ws.onclose = () => {
-        setStatus("Disconnected");
-        log("WebSocket closed");
-        setTimeout(connectWS, 3000);
-    };
+    const bytes = base64ToBytes(base64Audio);
+    const view = new DataView(bytes.buffer);
+    const frameCount = Math.floor(bytes.byteLength / 2);
+    const samples = new Float32Array(frameCount);
 
-    ws.onerror = (err) => {
-        log("WebSocket error");
-    };
+    for (let index = 0; index < frameCount; index += 1) {
+        samples[index] = view.getInt16(index * 2, true) / 32768;
+    }
 
-    ws.onmessage = (event) => {
-        if (typeof event.data === "string") {
-            const msg = JSON.parse(event.data);
-            if (msg.type === "audio") {
-                playAudioChunk(msg.data);
-            }
-        } else if (event.data instanceof ArrayBuffer) {
-            const b64 = btoa(String.fromCharCode(...new Uint8Array(event.data)));
-            playAudioChunk(b64);
+    const buffer = audioContext.createBuffer(1, frameCount, sampleRate);
+    buffer.copyToChannel(samples, 0);
+
+    const source = audioContext.createBufferSource();
+    source.buffer = buffer;
+    source.connect(audioContext.destination);
+    source.addEventListener("ended", () => activeAudioSources.delete(source));
+
+    nextAudioStartTime = Math.max(nextAudioStartTime, audioContext.currentTime + 0.02);
+    source.start(nextAudioStartTime);
+    activeAudioSources.add(source);
+    nextAudioStartTime += buffer.duration;
+}
+
+function stopQueuedAudio() {
+    for (const source of activeAudioSources) {
+        try {
+            source.stop();
+        } catch (_) {
+            // Source may already have ended.
         }
-    };
-}
-
-function playAudioChunk(base64Data) {
-    isPlayingTTS = true;
-
-    const audioDataUrl = `data:audio/wav;base64,${base64Data}`;
-    const audio = new Audio(audioDataUrl);
-    currentAudio = audio;
-
-    audio.play().then(() => {
-        log("Playing TTS audio...");
-    }).catch(err => {
-        log("Play error (autoplay blocked?): " + err);
-        isPlayingTTS = false;
-    });
-
-    audio.addEventListener('ended', () => {
-        currentAudio = null;
-        isPlayingTTS = false;
-        log("TTS playback complete.");
-    });
-
-    audio.addEventListener('error', (e) => {
-        log("Audio error: " + e);
-        currentAudio = null;
-        isPlayingTTS = false;
-    });
-}
-
-function interrupt() {
-    if (currentAudio) {
-        currentAudio.pause();
-        currentAudio.src = '';
-        currentAudio.load();
-        currentAudio = null;
     }
-    isPlayingTTS = false;
-    if (ws && ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ type: "interrupt" }));
+    activeAudioSources.clear();
+    if (audioContext) {
+        nextAudioStartTime = audioContext.currentTime;
     }
-    log("Interrupted");
 }
 
-async function initSystem() {
-    initBtn.style.display = "none";
-    setStatus("Initializing VAD...");
-    connectWS();
-    
-    try {
-        myVad = await vad.MicVAD.new({
-            workletURL: "https://cdn.jsdelivr.net/npm/@ricky0123/vad-web@0.0.18/dist/vad.worklet.bundle.min.js",
-            modelURL: "https://cdn.jsdelivr.net/npm/@ricky0123/vad-web@0.0.18/dist/silero_vad.onnx",
-            onSpeechStart: () => {
-                if (isPlayingTTS) {
-                    ignoreSpeech = true;
-                    log("Speech detected but TTS is playing, ignoring (half-duplex).");
+function connectWebSocket() {
+    if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
+        return Promise.resolve();
+    }
+
+    return new Promise((resolve, reject) => {
+        const protocol = location.protocol === "https:" ? "wss:" : "ws:";
+        ws = new WebSocket(`${protocol}//${location.host}/ws`);
+        ws.binaryType = "arraybuffer";
+
+        ws.onopen = () => {
+            log("WebSocket connected");
+            resolve();
+        };
+
+        ws.onmessage = (event) => {
+            if (typeof event.data !== "string") return;
+
+            const message = JSON.parse(event.data);
+            if (message.type === "status") {
+                const details = message.audio_bytes ? ` (${message.audio_bytes} bytes)` : "";
+                setStatus(`${message.state}${details}`);
+            }
+            if (message.type === "transcript") {
+                log(`Stub transcript: ${message.text}`);
+            }
+            if (message.type === "decision") {
+                const reason = message.reason ? ` (${message.reason})` : "";
+                if (message.action === "openclaw") {
+                    log(`Qwen tool call: OpenClaw ${message.agent_id}/${message.session_key}${reason}`);
                 } else {
-                    ignoreSpeech = false;
-                    log("Speech started");
+                    log(`Qwen answered directly${reason}`);
                 }
+            }
+            if (message.type === "assistant_response") {
+                log(`Qwen: ${message.text}`);
+            }
+            if (message.type === "assistant_delta") {
+                log(`Qwen delta: ${message.text}`);
+            }
+            if (message.type === "tool_delta") {
+                log(`OpenClaw tool delta: ${message.text}`);
+            }
+            if (message.type === "tool_call_status") {
+                log(`Tool ${message.status}: ${message.name || message.tool_name}`);
+            }
+            if (message.type === "audio") {
+                enqueuePcmAudio(message.data, message.sample_rate);
+            }
+            if (message.type === "audio_end") {
+                log("TTS stream complete");
+            }
+            if (message.type === "error") {
+                setStatus("Voice pipeline error");
+                log(message.message);
+            }
+        };
+
+        ws.onclose = () => {
+            log("WebSocket disconnected");
+            setStatus("Disconnected");
+        };
+
+        ws.onerror = () => {
+            reject(new Error("WebSocket connection failed"));
+        };
+    });
+}
+
+async function startListening() {
+    startBtn.disabled = true;
+    setStatus("Initializing local VAD...");
+
+    try {
+        ensureAudioContext();
+        
+        // Remove manual wasmPaths to let ort.js infer from its own script tag
+        ort.env.wasm.numThreads = 1;
+        // The VAD bundle (onnxruntime-web underneath) tries to load a threaded .mjs file
+        // which doesn't exist. Setting numThreads=1 normally disables it in older versions
+        // but for v1.17+ we may also need to explicitly configure simd paths or extension.
+        // Also ort.js v1.17 might strictly need orth-wasm-simd.wasm if threads=1
+        // Let's bypass dynamic MJS imports and enforce the raw wasm extension
+        ort.env.wasm.simd = true;
+        ort.env.wasm.proxy = false; // Prevents the use of Web Workers entirely
+        
+        await connectWebSocket();
+
+        micVad = await vad.MicVAD.new({
+            model: "v5",
+            baseAssetPath: ASSET_PATH,
+            onnxWASMBasePath: ASSET_PATH,
+            preSpeechPadFrames: 20,
+            positiveSpeechThreshold: 0.4,
+            negativeSpeechThreshold: 0.35,
+            redemptionFrames: 10,
+            minSpeechFrames: 3,
+            onFrameProcessed: (probs) => {
+                console.log("[DIAG] VAD frame probs:", JSON.stringify(probs));
+            },
+            onSpeechStart: () => {
+                stopQueuedAudio();
+                if (ws && ws.readyState === WebSocket.OPEN) {
+                    ws.send(JSON.stringify({ type: "interrupt" }));
+                }
+                setStatus("Speech detected");
+                log("Speech started");
             },
             onSpeechEnd: (audio) => {
-                if (ignoreSpeech) {
-                    ignoreSpeech = false;
-                    return;
-                }
-                log("Speech ended. Sending audio...");
+                // TODO: wakeword integration point before accepting this speech segment.
                 const pcmBuffer = floatTo16BitPCM(audio);
+                log(`Speech ended, sending ${pcmBuffer.byteLength} PCM bytes`);
+
                 if (ws && ws.readyState === WebSocket.OPEN) {
                     ws.send(pcmBuffer);
+                    setStatus("Audio sent to stub STT");
                 } else {
-                    log("WS not ready.");
+                    setStatus("WebSocket unavailable");
+                    log("Audio was not sent because the WebSocket is closed");
                 }
-            }
+            },
+            onVADMisfire: () => {
+                setStatus("Listening");
+                log("VAD misfire ignored");
+            },
         });
-        myVad.start();
-        setStatus("Listening (VAD Active)");
-        log("VAD started successfully.");
-    } catch (e) {
-        setStatus("VAD Error");
-        log("VAD Error: " + e.message);
+
+        micVad.start();
+        
+        if (micVad.audioContext && micVad.audioContext.state === "suspended") {
+            await micVad.audioContext.resume();
+            log("Resumed VAD AudioContext");
+        }
+        
+        startBtn.textContent = "Listening";
+        setStatus("Listening");
+        log("VAD started with local assets");
+    } catch (error) {
+        startBtn.disabled = false;
+        setStatus("Startup failed");
+        log(error.message || String(error));
     }
 }
+
+startBtn.addEventListener("click", startListening);
 </script>
 </body>
 </html>

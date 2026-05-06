@@ -1,261 +1,407 @@
+import asyncio
 import json
 import logging
-import asyncio
-import aiohttp
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from fastapi.staticfiles import StaticFiles
-from fastapi.responses import HTMLResponse
-import numpy as np
-import openai
-from dotenv import load_dotenv
 import os
-import base64
-import tempfile
-from faster_whisper import WhisperModel
+from contextlib import asynccontextmanager
+from pathlib import Path
+from typing import AsyncIterator
 
-# Configure logging
+import numpy as np
+from dotenv import load_dotenv
+from faster_whisper import WhisperModel
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi.responses import HTMLResponse
+from fastapi.staticfiles import StaticFiles
+
+from voice_satellite.genie_tts import (
+    GENIE_SAMPLE_RATE,
+    GenieTTSClient,
+    encode_pcm_chunk,
+    iter_complete_sentences,
+)
+from voice_satellite.llm_router import CoordinatorDecision, LLMRouter, RouterDecision
+from voice_satellite.openclaw_gateway import OpenClawGatewayClient
+
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-
 load_dotenv()
 
-app = FastAPI()
+ROOT = Path(__file__).resolve().parent
+STATIC_DIR = ROOT / "static"
+WHISPER_MODEL_NAME = os.getenv("WHISPER_MODEL", "tiny.en")
+WHISPER_LANGUAGE = os.getenv("WHISPER_LANGUAGE", "en")
+_whisper_model: WhisperModel | None = None
+_whisper_lock = asyncio.Lock()
 
-# Mount static files
-app.mount("/static", StaticFiles(directory="static"), name="static")
+@asynccontextmanager
+async def lifespan(app_: FastAPI):
+    if os.getenv("VOICE_SATELLITE_SKIP_GENIE_INIT") == "1":
+        logger.info("Skipping Genie TTS startup initialization")
+    else:
+        app_.state.tts_client = create_tts_client()
+        try:
+            await app_.state.tts_client.initialize()
+        except Exception as error:
+            logger.error("Genie TTS startup initialization failed: %s", error)
+
+    try:
+        yield
+    finally:
+        tts_client = getattr(app_.state, "tts_client", None)
+        if tts_client is not None:
+            await tts_client.stop()
+
+
+app = FastAPI(lifespan=lifespan)
+app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+
 
 @app.get("/")
-async def get():
-    with open("static/index.html", "r") as f:
-        return HTMLResponse(f.read())
+async def index() -> HTMLResponse:
+    return HTMLResponse((STATIC_DIR / "index.html").read_text(encoding="utf-8"))
 
-LITELLM_API_KEY = os.getenv("LITELLM_API_KEY", "dummy_key")
-LITELLM_URL = "https://llm.frizzt.com/v1"
-LLM_MODEL = "qwen-moe-coder-fast"
 
-# Async OpenAI client
-client = openai.AsyncOpenAI(
-    api_key=LITELLM_API_KEY,
-    base_url=LITELLM_URL
-)
+async def get_whisper_model() -> WhisperModel:
+    global _whisper_model
 
-# Load Faster Whisper Model
-# Using tiny.en or base.en for speed
-logger.info("Loading Whisper model...")
-# Ensure compute_type is float32 to avoid issues on systems without float16 support (like CPUs without it)
-whisper_model = WhisperModel("tiny.en", device="cpu", compute_type="float32")
-logger.info("Whisper model loaded.")
+    async with _whisper_lock:
+        if _whisper_model is None:
+            logger.info("Loading faster-whisper model '%s' on CPU", WHISPER_MODEL_NAME)
+            _whisper_model = await asyncio.to_thread(
+                WhisperModel,
+                WHISPER_MODEL_NAME,
+                device="cpu",
+                compute_type="int8",
+            )
+            logger.info("Loaded faster-whisper model '%s'", WHISPER_MODEL_NAME)
+    return _whisper_model
+
 
 async def transcribe_audio(audio_data: bytes) -> str:
-    """Transcribes PCM audio using faster-whisper."""
-    logger.info(f"Received audio length: {len(audio_data)}")
-    
-    # Assume JS sends 16kHz 16-bit PCM (Int16)
-    audio_np = np.frombuffer(audio_data, dtype=np.int16).astype(np.float32) / 32768.0
-    
-    # Run transcription in a thread to avoid blocking the event loop
-    def run_whisper():
-        segments, info = whisper_model.transcribe(audio_np, beam_size=1)
-        text = " ".join([segment.text for segment in segments])
-        return text
-    
-    transcribed_text = await asyncio.to_thread(run_whisper)
-    return transcribed_text.strip()
+    logger.info("Received %s bytes of PCM audio for STT", len(audio_data))
+    if len(audio_data) < 2:
+        return ""
 
-async def genie_tts_complete(text: str) -> bytes:
-    """Calls the local genie-tts GPT-SoVITS API and returns the full WAV file as bytes."""
-    logger.info(f"Generating TTS for: {text}")
-    url = "http://127.0.0.1:9880/"
-    params = {"text": text, "text_language": "en"}
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url, params=params) as response:
-                if response.status != 200:
-                    logger.error(f"TTS API error: {response.status} - {await response.text()}")
-                    return b''
-                wav_bytes = await response.read()
-                if not wav_bytes:
-                    logger.error("TTS API returned empty bytes.")
-                    return b''
-                logger.info(f"TTS API returned {len(wav_bytes)} bytes for text: {text[:20]}...")
-                return wav_bytes
-    except Exception as e:
-        logger.error(f"Failed to connect to TTS API: {e}")
-        return b''
+    audio = np.frombuffer(audio_data, dtype="<i2").astype(np.float32) / 32768.0
+    model = await get_whisper_model()
 
-class ConnectionManager:
-    def __init__(self):
-        self.active_connections: list[WebSocket] = []
-        # State per connection
-        self.connection_states = {}
-
-    async def connect(self, websocket: WebSocket):
-        await websocket.accept()
-        self.active_connections.append(websocket)
-        self.connection_states[websocket] = {
-            "interrupt_event": asyncio.Event(),
-            "llm_task": None,
-            "tts_tasks": set(),
-            "is_speaking": False
-        }
-
-    def disconnect(self, websocket: WebSocket):
-        self.active_connections.remove(websocket)
-        state = self.connection_states.pop(websocket, None)
-        if state:
-            self._cancel_tasks(state)
-
-    def _cancel_tasks(self, state):
-        state["interrupt_event"].set()
-        if state["llm_task"]:
-            state["llm_task"].cancel()
-        for task in state["tts_tasks"]:
-            task.cancel()
-        state["tts_tasks"].clear()
-        state["is_speaking"] = False
-
-    async def process_audio(self, websocket: WebSocket, audio_data: bytes):
-        state = self.connection_states[websocket]
-        
-        # 1. Run STT
-        try:
-            transcribed_text = await transcribe_audio(audio_data)
-            logger.info(f"Transcribed: {transcribed_text}")
-            if not transcribed_text.strip():
-                return
-        except Exception as e:
-            logger.error(f"STT Error: {e}")
-            return
-
-        # 2. Reset state for new interaction
-        self._cancel_tasks(state)
-        state["interrupt_event"].clear()
-        state["is_speaking"] = True
-
-        # 3. Start LLM Generation
-        state["llm_task"] = asyncio.create_task(
-            self._run_llm_and_tts(websocket, transcribed_text, state)
+    def run_whisper() -> str:
+        segments, _info = model.transcribe(
+            audio,
+            beam_size=1,
+            language=WHISPER_LANGUAGE,
+            vad_filter=False,
+            condition_on_previous_text=False,
+            initial_prompt="A user asks a question or gives a command.",
         )
+        return " ".join(segment.text.strip() for segment in segments).strip()
 
-    async def _run_llm_and_tts(self, websocket: WebSocket, prompt: str, state: dict):
-        try:
-            response = await client.chat.completions.create(
-                model=LLM_MODEL,
-                messages=[
-                    {"role": "system", "content": "You are a concise voice assistant."},
-                    {"role": "user", "content": prompt}
-                ],
-                stream=True
-            )
+    return await asyncio.to_thread(run_whisper)
 
-            current_sentence = ""
-            # Simple sentence splitting logic
-            sentence_ends = {'.', '!', '?'}
 
-            async for chunk in response:
-                if state["interrupt_event"].is_set():
-                    logger.info("LLM Generation interrupted.")
-                    break
+def create_router() -> LLMRouter:
+    return LLMRouter()
 
-                if chunk.choices and chunk.choices[0].delta.content:
-                    content = chunk.choices[0].delta.content
-                    current_sentence += content
-                    
-                    if any(char in sentence_ends for char in content):
-                        sentence = current_sentence.strip()
-                        if sentence:
-                            # Start a TTS task for this sentence
-                            tts_task = asyncio.create_task(self._run_tts(websocket, sentence, state))
-                            state["tts_tasks"].add(tts_task)
-                            # Cleanup callback
-                            tts_task.add_done_callback(lambda t: state["tts_tasks"].discard(t))
-                            current_sentence = ""
 
-            # Handle remainder
-            sentence = current_sentence.strip()
-            if sentence and not state["interrupt_event"].is_set():
-                tts_task = asyncio.create_task(self._run_tts(websocket, sentence, state))
-                state["tts_tasks"].add(tts_task)
-                tts_task.add_done_callback(lambda t: state["tts_tasks"].discard(t))
+def create_gateway() -> OpenClawGatewayClient:
+    return OpenClawGatewayClient()
 
-        except asyncio.CancelledError:
-            logger.info("LLM task cancelled.")
-        except Exception as e:
-            logger.error(f"LLM Error: {e}")
-        finally:
-            self._check_speaking_state(state)
 
-    async def _run_tts(self, websocket: WebSocket, text: str, state: dict):
-        try:
-            wav_bytes = await genie_tts_complete(text)
-            if not wav_bytes:
-                logger.error(f"_run_tts: No wav_bytes returned for {text[:20]}...")
-                return
-            
-            # Send the full WAV as base64 in one shot
-            b64_data = base64.b64encode(wav_bytes).decode('utf-8')
-            logger.info(f"_run_tts: Sending base64 audio data length: {len(b64_data)}")
-            await websocket.send_json({
-                "type": "audio",
-                "data": b64_data
-            })
-        except asyncio.CancelledError:
-            logger.info(f"TTS task cancelled for: {text[:20]}...")
-        except Exception as e:
-            logger.error(f"TTS Error: {e}")
-        finally:
-            self._check_speaking_state(state)
+def create_tts_client() -> GenieTTSClient:
+    return GenieTTSClient()
 
-    def _check_speaking_state(self, state):
-        if not state["tts_tasks"] and not (state["llm_task"] and not state["llm_task"].done()):
-            state["is_speaking"] = False
 
-    async def handle_interrupt(self, websocket: WebSocket):
-        state = self.connection_states.get(websocket)
-        if state and state.get("is_speaking", False):
-            logger.info("Interrupt received from client. Gating allowed (backend is speaking). Cancelling tasks.")
-            self._cancel_tasks(state)
+def get_tts_client() -> GenieTTSClient:
+    if not hasattr(app.state, "tts_client"):
+        app.state.tts_client = create_tts_client()
+    return app.state.tts_client
+
+
+async def stream_openclaw_response(decision: RouterDecision) -> AsyncIterator[str]:
+    async with create_gateway() as gateway:
+        if decision.mode == "persistent":
+            async for chunk in gateway.stream_persistent_send(
+                decision.agent_id,
+                decision.session_key,
+                decision.message,
+            ):
+                yield chunk
         else:
-            logger.info("Interrupt received from client but ignored (backend state is listening).")
+            async for chunk in gateway.stream_one_shot(decision.agent_id, decision.message):
+                yield chunk
+
+
+async def collect_openclaw_tool_result(websocket: WebSocket, decision: RouterDecision, ws_lock: asyncio.Lock) -> str:
+    chunks: list[str] = []
+    async for chunk in stream_openclaw_response(decision):
+        if not chunk:
+            continue
+        chunks.append(chunk)
+        async with ws_lock:
+            await websocket.send_json({"type": "tool_delta", "text": chunk})
+    return "".join(chunks)
+
+
+async def synthesize_sentence(websocket: WebSocket, sentence: str, ws_lock: asyncio.Lock) -> None:
+    try:
+        async with ws_lock:
+            await websocket.send_json({"type": "status", "state": "tts", "sentence": sentence})
+        async for chunk in get_tts_client().synthesize_pcm_chunks(sentence):
+            async with ws_lock:
+                await websocket.send_json(
+                    {
+                        "type": "audio",
+                        "format": "pcm_s16le_mono",
+                        "sample_rate": GENIE_SAMPLE_RATE,
+                        "data": encode_pcm_chunk(chunk),
+                    }
+                )
+    except asyncio.CancelledError:
+        logger.info("TTS synthesis cancelled for sentence %r", sentence[:30])
+        raise
+    except Exception as error:
+        logger.error("Genie TTS failed for sentence %r: %s", sentence[:80], error)
+
+
+async def speak_text_to_tts(websocket: WebSocket, text: str, ws_lock: asyncio.Lock) -> str:
+    sentence_queue: asyncio.Queue[str | None] = asyncio.Queue()
+    pending_sentence_parts: list[str] = []
+
+    async def tts_worker() -> None:
+        while True:
+            sentence = await sentence_queue.get()
+            try:
+                if sentence is None:
+                    return
+                await synthesize_sentence(websocket, sentence, ws_lock)
+            finally:
+                sentence_queue.task_done()
+
+    worker = asyncio.create_task(tts_worker())
+    try:
+        async with ws_lock:
+            await websocket.send_json({"type": "assistant_delta", "text": text})
+        sentences, pending_sentence_parts = iter_complete_sentences(
+            pending_sentence_parts,
+            text,
+        )
+        for sentence in sentences:
+            await sentence_queue.put(sentence)
+
+        remainder = "".join(pending_sentence_parts).strip()
+        if remainder:
+            await sentence_queue.put(remainder)
+
+        await sentence_queue.put(None)
+        await worker
+    finally:
+        if not worker.done():
+            worker.cancel()
+
+    return text
+
+
+async def answer_with_qwen_session(
+    websocket: WebSocket,
+    router: LLMRouter,
+    transcript: str,
+    decision: CoordinatorDecision,
+    ws_lock: asyncio.Lock,
+) -> str:
+    if decision.openclaw is None:
+        # Non-tool call: Just stream the message we already have
+        await speak_text_to_tts(websocket, decision.message, ws_lock)
+        assistant_text = decision.message
+    else:
+        # Tool call
+        tool_id = f"openclaw-{decision.openclaw.agent_id}-{decision.openclaw.mode}"
+        async with ws_lock:
+            await websocket.send_json(
+                {
+                    "type": "tool_call_status",
+                    "tool_id": tool_id,
+                    "tool_name": "openclaw",
+                    "name": f"OpenClaw {decision.openclaw.agent_id}",
+                    "status": "running",
+                    "content": decision.openclaw.message,
+                }
+            )
+        tool_result = await collect_openclaw_tool_result(websocket, decision.openclaw, ws_lock)
+        async with ws_lock:
+            await websocket.send_json(
+                {
+                    "type": "tool_call_status",
+                    "tool_id": tool_id,
+                    "tool_name": "openclaw",
+                    "name": f"OpenClaw {decision.openclaw.agent_id}",
+                    "status": "completed",
+                    "content": tool_result,
+                }
+            )
+            await websocket.send_json({"type": "status", "state": "assistant_finalizing"})
             
-manager = ConnectionManager()
+        # Stream the completion from the LLM directly to TTS
+        full_text_chunks = []
+        sentence_queue: asyncio.Queue[str | None] = asyncio.Queue()
+        pending_sentence_parts: list[str] = []
+
+        async def tts_worker() -> None:
+            while True:
+                sentence = await sentence_queue.get()
+                try:
+                    if sentence is None:
+                        return
+                    await synthesize_sentence(websocket, sentence, ws_lock)
+                finally:
+                    sentence_queue.task_done()
+
+        worker = asyncio.create_task(tts_worker())
+        
+        try:
+            async for text_chunk in router.complete_with_tool_result_stream(transcript, decision, tool_result):
+                full_text_chunks.append(text_chunk)
+                async with ws_lock:
+                    await websocket.send_json({"type": "assistant_delta", "text": text_chunk})
+                    
+                sentences, pending_sentence_parts = iter_complete_sentences(
+                    pending_sentence_parts,
+                    text_chunk,
+                )
+                for sentence in sentences:
+                    await sentence_queue.put(sentence)
+
+            remainder = "".join(pending_sentence_parts).strip()
+            if remainder:
+                await sentence_queue.put(remainder)
+
+            await sentence_queue.put(None)
+            await worker
+        finally:
+            if not worker.done():
+                worker.cancel()
+            
+        assistant_text = "".join(full_text_chunks)
+
+    router.remember_turn(transcript, assistant_text)
+    return assistant_text
+
 
 @app.websocket("/ws")
-async def websocket_endpoint(websocket: WebSocket):
-    await manager.connect(websocket)
+async def websocket_endpoint(websocket: WebSocket) -> None:
+    await websocket.accept()
+    logger.info("WebSocket connected")
+    router = create_router()
+    ws_lock = asyncio.Lock()
+    generation_task: asyncio.Task | None = None
+
+    async def handle_audio(audio_data: bytes) -> None:
+        try:
+            async with ws_lock:
+                await websocket.send_json(
+                    {
+                        "type": "status",
+                        "state": "transcribing",
+                        "audio_bytes": len(audio_data),
+                    }
+                )
+
+            transcript = await transcribe_audio(audio_data)
+            if not transcript:
+                async with ws_lock:
+                    await websocket.send_json({"type": "status", "state": "listening"})
+                return
+
+            async with ws_lock:
+                await websocket.send_json({"type": "transcript", "text": transcript})
+                await websocket.send_json({"type": "status", "state": "thinking"})
+                
+            decision = await router.decide(transcript)
+            decision_payload = {
+                "type": "decision",
+                "action": decision.action,
+                "message": decision.message,
+                "reason": decision.reason,
+            }
+            if decision.openclaw is not None:
+                decision_payload.update(
+                    {
+                        "agent_id": decision.openclaw.agent_id,
+                        "mode": decision.openclaw.mode,
+                        "session_key": decision.openclaw.session_key,
+                    }
+                )
+            
+            async with ws_lock:
+                await websocket.send_json(decision_payload)
+                await websocket.send_json({"type": "status", "state": "assistant_streaming"})
+                
+            assistant_text = await answer_with_qwen_session(websocket, router, transcript, decision, ws_lock)
+            
+            async with ws_lock:
+                await websocket.send_json({"type": "audio_end"})
+                await websocket.send_json({"type": "status", "state": "assistant_complete"})
+                await websocket.send_json({"type": "assistant_response", "text": assistant_text})
+                await websocket.send_json({"type": "status", "state": "listening"})
+                
+        except asyncio.CancelledError:
+            logger.info("Background generation task was interrupted.")
+            raise
+        except Exception as error:
+            logger.error("Voice conversation flow failed: %s", error)
+            async with ws_lock:
+                await websocket.send_json(
+                    {
+                        "type": "error",
+                        "message": "Voice pipeline failed; see server log.",
+                    }
+                )
+                await websocket.send_json({"type": "status", "state": "listening"})
+
     try:
         while True:
-            # We expect binary data for audio, or text for json commands
-            data = await websocket.receive()
-            if data.get("type") == "websocket.disconnect":
-                raise WebSocketDisconnect(data.get("code", 1000))
-            if "bytes" in data:
-                audio_bytes = data["bytes"]
-                logger.info(f"Received audio packet via bytes: {len(audio_bytes)} bytes")
-                await manager.process_audio(websocket, audio_bytes)
-            elif "text" in data:
-                try:
-                    message = json.loads(data["text"])
-                    msg_type = message.get("type")
-                    
-                    if msg_type == "interrupt":
-                        await manager.handle_interrupt(websocket)
-                    elif msg_type == "audio_data":
-                        # If base64 encoded
-                        audio_b64 = message.get("data", "")
-                        audio_bytes = base64.b64decode(audio_b64)
-                        logger.info(f"Received audio packet via JSON b64: {len(audio_bytes)} bytes")
-                        await manager.process_audio(websocket, audio_bytes)
-                        
-                except json.JSONDecodeError:
-                    logger.warning("Received invalid JSON")
-                
+            message = await websocket.receive()
+
+            if message.get("type") == "websocket.disconnect":
+                raise WebSocketDisconnect(message.get("code", 1000))
+
+            audio_data = message.get("bytes")
+            if audio_data is None:
+                text_data = message.get("text")
+                if text_data:
+                    try:
+                        payload = json.loads(text_data)
+                    except json.JSONDecodeError:
+                        payload = {}
+                    if payload.get("type") == "interrupt":
+                        if generation_task and not generation_task.done():
+                            generation_task.cancel()
+                        await get_tts_client().stop()
+                        async with ws_lock:
+                            await websocket.send_json({"type": "status", "state": "interrupted"})
+                            await websocket.send_json({"type": "status", "state": "listening"})
+                        continue
+                logger.info("Ignoring non-binary WebSocket message")
+                continue
+
+            # If there's an ongoing generation, cancel it before starting the new one
+            if generation_task and not generation_task.done():
+                generation_task.cancel()
+
+            generation_task = asyncio.create_task(handle_audio(audio_data))
+
     except WebSocketDisconnect:
-        manager.disconnect(websocket)
-    except Exception as e:
-        logger.error(f"WebSocket Error: {e}")
-        manager.disconnect(websocket)
+        logger.info("WebSocket disconnected")
+    except Exception as error:
+        logger.error("WebSocket endpoint error: %s", error)
+    finally:
+        if generation_task and not generation_task.done():
+            generation_task.cancel()
+        try:
+            await get_tts_client().stop()
+        except:
+            pass
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host="0.0.0.0", port=8001)
