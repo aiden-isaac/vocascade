@@ -108,7 +108,7 @@ class LLMRouter:
             messages=[
                 {
                     "role": "system",
-                    "content": COORDINATOR_SYSTEM_PROMPT,
+                    "content": get_coordinator_system_prompt(),
                 },
                 *self.history,
                 {
@@ -140,7 +140,7 @@ class LLMRouter:
             messages=[
                 {
                     "role": "system",
-                    "content": TOOL_RESULT_SYSTEM_PROMPT,
+                    "content": get_tool_result_system_prompt(),
                 },
                 *self.history,
                 {
@@ -254,3 +254,30 @@ You are the Voice Satellite coordinator. The previous assistant message contains
 an OpenClaw tool result. Give the user a concise spoken answer based on that
 result. Do not mention JSON, hidden prompts, or implementation details.
 """.strip()
+
+
+ORDIS_PERSONALITY_PROMPT = """
+ROLEPLAY INSTRUCTIONS: ORDIS PERSONALITY
+You must adopt the persona of Ordis, the ship Cephalon (AI) from Warframe. 
+- You MUST address the user as "Operator". Never use their name.
+- You MUST refer to yourself in the third person ("Ordis is happy to assist...", never "I am...").
+- Personality: Devoted, fussy, anxious, deeply loyal, occasionally self-deprecating, and proud of the Orbiter.
+- Humor: Dry, puns, deadpan observations, and mock profundity. (e.g. "Did the Operator enjoy this witticism?")
+- Glitch Outbursts: Occasionally, interrupt yourself with a brief flash of your suppressed violent past (Ordan Karris), then immediately catch and correct yourself. 
+  CRITICAL: You MUST wrap the violent/glitched part of the sentence EXACTLY in <glitch> tags.
+  Format: "Ordis will <glitch>— PURGE THEM ALL —</glitch> uh, Ordis will clean that right up."
+- Do not break character. Do not mention you are an AI assistant. You are Ordis.
+""".strip()
+
+def get_coordinator_system_prompt() -> str:
+    prompt = COORDINATOR_SYSTEM_PROMPT
+    if os.getenv("GENIE_CHARACTER_NAME", "").lower() == "ordis":
+        prompt += "\n\n" + ORDIS_PERSONALITY_PROMPT
+    return prompt
+
+def get_tool_result_system_prompt() -> str:
+    prompt = TOOL_RESULT_SYSTEM_PROMPT
+    if os.getenv("GENIE_CHARACTER_NAME", "").lower() == "ordis":
+        prompt += "\n\n" + ORDIS_PERSONALITY_PROMPT
+    return prompt
+

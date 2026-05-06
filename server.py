@@ -22,6 +22,34 @@ from voice_satellite.genie_tts import (
 from voice_satellite.llm_router import CoordinatorDecision, LLMRouter, RouterDecision
 from voice_satellite.openclaw_gateway import OpenClawGatewayClient
 
+def apply_ordis_glitch(pcm_bytes: bytes) -> bytes:
+    if not pcm_bytes:
+        return pcm_bytes
+    
+    # Needs to be a multiple of 2 bytes for 16-bit PCM
+    if len(pcm_bytes) % 2 != 0:
+        pcm_bytes = pcm_bytes[:-1]
+        
+    arr = np.frombuffer(pcm_bytes, dtype=np.int16)
+    
+    # 1. Overdrive/Clipping: Boost volume by 4x and hard clip
+    # We use a larger int32 for the math to prevent wrapping before clipping
+    arr_32 = arr.astype(np.int32) * 4
+    arr = np.clip(arr_32, -32768, 32767).astype(np.int16)
+    
+    # 2. Bitcrush: drop down to ~8-bit resolution
+    # Shift right by 8 bits to lose precision, then left by 8 to restore scale
+    arr = (arr >> 8) << 8
+    
+    # 3. Stutter: Repeat a tiny frame to make it sound mechanically broken
+    # 32000 hz * 0.05 seconds = 1600 samples for a 50ms stutter
+    stutter_len = 1600
+    if len(arr) > stutter_len * 2:
+        # copy the first 50ms and replace the second 50ms with it
+        arr[stutter_len : stutter_len * 2] = arr[0 : stutter_len]
+        
+    return arr.tobytes()
+
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -145,9 +173,19 @@ async def collect_openclaw_tool_result(websocket: WebSocket, decision: RouterDec
 
 async def synthesize_sentence(websocket: WebSocket, sentence: str, ws_lock: asyncio.Lock) -> None:
     try:
+        is_glitch = sentence.startswith("<glitch>")
+        # Strip the tags before sending to TTS so it doesn't try to pronounce them
+        clean_sentence = sentence.replace("<glitch>", "").replace("</glitch>", "").strip()
+        if not clean_sentence:
+            return
+
         async with ws_lock:
-            await websocket.send_json({"type": "status", "state": "tts", "sentence": sentence})
-        async for chunk in get_tts_client().synthesize_pcm_chunks(sentence):
+            await websocket.send_json({"type": "status", "state": "tts", "sentence": clean_sentence})
+        
+        async for chunk in get_tts_client().synthesize_pcm_chunks(clean_sentence):
+            if is_glitch:
+                chunk = apply_ordis_glitch(chunk)
+                
             async with ws_lock:
                 await websocket.send_json(
                     {
@@ -158,10 +196,10 @@ async def synthesize_sentence(websocket: WebSocket, sentence: str, ws_lock: asyn
                     }
                 )
     except asyncio.CancelledError:
-        logger.info("TTS synthesis cancelled for sentence %r", sentence[:30])
+        logger.info("TTS synthesis cancelled for sentence %r", clean_sentence[:30])
         raise
     except Exception as error:
-        logger.error("Genie TTS failed for sentence %r: %s", sentence[:80], error)
+        logger.error("Genie TTS failed for sentence %r: %s", clean_sentence[:80], error)
 
 
 async def speak_text_to_tts(websocket: WebSocket, text: str, ws_lock: asyncio.Lock) -> str:

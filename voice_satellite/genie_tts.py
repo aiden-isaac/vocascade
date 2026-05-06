@@ -124,10 +124,27 @@ def encode_pcm_chunk(chunk: bytes) -> str:
 
 def iter_complete_sentences(chunks: list[str], next_text: str) -> tuple[list[str], list[str]]:
     buffer = "".join(chunks) + next_text
-    sentences = re.findall(r".+?[.!?](?:\s+|$)", buffer, flags=re.DOTALL)
-    if not sentences:
-        return [], [buffer]
+    
+    # We want to split on normal sentence boundaries OR the <glitch> tags.
+    # The regex looks for:
+    # 1. <glitch>...</glitch> blocks
+    # 2. Or normal sentences ending in . ! ?
+    # 3. We keep the tags so the server knows to distort them.
+    
+    # We use re.split to correctly tokenize the text around the tags
+    pattern = r"(<glitch>.*?</glitch>|[^<>]+?[.!?](?:\s+|$))"
+    
+    # re.split keeps the captured groups when using parentheses in the pattern
+    # It returns [unmatched_start, matched_group_1, unmatched_mid, matched_group_2, ...]
+    parts = re.split(pattern, buffer, flags=re.DOTALL | re.IGNORECASE)
+    
+    # The last part is whatever is left over (the pending buffer)
+    pending_buffer = parts.pop() if parts else buffer
+    
+    sentences = []
+    # Every part except the last one could be a sentence or empty string
+    for part in parts:
+        if part.strip():
+            sentences.append(part.strip())
 
-    consumed = sum(len(sentence) for sentence in sentences)
-    remainder = buffer[consumed:]
-    return [sentence.strip() for sentence in sentences if sentence.strip()], [remainder]
+    return sentences, [pending_buffer]
