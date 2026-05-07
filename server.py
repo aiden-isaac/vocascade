@@ -205,8 +205,19 @@ async def synthesize_sentence(websocket: WebSocket, sentence: str, ws_lock: asyn
         is_glitch = sentence.startswith("<glitch>")
         # Strip the tags before sending to TTS so it doesn't try to pronounce them
         clean_sentence = sentence.replace("<glitch>", "").replace("</glitch>", "").strip()
-        if not clean_sentence:
+        
+        # GPT-SoVITS hallucinates the reference text if the input is too short, 
+        # heavily punctuated, or lacks a trailing stop token.
+        # 1. Clean up em-dashes and weird characters that confuse the G2P
+        clean_sentence = clean_sentence.replace("—", "").replace("-", "").replace("*", "").strip()
+        
+        # 2. Check if there's actually anything to say (at least one alphanumeric character)
+        if not any(c.isalnum() for c in clean_sentence):
             return
+            
+        # 3. Ensure it ends with punctuation to force a stop token and proper intonation
+        if clean_sentence[-1] not in ".!?":
+            clean_sentence += "."
 
         async with ws_lock:
             await websocket.send_json({"type": "status", "state": "tts", "sentence": clean_sentence})
