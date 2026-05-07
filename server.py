@@ -211,6 +211,11 @@ async def synthesize_sentence(websocket: WebSocket, sentence: str, ws_lock: asyn
         # 1. Clean up em-dashes and weird characters that confuse the G2P
         clean_sentence = clean_sentence.replace("—", "").replace("-", "").replace("*", "").strip()
         
+        # GPT-SoVITS spells out ALL CAPS words (e.g., P-U-R-G-E) instead of saying them.
+        # Since glitches are generated in ALL CAPS, we convert them to lowercase.
+        if is_glitch:
+            clean_sentence = clean_sentence.lower()
+        
         # 2. Check if there's actually anything to say (at least one alphanumeric character)
         if not any(c.isalnum() for c in clean_sentence):
             return

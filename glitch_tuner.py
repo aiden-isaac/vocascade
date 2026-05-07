@@ -187,7 +187,15 @@ async def synthesize_api(
     for part in parts:
         is_glitch = part.startswith("<glitch>")
         clean_text = part.replace("<glitch>", "").replace("</glitch>", "").strip()
-        if not clean_text: continue
+        
+        # Mirror the server.py logic to prevent hallucination/spelling
+        clean_text = clean_text.replace("—", "").replace("-", "").replace("*", "").strip()
+        if is_glitch:
+            clean_text = clean_text.lower()
+        if not any(c.isalnum() for c in clean_text):
+            continue
+        if clean_text[-1] not in ".!?":
+            clean_text += "."
             
         try:
             pcm_chunk = await synthesize_genie(clean_text)
