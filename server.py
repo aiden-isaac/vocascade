@@ -32,6 +32,22 @@ def apply_ordis_glitch(pcm_bytes: bytes) -> bytes:
         
     arr = np.frombuffer(pcm_bytes, dtype=np.int16)
     
+    # 0. Pitch Shift (Resampling)
+    # Pitch down heavily to make the voice deeper, slower, and cursed.
+    pitch_factor = 0.6  # Adjust based on glitch_tuner results
+    indices = np.arange(0, len(arr), pitch_factor)
+    floor = np.floor(indices).astype(int)
+    ceil = np.minimum(floor + 1, len(arr) - 1)
+    weight = indices - floor
+    arr = (arr[floor] * (1 - weight) + arr[ceil] * weight).astype(np.int16)
+    
+    # 0.5 Tremolo / Ring Modulation (Growl effect)
+    # A low frequency tremolo creates a throbbing, demonic growl in the sub-bass
+    tremolo_hz = 30.0
+    t = np.arange(len(arr)) / 32000.0
+    mod = np.sin(2 * np.pi * tremolo_hz * t)
+    arr = (arr * (0.5 + 0.5 * mod)).astype(np.int16)
+    
     # 1. Overdrive/Clipping: Boost volume by 4x and hard clip
     # We use a larger int32 for the math to prevent wrapping before clipping
     arr_32 = arr.astype(np.int32) * 4

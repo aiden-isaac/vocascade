@@ -21,7 +21,9 @@ def apply_custom_glitch(
     bit_shift: int = 8,
     stutter_ms: int = 50,
     stutter_count: int = 1,
-    downsample: int = 1
+    downsample: int = 1,
+    pitch_factor: float = 1.0,
+    tremolo_hz: float = 0.0
 ) -> bytes:
     if not pcm_bytes:
         return pcm_bytes
@@ -31,28 +33,41 @@ def apply_custom_glitch(
         
     arr = np.frombuffer(pcm_bytes, dtype=np.int16).copy()
     
+    # 0. Pitch Shift (Resampling)
+    if pitch_factor != 1.0:
+        indices = np.arange(0, len(arr), pitch_factor)
+        floor = np.floor(indices).astype(int)
+        ceil = np.minimum(floor + 1, len(arr) - 1)
+        weight = indices - floor
+        arr = (arr[floor] * (1 - weight) + arr[ceil] * weight).astype(np.int16)
+        
+    # 0.5 Tremolo / Ring Modulation (Growl effect)
+    if tremolo_hz > 0:
+        t = np.arange(len(arr)) / 32000.0
+        mod = np.sin(2 * np.pi * tremolo_hz * t)
+        arr = (arr * (0.5 + 0.5 * mod)).astype(np.int16)
+    
     # 1. Overdrive
     arr_32 = arr.astype(np.int32) * overdrive
     arr = np.clip(arr_32, -32768, 32767).astype(np.int16)
     
     # 2. Bitcrush
     if bit_shift > 0:
-        arr = (arr >> bit_shift) << bit_shift
+        arr = (arr >> int(bit_shift)) << int(bit_shift)
         
     # 3. Downsample (Sample rate reduction)
     if downsample > 1:
-        # Hold the value for 'downsample' samples
+        downsample = int(downsample)
         sub = arr[::downsample]
         arr = np.repeat(sub, downsample)[:len(arr)]
         
     # 4. Stutter
     if stutter_ms > 0 and stutter_count > 0:
         stutter_samples = int(32000 * (stutter_ms / 1000.0))
-        # Start stutter a bit into the audio so we catch a consonant/vowel, not just silence
         start_idx = min(stutter_samples, len(arr) // 4) 
         if len(arr) > start_idx + stutter_samples * (stutter_count + 1):
             stutter_chunk = arr[start_idx : start_idx + stutter_samples].copy()
-            for i in range(stutter_count):
+            for i in range(int(stutter_count)):
                 insert_idx = start_idx + stutter_samples * (i + 1)
                 arr[insert_idx : insert_idx + stutter_samples] = stutter_chunk
 
@@ -105,6 +120,12 @@ def index():
             <label>Overdrive (Volume multiplier & clipping) <span class="val" id="ov_val">4.0</span></label>
             <input type="range" id="overdrive" min="1.0" max="20.0" step="0.5" value="4.0" oninput="document.getElementById('ov_val').innerText = this.value">
             
+            <label>Pitch Shift (Resampling rate, &lt; 1 = deeper/slower) <span class="val" id="ps_val">0.6</span></label>
+            <input type="range" id="pitch_factor" min="0.2" max="2.0" step="0.05" value="0.6" oninput="document.getElementById('ps_val').innerText = this.value">
+            
+            <label>Tremolo (Growl frequency, Hz) <span class="val" id="tr_val">30</span></label>
+            <input type="range" id="tremolo_hz" min="0" max="100" step="5" value="30" oninput="document.getElementById('tr_val').innerText = this.value">
+            
             <label>Bit Shift (Bitcrush depth, 0-15) <span class="val" id="bs_val">8</span></label>
             <input type="range" id="bit_shift" min="0" max="15" step="1" value="8" oninput="document.getElementById('bs_val').innerText = this.value">
             
@@ -126,12 +147,14 @@ def index():
             function generate() {
                 const text = encodeURIComponent(document.getElementById('text').value);
                 const overdrive = document.getElementById('overdrive').value;
+                const pitch_factor = document.getElementById('pitch_factor').value;
+                const tremolo_hz = document.getElementById('tremolo_hz').value;
                 const bit_shift = document.getElementById('bit_shift').value;
                 const downsample = document.getElementById('downsample').value;
                 const stutter_ms = document.getElementById('stutter_ms').value;
                 const stutter_count = document.getElementById('stutter_count').value;
                 
-                const url = `/synthesize?text=${text}&overdrive=${overdrive}&bit_shift=${bit_shift}&downsample=${downsample}&stutter_ms=${stutter_ms}&stutter_count=${stutter_count}`;
+                const url = `/synthesize?text=${text}&overdrive=${overdrive}&pitch_factor=${pitch_factor}&tremolo_hz=${tremolo_hz}&bit_shift=${bit_shift}&downsample=${downsample}&stutter_ms=${stutter_ms}&stutter_count=${stutter_count}`;
                 
                 const player = document.getElementById('player');
                 player.src = url;
@@ -147,6 +170,8 @@ def index():
 async def synthesize_api(
     text: str,
     overdrive: float = 4.0,
+    pitch_factor: float = 1.0,
+    tremolo_hz: float = 0.0,
     bit_shift: int = 8,
     downsample: int = 1,
     stutter_ms: int = 50,
@@ -173,7 +198,9 @@ async def synthesize_api(
                     bit_shift=bit_shift, 
                     downsample=downsample,
                     stutter_ms=stutter_ms, 
-                    stutter_count=stutter_count
+                    stutter_count=stutter_count,
+                    pitch_factor=pitch_factor,
+                    tremolo_hz=tremolo_hz
                 )
             final_pcm.extend(pcm_chunk)
         except Exception as e:
