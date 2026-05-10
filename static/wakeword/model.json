@@ -1,6 +1,6 @@
 {
   "file": "model.onnx",
-  "name": "Custom Wakeword",
+  "name": "Hey Ordus",
   "sample_rate": 16000,
   "threshold": 0.5
 }
