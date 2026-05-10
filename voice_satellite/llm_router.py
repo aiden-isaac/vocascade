@@ -12,6 +12,9 @@ ALLOWED_AGENTS = {"main", "ugin"}
 ALLOWED_MODES = {"one_shot", "persistent"}
 MAX_HISTORY_MESSAGES = 20
 
+# Actions that do not involve OpenClaw
+DIRECT_ACTIONS = {"answer", "check_tasks", "conversation_end"}
+
 
 @dataclass(frozen=True)
 class RouterDecision:
@@ -68,6 +71,14 @@ class CoordinatorDecision:
                 openclaw=decision,
             )
 
+        # check_tasks and conversation_end are direct actions like "answer"
+        if action in DIRECT_ACTIONS:
+            message = str(payload.get("message") or payload.get("answer") or "").strip()
+            if not message:
+                message = fallback_message
+            return cls(action=action, message=message, reason=reason)
+
+        # Unknown action — treat as answer
         message = str(payload.get("message") or payload.get("answer") or "").strip()
         if not message:
             message = fallback_message
@@ -98,17 +109,35 @@ class LLMRouter:
             base_url=base_url or os.getenv("LITELLM_URL") or DEFAULT_LITELLM_URL,
         )
 
-    async def decide(self, transcript: str) -> CoordinatorDecision:
+    async def decide(
+        self,
+        transcript: str,
+        task_context: str = "",
+    ) -> CoordinatorDecision:
+        """
+        Route the transcript to the appropriate action.
+
+        Args:
+            transcript: The user's spoken input (already STT-transcribed).
+            task_context: Optional string describing currently running background
+                          tasks, injected from TaskTracker.get_summary(). When
+                          non-empty this is appended to the system prompt so the
+                          LLM knows about in-flight agent work.
+        """
         transcript = transcript.strip()
         if not transcript:
             raise ValueError("Cannot process an empty transcript")
+
+        system_prompt = get_coordinator_system_prompt()
+        if task_context:
+            system_prompt += f"\n\nCURRENTLY RUNNING BACKGROUND TASKS:\n{task_context}"
 
         response = await self.client.chat.completions.create(
             model=self.model,
             messages=[
                 {
                     "role": "system",
-                    "content": get_coordinator_system_prompt(),
+                    "content": system_prompt,
                 },
                 *self.history,
                 {
@@ -245,6 +274,22 @@ For OpenClaw tool use, return:
   "session_key": "voice",
   "message": "precise instruction to send to OpenClaw",
   "reason": "short routing reason"
+}
+
+If the user is asking about the status of running background tasks
+(e.g. "is it done?", "how's that going?", "any updates?"), return:
+{
+  "action": "check_tasks",
+  "message": "natural spoken status update based on CURRENTLY RUNNING BACKGROUND TASKS",
+  "reason": "user asked about task status"
+}
+
+If the user is clearly ending the conversation (e.g. "thanks, that's all",
+"goodbye", "see you later", "I'm done", "that's everything"), return:
+{
+  "action": "conversation_end",
+  "message": "brief warm spoken sign-off",
+  "reason": "user indicated conversation is over"
 }
 """.strip()
 
