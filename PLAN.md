@@ -11,7 +11,7 @@ Redesign the voice satellite for seamless, low-latency conversational interactio
 ```mermaid
 flowchart TB
     subgraph Browser["Browser (Frontend)"]
-        MIC[🎤 Microphone]
+        MIC[Microphone]
         VAD["Silero VAD v5<br/>(WASM, rolling buffer)"]
         WW["OpenWakeWord ONNX<br/>(wakeword/*.onnx)"]
         PCM_OUT["PCM Audio Player<br/>(AudioContext queue)"]

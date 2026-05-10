@@ -1,3 +1,19 @@
+"""
+server.py -- FastAPI WebSocket orchestrator for the Voice Satellite.
+
+Entry point for:
+  - Silero VAD speech ingestion (binary PCM from browser)
+  - Wakeword and barge-in handling via ConversationSession
+  - Whisper STT transcription (faster-whisper, CPU, INT8)
+  - LLM routing (LLMRouter -> Qwen via LiteLLM)
+  - OpenClaw background task management (TaskTracker)
+  - Filler audio injection (FillerEngine, 2s timer race)
+  - Genie TTS synthesis + Ordis glitch distortion
+  - WebSocket audio streaming to the browser
+
+Run via: ./start_servers.sh  (port 8001)
+"""
+
 import asyncio
 import json
 import logging
@@ -26,16 +42,17 @@ from voice_satellite.openclaw_gateway import OpenClawGatewayClient
 from voice_satellite.session import ConversationSession, SessionState
 from voice_satellite.task_tracker import TaskTracker, TrackedTask
 
+
 def apply_ordis_glitch(pcm_bytes: bytes) -> bytes:
     if not pcm_bytes:
         return pcm_bytes
-    
+
     # Needs to be a multiple of 2 bytes for 16-bit PCM
     if len(pcm_bytes) % 2 != 0:
         pcm_bytes = pcm_bytes[:-1]
-        
+
     arr = np.frombuffer(pcm_bytes, dtype=np.int16).copy()
-    
+
     # Dynamic randomized parameters
     current_pitch = round(random.uniform(0.55, 0.63), 3)
     current_tremolo = round(random.uniform(8.0, 14.0), 1)
@@ -51,35 +68,35 @@ def apply_ordis_glitch(pcm_bytes: bytes) -> bytes:
     ceil = np.minimum(floor + 1, len(arr) - 1)
     weight = indices - floor
     arr = (arr[floor] * (1 - weight) + arr[ceil] * weight).astype(np.int16)
-    
+
     # 0.5 Tremolo / Ring Modulation (Growl effect)
     t = np.arange(len(arr)) / 32000.0
     mod = np.sin(2 * np.pi * current_tremolo * t)
     arr = (arr * (0.5 + 0.5 * mod)).astype(np.int16)
-    
+
     # 1. Overdrive/Clipping
     arr_32 = arr.astype(np.int32) * current_overdrive
     arr = np.clip(arr_32, -32768, 32767).astype(np.int16)
-    
+
     # 2. Bitcrush
     if current_bitcrush > 0:
         arr = (arr >> current_bitcrush) << current_bitcrush
-        
+
     # 3. Downsample
     if current_downsample > 1:
         sub = arr[::current_downsample]
         arr = np.repeat(sub, current_downsample)[:len(arr)]
-    
+
     # 4. Stutter
     if current_stutter_ms > 0 and current_stutter_count > 0:
         stutter_samples = int(32000 * (current_stutter_ms / 1000.0))
-        start_idx = min(stutter_samples, len(arr) // 4) 
+        start_idx = min(stutter_samples, len(arr) // 4)
         if len(arr) > start_idx + stutter_samples * (current_stutter_count + 1):
             stutter_chunk = arr[start_idx : start_idx + stutter_samples].copy()
             for i in range(current_stutter_count):
                 insert_idx = start_idx + stutter_samples * (i + 1)
                 arr[insert_idx : insert_idx + stutter_samples] = stutter_chunk
-        
+
     return arr.tobytes()
 
 

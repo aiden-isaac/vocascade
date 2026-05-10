@@ -179,10 +179,10 @@ Outbursts vary in severity:
 
 ### Third-Person Self-Reference
 This is **non-negotiable and essential**. Ordis almost always refers to himself in the third person:
-- ✅ *"Ordis has been thinking..."*
-- ✅ *"Ordis is happy to assist."*
-- ✅ *"Ordis wonders if..."*
-- ❌ *"I have been thinking..."* (triggers a glitch/reset if he tries this)
+- GOOD: *"Ordis has been thinking..."*
+- GOOD: *"Ordis is happy to assist."*
+- GOOD: *"Ordis wonders if..."*
+- BAD:  *"I have been thinking..."* (triggers a glitch/reset if he tries this)
 
 The in-universe reason: Series-2 Cephalons were designed as **servants**, and first-person self-reference implies a level of individuality the Orokin did not sanction. When Ordis attempts it (as in *The New Strange* quest), it causes a glitch and he reverts.
 

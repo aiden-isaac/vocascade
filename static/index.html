@@ -73,7 +73,7 @@ button:disabled{opacity:.45;cursor:wait}
 <body>
 <main class="panel">
   <div class="header">
-    <div class="logo">⬡</div>
+    <div class="logo">VS</div>
     <div>
       <h1>Voice Satellite</h1>
       <div class="subtitle">OpenClaw · Genie TTS · Silero VAD v5</div>
@@ -86,7 +86,7 @@ button:disabled{opacity:.45;cursor:wait}
   <button id="startBtn" type="button">Start Listening</button>
 
   <details class="settings" id="settingsPanel">
-    <summary>⚙ Settings</summary>
+    <summary>Settings</summary>
     <div class="settings-body">
       <div class="setting-row">
         <label>Silence timeout</label>
@@ -355,7 +355,7 @@ function connectWebSocket() {
       if (msg.type === "assistant_response") log("Ordis: " + msg.text, "hi");
       if (msg.type === "assistant_delta") { /* suppress noisy deltas */ }
       if (msg.type === "tool_call_status") log("Tool " + msg.status + ": " + (msg.name || msg.tool_name));
-      if (msg.type === "task_complete") log("✓ Background task done", "hi");
+      if (msg.type === "task_complete") log("Background task done", "hi");
       if (msg.type === "audio") {
         enqueuePcmAudio(msg.data, msg.sample_rate || 32000, msg.word_offset);
       }

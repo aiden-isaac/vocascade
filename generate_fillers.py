@@ -1,20 +1,19 @@
-#!/usr/bin/env python3
 """
-generate_fillers.py — Batch-render filler audio via the live Genie TTS server.
+generate_fillers.py -- Batch-render filler audio via the live Genie TTS server.
 
 Connects to GENIE_TTS_URL (default http://127.0.0.1:8000), synthesizes each
 filler phrase using the configured voice, and saves raw PCM files to
 static/fillers/<category>/<slug>.pcm.
 
 Usage:
-    # Make sure start_servers.sh is running first, then:
+    # Ensure start_servers.sh is running first, then:
     python generate_fillers.py
 
-    # Or override the TTS URL:
+    # Override the TTS URL:
     GENIE_TTS_URL=http://127.0.0.1:8000 python generate_fillers.py
 
-The generated .pcm files are 32 kHz, 16-bit, mono (matching GENIE_SAMPLE_RATE).
-They are loaded at startup by FillerEngine and served from RAM for instant
+Output format: 32 kHz, 16-bit, mono PCM (matches GENIE_SAMPLE_RATE).
+Files are loaded at startup by FillerEngine and served from RAM for instant
 playback without a TTS round-trip.
 """
 
@@ -116,10 +115,10 @@ async def main() -> None:
                     if len(pcm) % 2 != 0:
                         pcm = pcm[:-1]
                     out_path.write_bytes(pcm)
-                    print(f"    ✓  {phrase!r:40s} → {out_path.name} ({len(pcm):,} bytes)")
+                    print(f"    OK  {phrase!r:40s} -> {out_path.name} ({len(pcm):,} bytes)")
                     total_ok += 1
                 except Exception as exc:
-                    print(f"    ✗  {phrase!r:40s} — ERROR: {exc}")
+                    print(f"    ERR {phrase!r:40s} -- ERROR: {exc}")
                     total_err += 1
 
                 # Small delay between requests to avoid overwhelming the TTS server
