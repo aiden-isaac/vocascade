@@ -19,3 +19,5 @@ genie_model_reference/GenieData/**/averaged_perceptron_tagger_eng.*
 # OS / editor
 .DS_Store
 Thumbs.db
+.env
+.env
