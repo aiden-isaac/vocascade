@@ -452,6 +452,89 @@ async def answer_with_qwen_session(
     return assistant_text
 
 
+async def answer_with_openclaw_direct(
+    websocket: WebSocket,
+    transcript: str,
+    ws_lock: asyncio.Lock,
+    session: ConversationSession,
+) -> str:
+    """
+    Directly query OpenClaw ('ordis' agent) and stream the response to the user.
+    """
+    # Start a 1.5s filler task to cover TTFB (Time to First Byte) latency
+    filler_task: asyncio.Task | None = None
+    if _filler_engine and _filler_engine.loaded():
+        async def _play_filler_after_delay() -> None:
+            await asyncio.sleep(1.5)
+            filler_pcm = _filler_engine.get_filler("thinking")
+            if filler_pcm:
+                async with ws_lock:
+                    await websocket.send_json({
+                        "type": "audio",
+                        "format": "pcm_s16le_mono",
+                        "sample_rate": GENIE_SAMPLE_RATE,
+                        "data": encode_pcm_chunk(filler_pcm),
+                        "word_offset": 0,
+                    })
+        filler_task = asyncio.create_task(_play_filler_after_delay())
+
+    full_text_chunks: list[str] = []
+    sentence_queue: asyncio.Queue[tuple[str, int] | None] = asyncio.Queue()
+    pending_sentence_parts: list[str] = []
+
+    async def tts_worker() -> None:
+        while True:
+            item = await sentence_queue.get()
+            try:
+                if item is None:
+                    return
+                sentence, offset = item
+                await synthesize_sentence(websocket, sentence, ws_lock, word_offset=offset)
+            finally:
+                sentence_queue.task_done()
+
+    worker = asyncio.create_task(tts_worker())
+
+    try:
+        word_offset = 0
+        async with create_gateway() as gateway:
+            async for text_chunk in gateway.stream_persistent_send(
+                agent_id="ordis",
+                session_key="voice",
+                message=transcript,
+            ):
+                if filler_task and not filler_task.done():
+                    filler_task.cancel()  # First byte received, cancel filler
+
+                full_text_chunks.append(text_chunk)
+                async with ws_lock:
+                    await websocket.send_json({"type": "assistant_delta", "text": text_chunk})
+
+                sentences, pending_sentence_parts = iter_complete_sentences(
+                    pending_sentence_parts,
+                    text_chunk,
+                )
+                for sentence in sentences:
+                    await sentence_queue.put((sentence, word_offset))
+                    word_offset += len(sentence.split())
+
+        remainder = "".join(pending_sentence_parts).strip()
+        if remainder:
+            await sentence_queue.put((remainder, word_offset))
+
+        await sentence_queue.put(None)
+        await worker
+    finally:
+        if filler_task and not filler_task.done():
+            filler_task.cancel()
+        if not worker.done():
+            worker.cancel()
+
+    assistant_text = "".join(full_text_chunks)
+    session.set_current_response(assistant_text)
+    return assistant_text
+
+
 async def send_filler(websocket: WebSocket, ws_lock: asyncio.Lock, category: str) -> None:
     """Send a pre-rendered filler PCM immediately to the frontend."""
     if not _filler_engine or not _filler_engine.loaded():
@@ -552,32 +635,20 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
 
             session.set_state(SessionState.THINKING)
 
-            # Inject running task context into the LLM so it can answer "is it done?" naturally
-            task_context = task_tracker.get_summary()
-            decision = await router.decide(transcript, task_context=task_context)
-
-            decision_payload: dict = {
-                "type": "decision",
-                "action": decision.action,
-                "message": decision.message,
-                "reason": decision.reason,
-            }
-            if decision.openclaw is not None:
-                decision_payload.update(
-                    {
-                        "agent_id": decision.openclaw.agent_id,
-                        "mode": decision.openclaw.mode,
-                        "session_key": decision.openclaw.session_key,
-                    }
-                )
-
+            # Bypass router and go straight to OpenClaw
             async with ws_lock:
-                await websocket.send_json(decision_payload)
+                await websocket.send_json({
+                    "type": "decision",
+                    "action": "openclaw",
+                    "agent_id": "ordis",
+                    "mode": "persistent",
+                    "reason": "direct connection to openclaw",
+                })
                 await websocket.send_json({"type": "status", "state": "assistant_streaming"})
 
             session.set_state(SessionState.SPEAKING)
-            assistant_text = await answer_with_qwen_session(
-                websocket, router, transcript, decision, ws_lock, session, task_tracker
+            assistant_text = await answer_with_openclaw_direct(
+                websocket, transcript, ws_lock, session
             )
 
             async with ws_lock:
@@ -585,17 +656,10 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                 await websocket.send_json({"type": "status", "state": "assistant_complete"})
                 await websocket.send_json({"type": "assistant_response", "text": assistant_text})
 
-            if decision.action == "conversation_end":
-                # Return to passive listening after sign-off
-                session.set_state(SessionState.PASSIVE_LISTENING)
-                session.cancel_silence_timer()
-                async with ws_lock:
-                    await websocket.send_json({"type": "status", "state": "passive_listening"})
-            else:
-                session.set_state(SessionState.ACTIVE_LISTENING)
-                session.reset_silence_timer()
-                async with ws_lock:
-                    await websocket.send_json({"type": "status", "state": "active_listening"})
+            session.set_state(SessionState.ACTIVE_LISTENING)
+            session.reset_silence_timer()
+            async with ws_lock:
+                await websocket.send_json({"type": "status", "state": "active_listening"})
 
         except asyncio.CancelledError:
             logger.info("Background generation task was interrupted.")
