@@ -132,11 +132,7 @@ let currentWordOffset = 0;
 let wordsPlayedAtTime = {}; // audioStartTime -> wordOffset
 
 // Wakeword ONNX
-let wwSession = null;
-let wwBuffer = [];       // rolling 16kHz frame buffer
-const WW_FRAME_SAMPLES = 1280; // ~80ms at 16kHz
 const WW_CONTEXT_FRAMES = 16;
-let wwFrames = [];
 
 // Noise floor calibration
 let noiseFloorSamples = [];
@@ -517,7 +513,7 @@ async function startListening() {
       onFrameProcessed: async (probs, audioFrame) => {
         calibrateNoise(audioFrame);
 
-        if (isPassiveMode && wwSession) {
+        if (isPassiveMode && wwSess) {
           feedAudioToWakeword(audioFrame);
         }
       },
