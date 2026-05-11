@@ -14,10 +14,15 @@ PROJ_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 #   GENIE_DIR=/path/to/genie_model_reference
 #
 if [ -f "$PROJ_DIR/.env" ]; then
-    # shellcheck disable=SC1091
-    set -o allexport
-    source "$PROJ_DIR/.env"
-    set +o allexport
+    while IFS= read -r line || [ -n "$line" ]; do
+        # Skip blank lines and comments
+        [[ "$line" =~ ^[[:space:]]*$ ]] && continue
+        [[ "$line" =~ ^[[:space:]]*# ]] && continue
+        # Only export lines that look like KEY=VALUE
+        if [[ "$line" =~ ^[A-Za-z_][A-Za-z0-9_]*= ]]; then
+            export "$line"
+        fi
+    done < "$PROJ_DIR/.env"
 fi
 
 GENIE_DIR="${GENIE_DIR:-$PROJ_DIR/genie}"
