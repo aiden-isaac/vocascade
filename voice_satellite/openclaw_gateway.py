@@ -68,15 +68,9 @@ class OpenClawGatewayClient:
             self._websocket = await self._connect_impl(self.url)
             logger.info("OpenClawGatewayClient.connect: Successfully connected to %s", self.url)
 
-        await self._send_json(self._connect_frame())
-        frame = await asyncio.wait_for(self._recv_frame(), timeout=self.handshake_timeout)
-        logger.debug("OpenClawGatewayClient.connect: Handshake response: %s", frame)
-
-        if frame.get("type") == "res" and not frame.get("ok", False):
-            raise self._gateway_error(frame)
-
-        if frame.get("type") != "hello-ok":
-            self._pending_frames.append(frame)
+        logger.info("OpenClawGatewayClient.connect: Sending connect request...")
+        payload = await self._request("connect", self._connect_params(), request_id=self._make_id("req"))
+        logger.debug("OpenClawGatewayClient.connect: Handshake response payload: %s", payload)
 
     async def close(self) -> None:
         if self._websocket is None:
@@ -183,9 +177,8 @@ class OpenClawGatewayClient:
         ):
             yield chunk
 
-    def _connect_frame(self) -> dict[str, Any]:
+    def _connect_params(self) -> dict[str, Any]:
         return {
-            "type": "hello",
             "minProtocol": PROTOCOL_VERSION,
             "maxProtocol": PROTOCOL_VERSION,
             "client": {
