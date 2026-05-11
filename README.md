@@ -2,6 +2,37 @@
 
 A fully local, low-latency voice interface for interacting with OpenClaw agents.
 
+## Project Layout
+
+```
+voice-satellite/
+  server.py               # FastAPI app (port 8001)
+  voice_satellite/        # Backend modules
+    session.py            # Conversation state machine
+    task_tracker.py       # Async OpenClaw task manager
+    filler_engine.py      # Pre-rendered filler audio loader
+    llm_router.py         # LLM routing + coordinator prompts
+    genie_tts.py          # Genie TTS HTTP client
+    openclaw_gateway.py   # OpenClaw WebSocket client
+  genie/                  # Minimal Genie TTS server launcher
+    server.py             # genie_tts.start_server(port=8000)
+  static/
+    index.html            # Frontend (VAD, wakeword, audio player)
+    libs/                 # Vendored JS/WASM (ORT, vad-web)
+    wakeword/             # ONNX model + model.json descriptor
+    fillers/              # Pre-rendered PCM filler audio
+  scripts/
+    generate_fillers.py   # Batch-render fillers via Genie TTS
+    glitch_tuner.py       # Interactive glitch distortion tuner
+  tests/                  # Standalone test scripts (no pytest)
+  start_servers.sh        # Start Genie TTS + Voice Satellite
+  stop_servers.sh         # Kill both servers by port
+  .env                    # Local config (gitignored)
+  .env.example            # Config template
+  PLAN.md                 # Architecture design doc
+  ORDIS.md                # Ordis character reference
+```
+
 ## Architecture
 
 ```
@@ -58,6 +89,11 @@ OPENCLAW_GATEWAY_URL=http://127.0.0.1:18789
 LITELLM_URL=https://llm.frizzt.com/v1
 LLM_MODEL=qwen-moe-coder-fast
 
+# Absolute path to the Genie TTS server directory (contains server.py + venv).
+# Defaults to <project>/genie/ if not set.
+# On athrogate point this at the full genie_model_reference directory:
+# GENIE_DIR=/path/to/genie_model_reference
+
 # Ordis voice
 GENIE_CHARACTER_NAME=ordis
 GENIE_ONNX_MODEL_DIR=/path/to/genie-ordis/export
@@ -89,6 +125,7 @@ The frontend loads `static/wakeword/model.onnx` via ONNX Runtime WASM. Place you
 Pre-render filler phrases in the active voice (requires servers running):
 
 ```bash
+cd scripts
 python generate_fillers.py
 ```
 
@@ -109,7 +146,7 @@ Tune distortion parameters interactively:
 
 ```bash
 source venv/bin/activate
-python glitch_tuner.py
+python scripts/glitch_tuner.py
 # Visit http://localhost:8002
 ```
 
@@ -118,12 +155,12 @@ python glitch_tuner.py
 No `pytest`. Run standalone scripts directly:
 
 ```bash
-python test_session.py
-python test_filler_engine.py
-python test_task_tracker.py
-python test_llm_router.py
-python test_openclaw_gateway.py
-python test_genie_tts_client.py
+python tests/test_session.py
+python tests/test_filler_engine.py
+python tests/test_task_tracker.py
+python tests/test_llm_router.py
+python tests/test_openclaw_gateway.py
+python tests/test_genie_tts_client.py
 ```
 
 ## WebSocket Protocol

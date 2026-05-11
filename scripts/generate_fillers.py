@@ -31,7 +31,7 @@ load_dotenv()
 
 GENIE_TTS_URL = (os.getenv("GENIE_TTS_URL") or "http://127.0.0.1:8000").rstrip("/")
 CHARACTER_NAME = os.getenv("GENIE_CHARACTER_NAME") or "fauna"
-OUTPUT_DIR = Path(__file__).resolve().parent / "static" / "fillers"
+OUTPUT_DIR = Path(__file__).resolve().parents[1] / "static" / "fillers"
 
 # Ordis-flavoured fillers. Swap out for your character's voice patterns.
 FILLER_PHRASES: dict[str, list[str]] = {

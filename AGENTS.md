@@ -29,20 +29,21 @@ Use `./start_servers.sh` to start both and `./stop_servers.sh` to cleanly kill t
 | `static/index.html` | Vanilla HTML/JS frontend. No build step. Uses vendored `@ricky0123/vad-web@0.0.24` and `onnxruntime-web@1.14.0`. |
 | `static/wakeword/model.onnx` | OpenWakeWord ONNX model loaded in-browser. Descriptor at `static/wakeword/model.json`. |
 | `static/fillers/` | Pre-rendered PCM filler audio. Subdirs: `thinking/`, `working/`, `slow_task/`, `acknowledge/`, `signoff/`. |
-| `generate_fillers.py` | Batch-renders filler phrases via Genie TTS to `static/fillers/`. |
-| `glitch_tuner.py` | Interactive web UI for tuning Ordis glitch distortion parameters (port 8002). |
+| `scripts/generate_fillers.py` | Batch-renders filler phrases via Genie TTS to `static/fillers/`. |
+| `scripts/glitch_tuner.py` | Interactive web UI for tuning Ordis glitch distortion parameters (port 8002). |
+| `genie/server.py` | Minimal Genie TTS server entry point (`genie_tts.start_server`). Used when `GENIE_DIR` is not overridden. |
 
 ## Testing & Verification
 
 - **No `pytest`**: Do not attempt to run `pytest`.
 - **How to test**: Execute manual standalone scripts. They use `assert` and `asyncio.run(main())`.
   ```bash
-  python test_session.py
-  python test_filler_engine.py
-  python test_task_tracker.py
-  python test_llm_router.py
-  python test_openclaw_gateway.py
-  python test_genie_tts_client.py
+  python tests/test_session.py
+  python tests/test_filler_engine.py
+  python tests/test_task_tracker.py
+  python tests/test_llm_router.py
+  python tests/test_openclaw_gateway.py
+  python tests/test_genie_tts_client.py
   ```
 - **Environment Variables**: Tests and server require a `.env` file. Never hardcode tokens.
 - **Startup smoke test**: `./start_servers.sh` then `./stop_servers.sh`.
