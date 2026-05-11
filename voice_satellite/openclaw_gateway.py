@@ -2,10 +2,13 @@ import asyncio
 import json
 import os
 import uuid
+import logging
 from collections.abc import Awaitable, Callable
 from typing import Any, AsyncIterator
 
 import websockets
+
+logger = logging.getLogger(__name__)
 
 
 LAN_GATEWAY_URL = "ws://192.168.8.104:18789"
@@ -53,15 +56,21 @@ class OpenClawGatewayClient:
             return
 
         try:
+            logger.info("OpenClawGatewayClient.connect: Attempting connection to %s", self.url)
             self._websocket = await self._connect_impl(self.url)
-        except OSError:
+            logger.info("OpenClawGatewayClient.connect: Successfully connected to %s", self.url)
+        except OSError as e:
             if self.url != LAN_GATEWAY_URL:
+                logger.error("OpenClawGatewayClient.connect: Connection to %s failed: %s", self.url, e)
                 raise
+            logger.warning("OpenClawGatewayClient.connect: LAN connection failed, falling back to tunnel: %s", e)
             self.url = TUNNEL_GATEWAY_URL
             self._websocket = await self._connect_impl(self.url)
+            logger.info("OpenClawGatewayClient.connect: Successfully connected to %s", self.url)
 
         await self._send_json(self._connect_frame())
         frame = await asyncio.wait_for(self._recv_frame(), timeout=self.handshake_timeout)
+        logger.debug("OpenClawGatewayClient.connect: Handshake response: %s", frame)
 
         if frame.get("type") == "res" and not frame.get("ok", False):
             raise self._gateway_error(frame)
@@ -197,12 +206,14 @@ class OpenClawGatewayClient:
         request_id: str | None = None,
     ) -> dict[str, Any]:
         request_id = request_id or self._make_id("req")
+        logger.info("OpenClawGatewayClient._request: %s (id: %s) params: %r", method, request_id, params)
         await self._send_json(
             {"type": "req", "id": request_id, "method": method, "params": params}
         )
 
         while True:
             frame = await asyncio.wait_for(self._recv_frame(), timeout=self.request_timeout)
+            logger.debug("OpenClawGatewayClient._request: Received frame: %s", frame)
             if frame.get("type") == "res" and frame.get("id") == request_id:
                 if frame.get("ok") is True:
                     return frame.get("payload") or {}
@@ -279,7 +290,9 @@ class OpenClawGatewayClient:
     async def _send_json(self, payload: dict[str, Any]) -> None:
         if self._websocket is None:
             raise RuntimeError("OpenClaw gateway is not connected")
-        await self._websocket.send(json.dumps(payload, separators=(",", ":")))
+        payload_str = json.dumps(payload, separators=(",", ":"))
+        logger.debug("OpenClawGatewayClient._send_json: %s", payload_str)
+        await self._websocket.send(payload_str)
 
     async def _recv_frame(self) -> dict[str, Any]:
         if self._pending_frames:
@@ -288,6 +301,7 @@ class OpenClawGatewayClient:
             raise RuntimeError("OpenClaw gateway is not connected")
 
         raw = await self._websocket.recv()
+        logger.debug("OpenClawGatewayClient._recv_frame (raw): %r", raw)
         if isinstance(raw, bytes):
             raw = raw.decode("utf-8")
         frame = json.loads(raw)
@@ -297,9 +311,12 @@ class OpenClawGatewayClient:
 
     def _gateway_error(self, frame: dict[str, Any]) -> GatewayError:
         error = frame.get("error") or {}
+        error_code = str(error.get("code") or "gateway_error")
+        error_msg = str(error.get("message") or "OpenClaw gateway request failed")
+        logger.error("OpenClawGatewayClient encountered error: %s - %s", error_code, error_msg)
         return GatewayError(
-            str(error.get("code") or "gateway_error"),
-            str(error.get("message") or "OpenClaw gateway request failed"),
+            error_code,
+            error_msg,
             bool(error.get("retryable", False)),
         )
 

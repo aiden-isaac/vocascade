@@ -256,6 +256,7 @@ async def synthesize_sentence(
         async with ws_lock:
             await websocket.send_json({"type": "status", "state": "tts", "sentence": clean_sentence})
 
+        logger.info("synthesize_sentence: Requesting TTS for '%s'", clean_sentence)
         async for chunk in get_tts_client().synthesize_pcm_chunks(clean_sentence):
             if is_glitch:
                 chunk = apply_ordis_glitch(chunk)
@@ -270,6 +271,7 @@ async def synthesize_sentence(
                         "word_offset": word_offset,
                     }
                 )
+        logger.info("synthesize_sentence: Finished TTS stream for '%s'", clean_sentence)
     except asyncio.CancelledError:
         logger.info("TTS synthesis cancelled for sentence %r", sentence[:30])
         raise
@@ -461,11 +463,13 @@ async def answer_with_openclaw_direct(
     """
     Directly query OpenClaw ('ordis' agent) and stream the response to the user.
     """
+    logger.info("answer_with_openclaw_direct: Started with transcript: '%s'", transcript)
     # Start a 1.5s filler task to cover TTFB (Time to First Byte) latency
     filler_task: asyncio.Task | None = None
     if _filler_engine and _filler_engine.loaded():
         async def _play_filler_after_delay() -> None:
             await asyncio.sleep(1.5)
+            logger.info("answer_with_openclaw_direct: 1.5s elapsed, playing filler")
             filler_pcm = _filler_engine.get_filler("thinking")
             if filler_pcm:
                 async with ws_lock:
@@ -483,13 +487,18 @@ async def answer_with_openclaw_direct(
     pending_sentence_parts: list[str] = []
 
     async def tts_worker() -> None:
+        logger.info("tts_worker: Started")
         while True:
             item = await sentence_queue.get()
             try:
                 if item is None:
+                    logger.info("tts_worker: Received None, exiting")
                     return
                 sentence, offset = item
+                logger.info("tts_worker: Synthesizing sentence: %r", sentence)
                 await synthesize_sentence(websocket, sentence, ws_lock, word_offset=offset)
+            except Exception as e:
+                logger.error("tts_worker: Exception during synthesize_sentence: %s", e, exc_info=True)
             finally:
                 sentence_queue.task_done()
 
@@ -497,13 +506,17 @@ async def answer_with_openclaw_direct(
 
     try:
         word_offset = 0
+        logger.info("answer_with_openclaw_direct: Connecting to OpenClaw gateway...")
         async with create_gateway() as gateway:
+            logger.info("answer_with_openclaw_direct: Connected to OpenClaw gateway. Starting stream_persistent_send...")
             async for text_chunk in gateway.stream_persistent_send(
                 agent_id="ordis",
                 session_key="voice",
                 message=transcript,
             ):
+                logger.info("answer_with_openclaw_direct: Received chunk: %r", text_chunk)
                 if filler_task and not filler_task.done():
+                    logger.info("answer_with_openclaw_direct: First byte received, cancelling filler task")
                     filler_task.cancel()  # First byte received, cancel filler
 
                 full_text_chunks.append(text_chunk)
@@ -531,6 +544,7 @@ async def answer_with_openclaw_direct(
             worker.cancel()
 
     assistant_text = "".join(full_text_chunks)
+    logger.info("answer_with_openclaw_direct: Finished. Total text: %r", assistant_text)
     session.set_current_response(assistant_text)
     return assistant_text
 
