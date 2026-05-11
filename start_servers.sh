@@ -4,63 +4,66 @@ set -euo pipefail
 # Resolve the project root regardless of where this script is called from.
 PROJ_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# ── Genie TTS Server (port 8000) ─────────────────────────────────────────────
-#
-# GENIE_DIR can be overridden in .env or the environment. It should point to a
-# directory containing server.py and a .venv/ virtual environment.
-#
-# Default: <project>/genie/   (the minimal launcher committed to this repo)
-# Override example in .env:
-#   GENIE_DIR=/path/to/genie_model_reference
-#
+# ── Load .env (safe parser — never executes values as shell) ──────────────────
 if [ -f "$PROJ_DIR/.env" ]; then
     while IFS= read -r line || [ -n "$line" ]; do
-        # Skip blank lines and comments
         [[ "$line" =~ ^[[:space:]]*$ ]] && continue
         [[ "$line" =~ ^[[:space:]]*# ]] && continue
-        # Only export lines that look like KEY=VALUE
         if [[ "$line" =~ ^[A-Za-z_][A-Za-z0-9_]*= ]]; then
             export "$line"
         fi
     done < "$PROJ_DIR/.env"
 fi
 
-GENIE_DIR="${GENIE_DIR:-$PROJ_DIR/genie}"
-
-if [ ! -d "$GENIE_DIR" ]; then
-    echo "ERROR: Genie TTS directory not found: $GENIE_DIR"
-    echo "Set GENIE_DIR in .env or the environment to the correct path."
+# ── Genie TTS Server (port 8000) ─────────────────────────────────────────────
+#
+# The Genie TTS launcher is always genie/server.py from this repo.
+# The virtualenv lives separately (usually inside genie_model_reference/).
+#
+# GENIE_VENV_DIR: directory that contains the .venv/ or venv/ for genie_tts.
+#   Auto-detected in order:
+#     1. $GENIE_VENV_DIR  (explicit override via .env or environment)
+#     2. $PROJ_DIR/genie_model_reference/   (sibling/subdir with full install)
+#     3. $PROJ_DIR/genie/                   (fallback, dev/minimal)
+#
+GENIE_SERVER="$PROJ_DIR/genie/server.py"
+if [ ! -f "$GENIE_SERVER" ]; then
+    echo "ERROR: Genie TTS launcher not found: $GENIE_SERVER"
     exit 1
 fi
 
-if [ ! -f "$GENIE_DIR/server.py" ]; then
-    echo "ERROR: No server.py found in $GENIE_DIR"
-    exit 1
+if [ -z "${GENIE_VENV_DIR:-}" ]; then
+    if [ -d "$PROJ_DIR/genie_model_reference" ]; then
+        GENIE_VENV_DIR="$PROJ_DIR/genie_model_reference"
+    else
+        GENIE_VENV_DIR="$PROJ_DIR/genie"
+    fi
 fi
 
-echo "Starting Genie TTS server (port 8000) from $GENIE_DIR ..."
-cd "$GENIE_DIR"
+echo "Starting Genie TTS server (port 8000)..."
+echo "  Script : $GENIE_SERVER"
+echo "  Venv   : $GENIE_VENV_DIR"
 
-if [ -d ".venv/bin" ]; then
-    source .venv/bin/activate
-    python server.py &
+if [ -d "$GENIE_VENV_DIR/.venv/bin" ]; then
+    source "$GENIE_VENV_DIR/.venv/bin/activate"
+    python "$GENIE_SERVER" &
     GENIE_PID=$!
     deactivate
-elif [ -d "venv/bin" ]; then
-    source venv/bin/activate
-    python server.py &
+elif [ -d "$GENIE_VENV_DIR/venv/bin" ]; then
+    source "$GENIE_VENV_DIR/venv/bin/activate"
+    python "$GENIE_SERVER" &
     GENIE_PID=$!
     deactivate
 else
-    echo "WARNING: No .venv/ or venv/ found in $GENIE_DIR — using system python"
-    python3 server.py &
-    GENIE_PID=$!
+    echo "ERROR: No .venv/ or venv/ found in $GENIE_VENV_DIR"
+    echo "Set GENIE_VENV_DIR in .env to the directory containing the genie_tts venv."
+    exit 1
 fi
 
 sleep 2
 
 # ── Voice Satellite Server (port 8001) ────────────────────────────────────────
-echo "Starting Voice Satellite server (port 8001) from $PROJ_DIR ..."
+echo "Starting Voice Satellite server (port 8001)..."
 cd "$PROJ_DIR"
 source venv/bin/activate
 python server.py &
