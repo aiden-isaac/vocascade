@@ -114,7 +114,10 @@ class GenieTTSClient:
                     body = await response.text()
                     raise RuntimeError(f"Genie {path} failed with status {response.status}: {body}")
                 if response.content_type == "application/json":
-                    return await response.json()
+                    data = await response.json()
+                    if isinstance(data, dict) and data.get("status") == "error":
+                        raise RuntimeError(f"Genie {path} error: {data.get('message', data)}")
+                    return data
                 return {}
 
 

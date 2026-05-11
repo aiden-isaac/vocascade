@@ -285,122 +285,134 @@ function stopQueuedAudio() {
   if (audioContext) nextAudioStartTime = audioContext.currentTime;
 }
 
-// Mel spectrogram pipeline for OpenWakeWord  [model input: 1 x 16 x 96]
-const WW_N_FFT      = 512;
-const WW_WIN_LENGTH = 400;
-const WW_HOP_LENGTH = 160;
-const WW_N_MELS     = 96;
-const WW_N_FRAMES   = 16;
+// OpenWakeWord 3-Stage Pipeline
+const WW_FRAME_SAMPLES = 1280;
 
-const _hannWin = (() => {
-  const w = new Float32Array(WW_WIN_LENGTH);
-  for (let i = 0; i < WW_WIN_LENGTH; i++)
-    w[i] = 0.5 * (1 - Math.cos(2 * Math.PI * i / (WW_WIN_LENGTH - 1)));
-  return w;
-})();
+let melspecSess = null;
+let embedSess = null;
+let wwSess = null;
 
-const _melFB = (() => {
-  const nF = WW_N_FFT / 2 + 1;
-  const h2m = hz => 2595 * Math.log10(1 + hz / 700);
-  const m2h = m  => 700 * (10 ** (m / 2595) - 1);
-  const mMin = h2m(0), mMax = h2m(8000);
-  const pts  = Array.from({length: WW_N_MELS + 2},
-    (_, i) => m2h(mMin + (mMax - mMin) * i / (WW_N_MELS + 1)));
-  const freqs = Array.from({length: nF}, (_, i) => i * 16000 / WW_N_FFT);
-  const fb = new Float32Array(WW_N_MELS * nF);
-  for (let m = 0; m < WW_N_MELS; m++)
-    for (let f = 0; f < nF; f++) {
-      const fr = freqs[f];
-      let v = 0;
-      if (fr >= pts[m]   && fr <= pts[m+1]) v = (fr - pts[m])   / (pts[m+1] - pts[m]);
-      if (fr >= pts[m+1] && fr <= pts[m+2]) v = (pts[m+2] - fr) / (pts[m+2] - pts[m+1]);
-      fb[m * nF + f] = v;
-    }
-  return {fb, nF};
-})();
-
-function _fft(re, im) {
-  const N = re.length;
-  for (let i = 1, j = 0; i < N; i++) {
-    let b = N >> 1;
-    for (; j & b; b >>= 1) j ^= b;
-    j ^= b;
-    if (i < j) { [re[i],re[j]]=[re[j],re[i]]; [im[i],im[j]]=[im[j],im[i]]; }
-  }
-  for (let len = 2; len <= N; len <<= 1) {
-    const a = -2*Math.PI/len, wRe = Math.cos(a), wIm = Math.sin(a);
-    for (let i = 0; i < N; i += len) {
-      let cRe = 1, cIm = 0;
-      for (let j = 0; j < len>>1; j++) {
-        const uR=re[i+j],uI=im[i+j];
-        const h=i+j+(len>>1);
-        const vR=re[h]*cRe-im[h]*cIm, vI=re[h]*cIm+im[h]*cRe;
-        re[i+j]=uR+vR; im[i+j]=uI+vI; re[h]=uR-vR; im[h]=uI-vI;
-        const nr=cRe*wRe-cIm*wIm; cIm=cRe*wIm+cIm*wRe; cRe=nr;
-      }
-    }
-  }
-}
-
-function _melFrame(samples) {
-  const re = new Float32Array(WW_N_FFT), im = new Float32Array(WW_N_FFT);
-  for (let i = 0; i < WW_WIN_LENGTH && i < samples.length; i++)
-    re[i] = samples[i] * _hannWin[i];
-  _fft(re, im);
-  const {fb, nF} = _melFB;
-  const mel = new Float32Array(WW_N_MELS);
-  for (let m = 0; m < WW_N_MELS; m++) {
-    let s = 0;
-    for (let f = 0; f < nF; f++) s += fb[m*nF+f]*(re[f]*re[f]+im[f]*im[f]);
-    mel[m] = Math.log(Math.max(s, 1e-10));
-  }
-  return mel;
-}
-
-let _wwAudio  = new Float32Array(0);
-let _wwFrames = [];
+let wwPcmBuffer = new Float32Array(0);
+let melBuffer = []; // stores [32] arrays
+let featureBuffer = []; // stores [96] arrays
 
 function feedAudioToWakeword(frame) {
-  const buf = new Float32Array(_wwAudio.length + frame.length);
-  buf.set(_wwAudio); buf.set(frame, _wwAudio.length);
-  _wwAudio = buf;
-  while (_wwAudio.length >= WW_WIN_LENGTH) {
-    _wwFrames.push(_melFrame(_wwAudio));
-    if (_wwFrames.length > WW_N_FRAMES) _wwFrames.shift();
-    _wwAudio = _wwAudio.slice(WW_HOP_LENGTH);
+  // Convert [-1, 1] float32 to int16-scaled float32 for melspec
+  const scaled = new Float32Array(frame.length);
+  for (let i = 0; i < frame.length; i++) {
+    scaled[i] = frame[i] * 32767.0;
+  }
+  
+  const buf = new Float32Array(wwPcmBuffer.length + scaled.length);
+  buf.set(wwPcmBuffer);
+  buf.set(scaled, wwPcmBuffer.length);
+  wwPcmBuffer = buf;
+  
+  // We process exactly 1280 samples at a time
+  while (wwPcmBuffer.length >= WW_FRAME_SAMPLES) {
+    const chunk = wwPcmBuffer.slice(0, WW_FRAME_SAMPLES);
+    wwPcmBuffer = wwPcmBuffer.slice(WW_FRAME_SAMPLES);
+    _runWakewordPipeline(chunk);
   }
 }
 
-// Wakeword (OpenWakeWord ONNX)  input='onnx::Flatten_0' [1,16,96]  output='39' [1,1]
+async function _runWakewordPipeline(chunk) {
+  if (!melspecSess || !embedSess || !wwSess) return;
+  
+  try {
+    // 1. Melspectrogram (input: [1, 1280] float32)
+    const melTensor = new ort.Tensor("float32", chunk, [1, WW_FRAME_SAMPLES]);
+    const melOut = await melspecSess.run({ "input": melTensor });
+    const melData = Object.values(melOut)[0].data; // expected [1, frames, 32]
+    
+    // melData could have multiple frames (e.g., 5 frames of 32 bins)
+    const numFrames = melData.length / 32;
+    for (let i = 0; i < numFrames; i++) {
+      const frame = new Float32Array(32);
+      for (let j = 0; j < 32; j++) {
+        // transform: x/10 + 2
+        frame[j] = (melData[i * 32 + j] / 10.0) + 2.0;
+      }
+      melBuffer.push(frame);
+    }
+    
+    // 2. Embedding Model
+    // Requires 76 mel frames. We process one embedding every 8 new frames (1280 samples = 8 frames)
+    // We just run it whenever we have >= 76 frames, taking the most recent 76.
+    while (melBuffer.length >= 76) {
+      // Actually we just run it once per 1280 samples (8 frames added).
+      // Let's just take the last 76 frames.
+      const embInput = new Float32Array(76 * 32);
+      for (let i = 0; i < 76; i++) {
+        embInput.set(melBuffer[melBuffer.length - 76 + i], i * 32);
+      }
+      const embTensor = new ort.Tensor("float32", embInput, [1, 76, 32, 1]);
+      const embOut = await embedSess.run({ "input_1": embTensor });
+      const embData = Object.values(embOut)[0].data; // [1, 96]
+      featureBuffer.push(embData);
+      
+      // Shift melBuffer by 8 frames to advance the window
+      melBuffer.splice(0, 8);
+    }
+    
+    // 3. Wakeword Classifier
+    if (featureBuffer.length >= 16) {
+      // Take last 16 embeddings
+      const wwInput = new Float32Array(16 * 96);
+      for (let i = 0; i < 16; i++) {
+        wwInput.set(featureBuffer[featureBuffer.length - 16 + i], i * 96);
+      }
+      const wwTensor = new ort.Tensor("float32", wwInput, [1, 16, 96]);
+      const wwOut = await wwSess.run({ "onnx::Flatten_0": wwTensor });
+      const score = Object.values(wwOut)[0].data[0];
+      
+      // Shift feature buffer so we don't grow infinitely
+      if (featureBuffer.length > 30) {
+        featureBuffer.shift();
+      }
+      
+      if (score >= WAKEWORD_THRESHOLD) {
+        log("Wakeword detected! Score: " + score.toFixed(3), "hi");
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: "wakeword" }));
+        }
+        // clear buffers after activation to avoid double-triggers
+        featureBuffer = [];
+      }
+    }
+    
+  } catch (err) {
+    // silently fail on individual frame errors
+  }
+}
+
+// Wakeword (OpenWakeWord ONNX)
 async function loadWakeword() {
   try {
     const resp = await fetch(WAKEWORD_PATH + "model.json");
     if (!resp.ok) throw new Error("model.json not found");
     const meta = await resp.json();
     const modelFile = meta.file || "model.onnx";
-    wwSession = await ort.InferenceSession.create(WAKEWORD_PATH + modelFile, {
-      executionProviders: ["wasm"],
-    });
+    
+    // Load all 3 models
+    melspecSess = await ort.InferenceSession.create(WAKEWORD_PATH + "melspectrogram.onnx", { executionProviders: ["wasm"] });
+    embedSess = await ort.InferenceSession.create(WAKEWORD_PATH + "embedding_model.onnx", { executionProviders: ["wasm"] });
+    wwSess = await ort.InferenceSession.create(WAKEWORD_PATH + modelFile, { executionProviders: ["wasm"] });
+    
     wwDot.className = "ww-dot ok";
     wwStatusEl.textContent = "Wakeword: " + (meta.name || modelFile) + " loaded";
-    log("Wakeword model loaded: " + (meta.name || modelFile), "hi");
+    log("Wakeword pipeline loaded successfully", "hi");
   } catch (err) {
     wwDot.className = "ww-dot err";
-    wwStatusEl.textContent = "Wakeword: not loaded (place model.onnx + model.json in static/wakeword/)";
+    wwStatusEl.textContent = "Wakeword: failed to load pipeline";
     log("Wakeword not loaded: " + err.message, "warn");
   }
 }
 
+// VAD integration point
 async function runWakeword() {
-  if (!wwSession || _wwFrames.length < WW_N_FRAMES) return false;
-  try {
-    const data = new Float32Array(WW_N_FRAMES * WW_N_MELS);
-    for (let i = 0; i < WW_N_FRAMES; i++) data.set(_wwFrames[i], i * WW_N_MELS);
-    const tensor = new ort.Tensor("float32", data, [1, WW_N_FRAMES, WW_N_MELS]);
-    const out = await wwSession.run({"onnx::Flatten_0": tensor});
-    const score = Object.values(out)[0].data[0];
-    return score >= WAKEWORD_THRESHOLD;
-  } catch (_) { return false; }
+  // Handled asynchronously in _runWakewordPipeline now
+  return false;
 }
 
 // ── WebSocket ────────────────────────────────────────────────────────────────
@@ -507,12 +519,6 @@ async function startListening() {
 
         if (isPassiveMode && wwSession) {
           feedAudioToWakeword(audioFrame);
-          const fired = await runWakeword();
-          if (fired) {
-            log("Wakeword detected!", "hi");
-            if (ws && ws.readyState === WebSocket.OPEN)
-              ws.send(JSON.stringify({ type: "wakeword" }));
-          }
         }
       },
 
