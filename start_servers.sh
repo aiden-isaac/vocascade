@@ -44,6 +44,10 @@ echo "Starting Genie TTS server (port 8000)..."
 echo "  Script : $GENIE_SERVER"
 echo "  Venv   : $GENIE_VENV_DIR"
 
+# genie_tts looks for GenieData/ relative to the working directory at import
+# time. cd into GENIE_VENV_DIR so it finds <genie_model_reference>/GenieData.
+cd "$GENIE_VENV_DIR"
+
 if [ -d "$GENIE_VENV_DIR/.venv/bin" ]; then
     source "$GENIE_VENV_DIR/.venv/bin/activate"
     python "$GENIE_SERVER" &
