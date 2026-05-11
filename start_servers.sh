@@ -44,9 +44,17 @@ echo "Starting Genie TTS server (port 8000)..."
 echo "  Script : $GENIE_SERVER"
 echo "  Venv   : $GENIE_VENV_DIR"
 
-# genie_tts looks for GenieData/ relative to the working directory at import
-# time. cd into GENIE_VENV_DIR so it finds <genie_model_reference>/GenieData.
-cd "$GENIE_VENV_DIR"
+# genie_tts resolves GenieData/ at import time. Point it at the absolute path
+# so it works regardless of working directory.
+export GENIE_DATA_DIR="${GENIE_DATA_DIR:-$GENIE_VENV_DIR/GenieData}"
+
+if [ ! -d "$GENIE_DATA_DIR" ]; then
+    echo "ERROR: GenieData not found at $GENIE_DATA_DIR"
+    echo "Set GENIE_DATA_DIR in .env to the directory containing speaker_encoder.onnx etc."
+    exit 1
+fi
+
+echo "  Data   : $GENIE_DATA_DIR"
 
 if [ -d "$GENIE_VENV_DIR/.venv/bin" ]; then
     source "$GENIE_VENV_DIR/.venv/bin/activate"
