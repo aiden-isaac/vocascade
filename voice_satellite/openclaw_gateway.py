@@ -185,6 +185,7 @@ class OpenClawGatewayClient:
 
     def _connect_frame(self) -> dict[str, Any]:
         return {
+            "type": "hello",
             "minProtocol": PROTOCOL_VERSION,
             "maxProtocol": PROTOCOL_VERSION,
             "client": {
@@ -212,7 +213,12 @@ class OpenClawGatewayClient:
         )
 
         while True:
-            frame = await asyncio.wait_for(self._recv_frame(), timeout=self.request_timeout)
+            try:
+                frame = await asyncio.wait_for(self._recv_frame(), timeout=self.request_timeout)
+            except TimeoutError as e:
+                logger.error("OpenClawGatewayClient._request: Timeout waiting for response to %s (id: %s)", method, request_id)
+                raise GatewayError("timeout", f"Request {method} timed out", True) from e
+
             logger.debug("OpenClawGatewayClient._request: Received frame: %s", frame)
             if frame.get("type") == "res" and frame.get("id") == request_id:
                 if frame.get("ok") is True:
