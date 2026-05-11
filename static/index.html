@@ -378,7 +378,7 @@ async function _runWakewordPipeline(chunk) {
     }
     
   } catch (err) {
-    // silently fail on individual frame errors
+    log("WW Error: " + err.message, "warn");
   }
 }
 
