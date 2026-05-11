@@ -50,35 +50,21 @@ def main():
     print("\nInitiating export...")
     
     try:
-        from genie_tts.exporter import export_model
-        print("Running genie_tts.exporter.export_model...")
-        export_model(
-            gpt_path=str(pth_file),
-            sovits_path=str(ckpt_file),
-            ref_audio=str(wav_file),
-            ref_text=ref_text,
+        from genie_tts.Converter.Converter import convert
+        print("Running genie_tts.Converter.Converter.convert...")
+        convert(
+            torch_ckpt_path=str(ckpt_file),
+            torch_pth_path=str(pth_file),
             output_dir=str(export_dir)
         )
         print("\nExport completed successfully!")
-    except ImportError:
-        print("genie_tts package not found in current environment.")
-        print("Trying CLI fallback...")
-        
-        cmd = [
-            sys.executable, "-m", "genie_tts.export",
-            "--gpt", str(pth_file),
-            "--sovits", str(ckpt_file),
-            "--ref_audio", str(wav_file),
-            "--ref_text", ref_text,
-            "--output", str(export_dir)
-        ]
-        
-        try:
-            subprocess.run(cmd, check=True)
-            print("\nExport completed successfully via CLI!")
-        except subprocess.CalledProcessError as e:
-            print(f"\nExport failed with exit code {e.returncode}")
-            sys.exit(1)
+    except ImportError as e:
+        print(f"Error importing genie_tts Converter: {e}")
+        print("Ensure you are running this script from the Genie TTS virtual environment.")
+        sys.exit(1)
+    except Exception as e:
+        print(f"Export failed with exception: {e}")
+        sys.exit(1)
             
 if __name__ == "__main__":
     main()
