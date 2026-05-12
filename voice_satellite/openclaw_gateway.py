@@ -1,12 +1,17 @@
 import asyncio
+import base64
+import hashlib
 import json
 import os
+import time
 import uuid
 import logging
 from collections.abc import Awaitable, Callable
 from typing import Any, AsyncIterator
 
 import websockets
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from cryptography.hazmat.primitives import serialization
 
 logger = logging.getLogger(__name__)
 
@@ -68,8 +73,28 @@ class OpenClawGatewayClient:
             self._websocket = await self._connect_impl(self.url)
             logger.info("OpenClawGatewayClient.connect: Successfully connected to %s", self.url)
 
+        # OpenClaw sends a connect.challenge event BEFORE accepting our connect request.
+        # We must receive it, extract the nonce, then build a signed connect request.
+        logger.info("OpenClawGatewayClient.connect: Waiting for connect.challenge...")
+        challenge_frame = await asyncio.wait_for(
+            self._recv_frame(ignore_pending=False),
+            timeout=self.handshake_timeout,
+        )
+        if (
+            challenge_frame.get("type") == "event"
+            and challenge_frame.get("event") == "connect.challenge"
+        ):
+            nonce = challenge_frame["payload"]["nonce"]
+            logger.info("OpenClawGatewayClient.connect: Received challenge, building signed request...")
+        else:
+            logger.warning("Unexpected frame during handshake: %s", challenge_frame)
+            nonce = None
+
         logger.info("OpenClawGatewayClient.connect: Sending connect request...")
-        payload = await self._request("connect", self._connect_params(), request_id=self._make_id("req"))
+        params = self._connect_params(nonce=nonce)
+        payload = await self._request(
+            "connect", params, request_id=self._make_id("req")
+        )
         logger.debug("OpenClawGatewayClient.connect: Handshake response payload: %s", payload)
 
     async def close(self) -> None:
@@ -80,30 +105,62 @@ class OpenClawGatewayClient:
 
     async def one_shot(self, agent_id: str, message: str) -> str:
         run_id = self._make_id("voice")
-        await self._request(
-            "agent",
-            {
+        logger.info("OpenClawGatewayClient.one_shot: Sending agent request (id: %s)", run_id)
+        await self._send_json(
+            {"type": "req", "id": run_id, "method": "agent", "params": {
                 "message": message,
                 "agentId": agent_id,
                 "deliver": False,
                 "idempotencyKey": run_id,
-            },
-            request_id=run_id,
+            }}
         )
+        
+        # Phase 1: Wait for ack res
+        while True:
+            try:
+                frame = await asyncio.wait_for(self._recv_frame(ignore_pending=True), timeout=self.request_timeout)
+            except TimeoutError as e:
+                logger.error("OpenClawGatewayClient.one_shot: Timeout waiting for ack")
+                raise GatewayError("timeout", "Agent request timed out waiting for ack", True) from e
+            
+            logger.debug("OpenClawGatewayClient.one_shot: Received frame: %s", frame)
+            if frame.get("type") == "res" and frame.get("id") == run_id:
+                if frame.get("ok") is False:
+                    raise self._gateway_error(frame)
+                break
+            self._pending_frames.append(frame)
+        
+        # Phase 2: Collect streaming event frames
         return await self._collect_final_text("agent", run_id=run_id)
 
     async def stream_one_shot(self, agent_id: str, message: str) -> AsyncIterator[str]:
         run_id = self._make_id("voice")
-        await self._request(
-            "agent",
-            {
+        logger.info("OpenClawGatewayClient.stream_one_shot: Sending agent request (id: %s)", run_id)
+        await self._send_json(
+            {"type": "req", "id": run_id, "method": "agent", "params": {
                 "message": message,
                 "agentId": agent_id,
                 "deliver": False,
                 "idempotencyKey": run_id,
-            },
-            request_id=run_id,
+            }}
         )
+        
+        # Phase 1: Wait for ack res
+        while True:
+            try:
+                frame = await asyncio.wait_for(self._recv_frame(ignore_pending=True), timeout=self.request_timeout)
+            except TimeoutError as e:
+                logger.error("OpenClawGatewayClient.stream_one_shot: Timeout waiting for ack")
+                raise GatewayError("timeout", "Agent request timed out waiting for ack", True) from e
+            
+            logger.debug("OpenClawGatewayClient.stream_one_shot: Received frame: %s", frame)
+            if frame.get("type") == "res" and frame.get("id") == run_id:
+                if frame.get("ok") is False:
+                    raise self._gateway_error(frame)
+                break
+            self._pending_frames.append(frame)
+        
+        # Phase 2: Stream event frames
         async for chunk in self._stream_text("agent", run_id=run_id):
             yield chunk
 
@@ -119,20 +176,37 @@ class OpenClawGatewayClient:
                 request_id=create_request_id,
             )
         except GatewayError as error:
-            if "exist" not in error.code.lower() and "exist" not in error.message.lower():
+            msg = f"{error.code}: {error.message}".lower()
+            if "exist" not in msg and "already in use" not in msg:
                 raise
 
         run_id = self._make_id("voice")
-        await self._request(
-            "chat.send",
-            {
+        logger.info("OpenClawGatewayClient.persistent_send: Sending chat.send request (id: %s)", run_id)
+        await self._send_json(
+            {"type": "req", "id": run_id, "method": "chat.send", "params": {
                 "sessionKey": resolved_session_key,
                 "message": message,
                 "deliver": False,
                 "idempotencyKey": run_id,
-            },
-            request_id=run_id,
+            }}
         )
+
+        # Phase 1: Wait for ack res
+        while True:
+            try:
+                frame = await asyncio.wait_for(self._recv_frame(ignore_pending=True), timeout=self.request_timeout)
+            except TimeoutError as e:
+                logger.error("OpenClawGatewayClient.persistent_send: Timeout waiting for ack")
+                raise GatewayError("timeout", "Chat send timed out waiting for ack", True) from e
+
+            logger.debug("OpenClawGatewayClient.persistent_send: Received frame: %s", frame)
+            if frame.get("type") == "res" and frame.get("id") == run_id:
+                if frame.get("ok") is False:
+                    raise self._gateway_error(frame)
+                break
+            self._pending_frames.append(frame)
+
+        # Phase 2: Collect streaming event frames
         return await self._collect_final_text(
             "chat",
             run_id=run_id,
@@ -156,20 +230,37 @@ class OpenClawGatewayClient:
                 request_id=create_request_id,
             )
         except GatewayError as error:
-            if "exist" not in error.code.lower() and "exist" not in error.message.lower():
+            msg = f"{error.code}: {error.message}".lower()
+            if "exist" not in msg and "already in use" not in msg:
                 raise
 
         run_id = self._make_id("voice")
-        await self._request(
-            "chat.send",
-            {
+        logger.info("OpenClawGatewayClient.stream_persistent_send: Sending chat.send request (id: %s)", run_id)
+        await self._send_json(
+            {"type": "req", "id": run_id, "method": "chat.send", "params": {
                 "sessionKey": resolved_session_key,
                 "message": message,
                 "deliver": False,
                 "idempotencyKey": run_id,
-            },
-            request_id=run_id,
+            }}
         )
+
+        # Phase 1: Wait for ack res
+        while True:
+            try:
+                frame = await asyncio.wait_for(self._recv_frame(ignore_pending=True), timeout=self.request_timeout)
+            except TimeoutError as e:
+                logger.error("OpenClawGatewayClient.stream_persistent_send: Timeout waiting for ack")
+                raise GatewayError("timeout", "Chat send timed out waiting for ack", True) from e
+
+            logger.debug("OpenClawGatewayClient.stream_persistent_send: Received frame: %s", frame)
+            if frame.get("type") == "res" and frame.get("id") == run_id:
+                if frame.get("ok") is False:
+                    raise self._gateway_error(frame)
+                break
+            self._pending_frames.append(frame)
+
+        # Phase 2: Stream event frames
         async for chunk in self._stream_text(
             "chat",
             run_id=run_id,
@@ -177,21 +268,85 @@ class OpenClawGatewayClient:
         ):
             yield chunk
 
-    def _connect_params(self) -> dict[str, Any]:
+    def _get_device_info(self) -> tuple[str | None, str | None]:
+        device_json_path = os.path.join(
+            os.path.expanduser("~"), ".openclaw", "identity", "device.json"
+        )
+        if not os.path.exists(device_json_path):
+            logger.warning("No device.json found at %s", device_json_path)
+            return None, None
+        try:
+            with open(device_json_path, "r") as f:
+                data = json.load(f)
+            private_key_pem = data.get("privateKeyPem")
+            public_key_pem = data.get("publicKeyPem")
+            stored_device_id = data.get("deviceId")
+            if not private_key_pem or not public_key_pem:
+                logger.warning("device.json missing key material")
+                return None, None
+            private_key = serialization.load_pem_private_key(
+                private_key_pem.encode("utf-8"), password=None
+            )
+            raw_public_key_bytes = private_key.public_key().public_bytes(
+                encoding=serialization.Encoding.Raw,
+                format=serialization.PublicFormat.Raw,
+            )
+            derived_device_id = hashlib.sha256(raw_public_key_bytes).hexdigest()
+            logger.info("Derived device_id=%s (stored=%s)", derived_device_id, stored_device_id)
+            return private_key, public_key_pem
+        except Exception as e:
+            logger.error("Failed to load device identity: %s", e)
+            return None, None
+
+    def _build_device_auth(self, nonce: str) -> dict[str, Any] | None:
+        private_key, public_key_pem = self._get_device_info()
+        if private_key is None:
+            logger.warning("No device identity available; skipping device auth")
+            return None
+        client_id = "cli"
+        client_mode = "cli"
+        role = "operator"
+        scopes_csv = ",".join(["operator.read", "operator.write"])
+        signed_at = int(time.time() * 1000)
+        raw_pk = private_key.public_key().public_bytes(
+            encoding=serialization.Encoding.Raw,
+            format=serialization.PublicFormat.Raw,
+        )
+        device_id = hashlib.sha256(raw_pk).hexdigest()
+        payload_str = f"v2|{device_id}|{client_id}|{client_mode}|{role}|{scopes_csv}|{signed_at}|{self.token}|{nonce}"
+        logger.debug("Signing device auth payload: %s", payload_str[:80] + "...")
+        signature_bytes = private_key.sign(payload_str.encode("utf-8"))
+        signature_b64 = base64.b64encode(signature_bytes).decode("utf-8")
         return {
+            "id": device_id,
+            "publicKey": public_key_pem,
+            "signature": signature_b64,
+            "signedAt": signed_at,
+            "nonce": nonce,
+        }
+
+    def _connect_params(self, nonce: str | None = None) -> dict[str, Any]:
+        params = {
             "minProtocol": PROTOCOL_VERSION,
             "maxProtocol": PROTOCOL_VERSION,
             "client": {
-                "id": "gateway-client",
-                "displayName": "voice-satellite",
+                "id": "cli",
+                "mode": "cli",
                 "version": "0.1.0",
                 "platform": "linux",
-                "mode": "app",
             },
             "role": "operator",
             "scopes": ["operator.read", "operator.write"],
             "auth": {"token": self.token},
         }
+        if nonce:
+            device_auth = self._build_device_auth(nonce)
+            if device_auth:
+                params["device"] = device_auth
+                logger.info("Device auth included in connect params")
+            else:
+                logger.warning("Device auth requested but no identity available")
+        return params
 
     async def _request(
         self,

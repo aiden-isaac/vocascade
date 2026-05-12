@@ -27,20 +27,53 @@ async def fake_connect(websocket: FakeWebSocket, url: str) -> FakeWebSocket:
     return websocket
 
 
+def _make_challenge(nonce: str = "test-nonce") -> dict:
+    return {
+        "type": "event",
+        "event": "connect.challenge",
+        "payload": {"nonce": nonce},
+    }
+
+
+def _make_hello_ok(req_id: str = "req-1") -> dict:
+    return {
+        "type": "res",
+        "id": req_id,
+        "ok": True,
+        "payload": {
+            "type": "hello-ok",
+            "protocol": 3,
+            "server": {"version": "test"},
+            "auth": {"role": "operator", "scopes": ["operator.read", "operator.write"]},
+        },
+    }
+
+
 async def test_one_shot() -> None:
+    # Frame sequence:
+    # 0: challenge (consumed by connect)
+    # 1: hello-ok for connect (consumed by _request)
+    # 2: ack res for agent call
+    # 3-4: agent event frames (delta, final)
     websocket = FakeWebSocket(
         [
-            {"type": "hello-ok"},
-            {"type": "res", "id": "voice-test", "ok": True, "payload": {"status": "started"}},
+            _make_challenge(),
+            _make_hello_ok("connect-id"),
             {
-                "type": "event",
-                "event": "agent",
-                "payload": {"runId": "voice-test", "state": "delta", "data": {"text": "hel"}},
+                "type": "res",
+                "id": "agent-test",
+                "ok": True,
+                "payload": {"status": "started"},
             },
             {
                 "type": "event",
                 "event": "agent",
-                "payload": {"runId": "voice-test", "state": "final", "data": {"text": "hello"}},
+                "payload": {"runId": "agent-test", "state": "delta", "data": {"text": "hel"}},
+            },
+            {
+                "type": "event",
+                "event": "agent",
+                "payload": {"runId": "agent-test", "state": "final", "data": {"text": "hello"}},
             },
         ]
     )
@@ -48,7 +81,10 @@ async def test_one_shot() -> None:
         token="test-token",
         connect_impl=lambda url: fake_connect(websocket, url),
     )
-    client._make_id = lambda prefix: "voice-test"
+    client._make_id = lambda prefix: {
+        "req": "connect-id",
+        "voice": "agent-test",
+    }.get(prefix, f"{prefix}-id")
 
     await client.connect()
     text = await client.one_shot("ugin", "hello?")
@@ -56,31 +92,49 @@ async def test_one_shot() -> None:
 
     assert text == "hello"
     assert websocket.closed is True
+    assert len(websocket.sent) == 2
     assert websocket.sent[0]["auth"] == {"token": "test-token"}
     assert websocket.sent[1] == {
         "type": "req",
-        "id": "voice-test",
+        "id": "agent-test",
         "method": "agent",
         "params": {
             "message": "hello?",
             "agentId": "ugin",
             "deliver": False,
-            "idempotencyKey": "voice-test",
+            "idempotencyKey": "agent-test",
         },
     }
 
 
 async def test_persistent_send() -> None:
+    # Frame sequence:
+    # 0: challenge
+    # 1: hello-ok for connect
+    # 2: ack for sessions.create
+    # 3: ack for chat.send
+    # 4-5: chat event frames
     websocket = FakeWebSocket(
         [
-            {"type": "hello-ok"},
-            {"type": "res", "id": "create-test", "ok": True, "payload": {}},
-            {"type": "res", "id": "voice-test", "ok": True, "payload": {"runId": "voice-test"}},
+            _make_challenge(),
+            _make_hello_ok("connect-id"),
+            {
+                "type": "res",
+                "id": "create-id",
+                "ok": True,
+                "payload": {},
+            },
+            {
+                "type": "res",
+                "id": "chat-test",
+                "ok": True,
+                "payload": {"runId": "chat-test"},
+            },
             {
                 "type": "event",
                 "event": "chat",
                 "payload": {
-                    "runId": "voice-test",
+                    "runId": "chat-test",
                     "sessionKey": "agent:ugin:voice",
                     "state": "delta",
                     "message": {"content": [{"type": "text", "text": "hi "}]},
@@ -90,7 +144,7 @@ async def test_persistent_send() -> None:
                 "type": "event",
                 "event": "chat",
                 "payload": {
-                    "runId": "voice-test",
+                    "runId": "chat-test",
                     "sessionKey": "agent:ugin:voice",
                     "state": "final",
                     "message": {"content": [{"type": "text", "text": "hi there"}]},
@@ -102,28 +156,32 @@ async def test_persistent_send() -> None:
         token="test-token",
         connect_impl=lambda url: fake_connect(websocket, url),
     )
-    ids = {"create-session": "create-test", "voice": "voice-test"}
-    client._make_id = lambda prefix: ids[prefix]
+    client._make_id = lambda prefix: {
+        "req": "connect-id",
+        "create-session": "create-id",
+        "voice": "chat-test",
+    }.get(prefix, f"{prefix}-id")
 
     await client.connect()
     text = await client.persistent_send("ugin", "voice", "status?")
 
     assert text == "hi there"
+    assert len(websocket.sent) == 3
     assert websocket.sent[1] == {
         "type": "req",
-        "id": "create-test",
+        "id": "create-id",
         "method": "sessions.create",
         "params": {"agentId": "ugin", "key": "voice", "label": "Voice Satellite"},
     }
     assert websocket.sent[2] == {
         "type": "req",
-        "id": "voice-test",
+        "id": "chat-test",
         "method": "chat.send",
         "params": {
             "sessionKey": "agent:ugin:voice",
             "message": "status?",
             "deliver": False,
-            "idempotencyKey": "voice-test",
+            "idempotencyKey": "chat-test",
         },
     }
 
@@ -131,10 +189,11 @@ async def test_persistent_send() -> None:
 async def test_error_frame() -> None:
     websocket = FakeWebSocket(
         [
-            {"type": "hello-ok"},
+            _make_challenge(),
+            _make_hello_ok("connect-id"),
             {
                 "type": "res",
-                "id": "voice-test",
+                "id": "agent-test",
                 "ok": False,
                 "error": {"code": "invalid_request", "message": "bad", "retryable": False},
             },
@@ -144,7 +203,10 @@ async def test_error_frame() -> None:
         token="test-token",
         connect_impl=lambda url: fake_connect(websocket, url),
     )
-    client._make_id = lambda prefix: "voice-test"
+    client._make_id = lambda prefix: {
+        "req": "connect-id",
+        "voice": "agent-test",
+    }.get(prefix, f"{prefix}-id")
 
     await client.connect()
     try:
@@ -157,10 +219,66 @@ async def test_error_frame() -> None:
         raise AssertionError("GatewayError was not raised")
 
 
+async def test_connect_error() -> None:
+    websocket = FakeWebSocket(
+        [
+            _make_challenge(),
+            {
+                "type": "res",
+                "id": "connect-id",
+                "ok": False,
+                "error": {"code": "AUTH_TOKEN_MISMATCH", "message": "token mismatch", "retryable": True},
+            },
+        ]
+    )
+    client = OpenClawGatewayClient(
+        token="bad-token",
+        connect_impl=lambda url: fake_connect(websocket, url),
+    )
+    client._make_id = lambda prefix: "connect-id"
+
+    try:
+        await client.connect()
+    except GatewayError as error:
+        assert error.code == "AUTH_TOKEN_MISMATCH"
+        assert error.retryable is True
+    else:
+        raise AssertionError("GatewayError was not raised")
+
+
+async def test_no_device_json() -> None:
+    """Test that connect works even when device.json is missing (graceful degradation)."""
+    import os
+
+    original_home = os.environ.get("HOME", "/home/aiden")
+    os.environ["HOME"] = "/tmp/nonexistent"
+
+    try:
+        websocket = FakeWebSocket(
+            [
+                _make_challenge(),
+                _make_hello_ok("connect-id"),
+            ]
+        )
+        client = OpenClawGatewayClient(
+            token="test-token",
+            connect_impl=lambda url: fake_connect(websocket, url),
+        )
+        client._make_id = lambda prefix: "connect-id"
+
+        await client.connect()
+        assert len(websocket.sent) >= 1
+        assert websocket.sent[0]["auth"] == {"token": "test-token"}
+    finally:
+        os.environ["HOME"] = original_home
+
+
 async def main() -> None:
+    await test_no_device_json()
     await test_one_shot()
     await test_persistent_send()
     await test_error_frame()
+    await test_connect_error()
     print("openclaw gateway tests passed")
 
 
