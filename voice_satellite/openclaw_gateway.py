@@ -186,7 +186,7 @@ class OpenClawGatewayClient:
                 "displayName": "voice-satellite",
                 "version": "0.1.0",
                 "platform": "linux",
-                "mode": "cli",
+                "mode": "app",
             },
             "role": "operator",
             "scopes": ["operator.read", "operator.write"],
