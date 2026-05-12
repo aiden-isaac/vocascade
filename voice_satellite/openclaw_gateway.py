@@ -207,7 +207,7 @@ class OpenClawGatewayClient:
 
         while True:
             try:
-                frame = await asyncio.wait_for(self._recv_frame(), timeout=self.request_timeout)
+                frame = await asyncio.wait_for(self._recv_frame(ignore_pending=True), timeout=self.request_timeout)
             except TimeoutError as e:
                 logger.error("OpenClawGatewayClient._request: Timeout waiting for response to %s (id: %s)", method, request_id)
                 raise GatewayError("timeout", f"Request {method} timed out", True) from e
@@ -293,8 +293,8 @@ class OpenClawGatewayClient:
         logger.debug("OpenClawGatewayClient._send_json: %s", payload_str)
         await self._websocket.send(payload_str)
 
-    async def _recv_frame(self) -> dict[str, Any]:
-        if self._pending_frames:
+    async def _recv_frame(self, ignore_pending: bool = False) -> dict[str, Any]:
+        if not ignore_pending and self._pending_frames:
             return self._pending_frames.pop(0)
         if self._websocket is None:
             raise RuntimeError("OpenClaw gateway is not connected")
