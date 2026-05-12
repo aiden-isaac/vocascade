@@ -93,7 +93,7 @@ async def test_one_shot() -> None:
     assert text == "hello"
     assert websocket.closed is True
     assert len(websocket.sent) == 2
-    assert websocket.sent[0]["auth"] == {"token": "test-token"}
+    assert websocket.sent[0]["params"]["auth"] == {"token": "test-token"}
     assert websocket.sent[1] == {
         "type": "req",
         "id": "agent-test",
@@ -268,7 +268,7 @@ async def test_no_device_json() -> None:
 
         await client.connect()
         assert len(websocket.sent) >= 1
-        assert websocket.sent[0]["auth"] == {"token": "test-token"}
+        assert websocket.sent[0]["params"]["auth"] == {"token": "test-token"}
     finally:
         os.environ["HOME"] = original_home
 
