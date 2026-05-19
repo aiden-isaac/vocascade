@@ -1,0 +1,20 @@
+# Virtual environments
+venv/
+.venv/
+__pycache__/
+*.pyc
+
+# Config and secrets
+.env
+
+# Models and generated audio
+*.onnx
+static/fillers/**/*.pcm
+
+# Agent/Environment specifics
+.opencode/
+clean_files.py
+
+# OS / editor
+.DS_Store
+Thumbs.db
