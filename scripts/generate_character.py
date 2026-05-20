@@ -49,12 +49,18 @@ def validate_input_files():
 def main():
     parser = argparse.ArgumentParser(description="Generate a Genie TTS character profile.")
     parser.add_argument("--name", required=True, help="Name of the character profile to generate")
+    parser.add_argument("--overwrite", action="store_true", help="Overwrite existing character profile if it exists")
     args = parser.parse_args()
     
     character_name = args.name
     profile_dir = PROFILES_DIR / character_name
     export_dir = profile_dir / "export"
     
+    if profile_dir.exists() and not args.overwrite:
+        print(f"Error: Character profile '{character_name}' already exists at '{profile_dir}'.")
+        print("Use --overwrite to replace it.")
+        sys.exit(1)
+        
     print(f"Generating character profile: {character_name}")
     
     # 1. Validate files
@@ -87,14 +93,18 @@ def main():
         print("Error: ONNX conversion failed.")
         sys.exit(1)
         
-    # 3. Copy reference files
-    print("[3/3] Copying reference audio and transcript...")
-    wav_path = files[".wav"]
-    txt_path = files[".txt"]
+    # 3. Copy reference files and cleanup staging
+    print("[3/3] Archiving source models and reference files...")
     
-    shutil.copy2(wav_path, profile_dir / wav_path.name)
-    shutil.copy2(txt_path, profile_dir / txt_path.name)
-    
+    # We move all files from INPUT_DIR into profile_dir
+    # (this includes .ckpt, .pth, .wav, .txt, and anything else in there)
+    for item in INPUT_DIR.iterdir():
+        if item.is_file() and item.name != "README.md":
+            target_path = profile_dir / item.name
+            if target_path.exists():
+                target_path.unlink()
+            shutil.move(str(item), str(target_path))
+            
     print(f"\nSuccess! Character profile '{character_name}' generated at '{profile_dir}'.")
 
 if __name__ == "__main__":
