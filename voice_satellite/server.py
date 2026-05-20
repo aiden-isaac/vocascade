@@ -61,8 +61,18 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                     "type": "status",
                     "state": new_state.value
                 }))
+                if new_state == SessionState.ACTIVE_LISTENING:
+                    session.start_silence_timer()
+                else:
+                    session.cancel_silence_timer()
 
             session.set_state_change_callback(on_state_change)
+
+            def on_silence_expire() -> None:
+                logger.info("Silence timeout expired — returning to passive listening")
+                session.state = SessionState.PASSIVE_LISTENING
+
+            session.set_silence_callback(on_silence_expire)
 
             # Send initial state to the client
             await websocket.send_json({
@@ -83,6 +93,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                     if session.state == SessionState.ACTIVE_LISTENING:
                         session.audio_buffer = bytes_data
                         logger.info(f"Stored {len(bytes_data)} bytes of audio data in session")
+                        session.reset_silence_timer()
                 elif text_data is not None:
                     try:
                         payload = json.loads(text_data)
@@ -103,6 +114,8 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                         seconds = max(10.0, min(120.0, seconds))
                         session.silence_timeout = seconds
                         logger.info(f"Updated session silence timeout to {seconds}s")
+                        if session.state == SessionState.ACTIVE_LISTENING:
+                            session.reset_silence_timer()
 
     except WebSocketDisconnect:
         logger.info("WebSocket disconnected")

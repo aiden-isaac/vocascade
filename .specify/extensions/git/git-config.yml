@@ -50,7 +50,7 @@ auto_commit:
     message: "[Spec Kit] Add tasks"
   after_implement:
     enabled: true
-    message: "[Spec Kit] Wire wakeword and VAD WebSocket handling in server.py. Closes #13"
+    message: "[Spec Kit] Implement silence timeout logic in server.py. Closes #14"
   after_checklist:
     enabled: false
     message: "[Spec Kit] Add checklist"

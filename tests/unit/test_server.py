@@ -1,8 +1,11 @@
 import json
+import time
 import unittest
+from unittest.mock import patch
 from fastapi.testclient import TestClient
 from fastapi.websockets import WebSocketDisconnect
 from voice_satellite.server import app
+from voice_satellite.session import SessionState
 
 class TestServer(unittest.TestCase):
     def setUp(self):
@@ -50,6 +53,36 @@ class TestServer(unittest.TestCase):
             
             # 6. Send binary PCM (should not raise error or disconnect)
             ws.send_bytes(b"some_pcm_bytes")
+
+    def test_silence_timer_lifecycle(self):
+        with patch("voice_satellite.session.ConversationSession.start_silence_timer") as mock_start, \
+             patch("voice_satellite.session.ConversationSession.cancel_silence_timer") as mock_cancel:
+            
+            with self.client.websocket_connect("/ws") as ws:
+                # Receive initial state
+                ws.receive_json()
+                
+                mock_start.reset_mock()
+                mock_cancel.reset_mock()
+                
+                # Send wakeword
+                ws.send_json({"type": "wakeword"})
+                
+                # Receive acknowledging and active_listening status
+                ws.receive_json()
+                ws.receive_json()
+                
+                # Verify start_silence_timer was called when entering active_listening
+                mock_start.assert_called()
+                
+                # Send set_timeout, which resets the timer
+                mock_start.reset_mock()
+                ws.send_json({"type": "set_timeout", "seconds": 45.0})
+                
+                # Brief sleep to allow the async message handling to run
+                time.sleep(0.1)
+                
+                mock_start.assert_called()
 
 if __name__ == "__main__":
     unittest.main()
