@@ -112,3 +112,29 @@ def apply_effect_chain(pcm_bytes: bytes, effects_config: dict) -> bytes:
         arr = apply_stutter(arr, stutter_ms, stutter_repeats)
         
     return arr.tobytes()
+
+import math
+import random
+
+def get_character_effects_config(character_name: str) -> dict:
+    """
+    Get resolved character effects configuration. For Ordis, returns a randomized configuration
+    mimicking the legacy Ordis glitch parameters.
+    """
+    if not character_name:
+        return {}
+    name = character_name.lower().strip()
+    if name == "ordis":
+        pitch_factor = random.uniform(0.55, 0.63)
+        semitones = 12.0 * math.log2(pitch_factor)
+        return {
+            "pitch_shift": round(semitones, 3),
+            "tremolo_rate": round(random.uniform(8.0, 14.0), 1),
+            "tremolo_depth": 0.5,
+            "overdrive_gain": round(random.uniform(2.5, 4.5), 1),
+            "bit_depth": 16 - random.randint(1, 4),
+            "stutter_ms": float(random.randint(70, 120)),
+            "stutter_repeats": random.randint(2, 4)
+        }
+    return {}
+

@@ -50,7 +50,7 @@ auto_commit:
     message: "[Spec Kit] Add tasks"
   after_implement:
     enabled: true
-    message: "[Spec Kit] Implement audio effects post-processing module. Closes #28"
+    message: "[Spec Kit] Integrate dynamic audio effects into server TTS streaming pipeline. Closes #29"
   after_checklist:
     enabled: false
     message: "[Spec Kit] Add checklist"

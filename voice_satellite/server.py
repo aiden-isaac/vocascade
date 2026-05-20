@@ -24,6 +24,7 @@ from voice_satellite.gateway.openclaw_client import OpenClawClient
 from voice_satellite.llm.router import LLMRouter, RouterDecision, CoordinatorDecision
 from voice_satellite.session import SessionState, ConversationSession
 from voice_satellite.session.task_tracker import TaskTracker, TrackedTask
+from voice_satellite.audio.effects import apply_effect_chain, get_character_effects_config
 
 logger = logging.getLogger("voice_satellite.server")
 
@@ -87,61 +88,7 @@ async def index() -> HTMLResponse:
         return HTMLResponse(index_file.read_text(encoding="utf-8"))
     return HTMLResponse("<h1>Voice Satellite Core Client</h1>")
 
-def apply_ordis_glitch(pcm_bytes: bytes) -> bytes:
-    if not pcm_bytes:
-        return pcm_bytes
 
-    # Needs to be a multiple of 2 bytes for 16-bit PCM
-    if len(pcm_bytes) % 2 != 0:
-        pcm_bytes = pcm_bytes[:-1]
-
-    arr = np.frombuffer(pcm_bytes, dtype=np.int16).copy()
-
-    # Dynamic randomized parameters
-    current_pitch = round(random.uniform(0.55, 0.63), 3)
-    current_tremolo = round(random.uniform(8.0, 14.0), 1)
-    current_overdrive = round(random.uniform(2.5, 4.5), 1)
-    current_bitcrush = random.randint(1, 4)
-    current_stutter_ms = random.randint(70, 120)
-    current_stutter_count = random.randint(2, 4)
-    current_downsample = 2 if random.random() < 0.10 else 1
-
-    # 0. Pitch Shift (Resampling)
-    indices = np.arange(0, len(arr), current_pitch)
-    floor = np.floor(indices).astype(int)
-    ceil = np.minimum(floor + 1, len(arr) - 1)
-    weight = indices - floor
-    arr = (arr[floor] * (1 - weight) + arr[ceil] * weight).astype(np.int16)
-
-    # 0.5 Tremolo / Ring Modulation (Growl effect)
-    t = np.arange(len(arr)) / 32000.0
-    mod = np.sin(2 * np.pi * current_tremolo * t)
-    arr = (arr * (0.5 + 0.5 * mod)).astype(np.int16)
-
-    # 1. Overdrive/Clipping
-    arr_32 = arr.astype(np.int32) * current_overdrive
-    arr = np.clip(arr_32, -32768, 32767).astype(np.int16)
-
-    # 2. Bitcrush
-    if current_bitcrush > 0:
-        arr = (arr >> current_bitcrush) << current_bitcrush
-
-    # 3. Downsample
-    if current_downsample > 1:
-        sub = arr[::current_downsample]
-        arr = np.repeat(sub, current_downsample)[:len(arr)]
-
-    # 4. Stutter
-    if current_stutter_ms > 0 and current_stutter_count > 0:
-        stutter_samples = int(32000 * (current_stutter_ms / 1000.0))
-        start_idx = min(stutter_samples, len(arr) // 4)
-        if len(arr) > start_idx + stutter_samples * (current_stutter_count + 1):
-            stutter_chunk = arr[start_idx : start_idx + stutter_samples].copy()
-            for i in range(current_stutter_count):
-                insert_idx = start_idx + stutter_samples * (i + 1)
-                arr[insert_idx : insert_idx + stutter_samples] = stutter_chunk
-
-    return arr.tobytes()
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket) -> None:
@@ -268,9 +215,10 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                 session.state = SessionState.SPEAKING
 
                 current_word_offset = 0
+                effects_config = get_character_effects_config(config.tts_character_name)
                 if first_audio:
                     if first_chunk.tagged:
-                        first_audio = apply_ordis_glitch(first_audio)
+                        first_audio = apply_effect_chain(first_audio, effects_config)
                     async with ws_lock:
                         await websocket.send_json({
                             "type": "audio",
@@ -282,7 +230,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                 async for audio_chunk in first_iter:
                     if audio_chunk:
                         if first_chunk.tagged:
-                            audio_chunk = apply_ordis_glitch(audio_chunk)
+                            audio_chunk = apply_effect_chain(audio_chunk, effects_config)
                         async with ws_lock:
                             await websocket.send_json({
                                 "type": "audio",
@@ -297,7 +245,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                     async for audio_chunk in tts_client.synthesize(chunk.text):
                         if audio_chunk:
                             if chunk.tagged:
-                                audio_chunk = apply_ordis_glitch(audio_chunk)
+                                audio_chunk = apply_effect_chain(audio_chunk, effects_config)
                             async with ws_lock:
                                 await websocket.send_json({
                                     "type": "audio",
