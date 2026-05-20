@@ -1,0 +1,701 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Voice Satellite — Ordis</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap');
+*{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#04090a;--panel:#080f11;--border:#1a3a42;--accent:#00c8e0;--accent2:#00e0a0;
+  --text:#c8eef5;--muted:#4a7a8a;--warn:#e06000;--danger:#e04040;
+  --radius:16px;--glow:0 0 24px rgba(0,200,224,0.12);
+}
+body{min-height:100vh;display:grid;place-items:center;background:var(--bg);
+  color:var(--text);font-family:'Inter',ui-sans-serif,sans-serif;padding:16px}
+.panel{width:min(96vw,580px);background:var(--panel);border:1px solid var(--border);
+  border-radius:var(--radius);padding:28px 28px 24px;box-shadow:var(--glow)}
+/* header */
+.header{display:flex;align-items:center;gap:14px;margin-bottom:20px}
+.logo{width:42px;height:42px;border-radius:50%;background:linear-gradient(135deg,var(--accent),var(--accent2));
+  display:grid;place-items:center;font-size:18px;flex-shrink:0}
+h1{font-size:1.25rem;font-weight:700;letter-spacing:.04em;color:var(--accent)}
+.subtitle{font-size:.78rem;color:var(--muted);margin-top:2px}
+/* mode badge */
+.mode-badge{margin-left:auto;padding:4px 10px;border-radius:99px;font-size:.72rem;
+  font-weight:600;letter-spacing:.06em;text-transform:uppercase;border:1px solid;transition:all .3s}
+.mode-badge.passive{color:var(--muted);border-color:var(--muted);background:transparent}
+.mode-badge.active{color:var(--accent2);border-color:var(--accent2);
+  background:rgba(0,224,160,.08);box-shadow:0 0 10px rgba(0,224,160,.2)}
+/* status */
+#status{margin:0 0 16px;padding:12px 16px;border:1px solid var(--border);border-radius:12px;
+  background:#060e10;font-size:.88rem;min-height:44px;color:var(--accent2);
+  display:flex;align-items:center;gap:8px}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--accent2);flex-shrink:0;
+  animation:pulse 1.8s ease-in-out infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+.dot.idle{animation:none;background:var(--muted)}
+.dot.warn{background:var(--warn);animation:none}
+/* button */
+button{width:100%;padding:13px;border:0;border-radius:99px;
+  background:linear-gradient(90deg,var(--accent),var(--accent2));
+  color:#030d10;font:inherit;font-weight:700;font-size:.95rem;
+  cursor:pointer;transition:opacity .2s,box-shadow .2s;letter-spacing:.02em}
+button:hover{box-shadow:0 0 20px rgba(0,200,224,.35)}
+button:disabled{opacity:.45;cursor:wait}
+/* settings */
+.settings{margin-top:18px;padding:14px;border:1px solid var(--border);
+  border-radius:12px;background:#060e10}
+.settings summary{cursor:pointer;font-size:.8rem;color:var(--muted);
+  font-weight:600;letter-spacing:.05em;text-transform:uppercase;list-style:none}
+.settings summary::-webkit-details-marker{display:none}
+.settings-body{margin-top:12px;display:flex;flex-direction:column;gap:10px}
+.setting-row{display:flex;align-items:center;gap:10px;font-size:.82rem}
+.setting-row label{flex:0 0 160px;color:var(--muted)}
+.setting-row input[type=range]{flex:1;accent-color:var(--accent)}
+.setting-row .val{flex:0 0 42px;text-align:right;color:var(--text);font-weight:600}
+/* wakeword status */
+.ww-row{display:flex;align-items:center;gap:8px;font-size:.8rem;color:var(--muted);margin-top:4px}
+.ww-dot{width:7px;height:7px;border-radius:50%;background:var(--muted);flex-shrink:0}
+.ww-dot.ok{background:var(--accent2)}
+.ww-dot.err{background:var(--danger)}
+/* log */
+#log{margin-top:16px;max-height:200px;overflow-y:auto;font-size:.78rem;
+  line-height:1.55;color:var(--muted)}
+.log-entry{padding:4px 0;border-bottom:1px solid rgba(26,58,66,.5)}
+.log-entry.hi{color:var(--text)}
+.log-entry.warn{color:var(--warn)}
+</style>
+<script src="/static/libs/ort.js"></script>
+<script src="/static/libs/vad.bundle.min.js"></script>
+</head>
+<body>
+<main class="panel">
+  <div class="header">
+    <div class="logo">VS</div>
+    <div>
+      <h1>Voice Satellite</h1>
+      <div class="subtitle">OpenClaw · Genie TTS · Silero VAD v5</div>
+    </div>
+    <span class="mode-badge passive" id="modeBadge">Passive</span>
+  </div>
+
+  <div id="status"><span class="dot idle" id="dot"></span><span id="statusText">Idle</span></div>
+
+  <button id="startBtn" type="button">Start Listening</button>
+
+  <details class="settings" id="settingsPanel">
+    <summary>Settings</summary>
+    <div class="settings-body">
+      <div class="setting-row">
+        <label>Silence timeout</label>
+        <input type="range" id="timeoutSlider" min="10" max="120" step="5" value="30">
+        <span class="val" id="timeoutVal">30s</span>
+      </div>
+      <div class="setting-row">
+        <label>VAD positive thresh</label>
+        <input type="range" id="vadPosSlider" min="20" max="90" step="5" value="50">
+        <span class="val" id="vadPosVal">0.50</span>
+      </div>
+      <div class="setting-row">
+        <label>VAD negative thresh</label>
+        <input type="range" id="vadNegSlider" min="10" max="60" step="5" value="25">
+        <span class="val" id="vadNegVal">0.25</span>
+      </div>
+      <div class="ww-row">
+        <span class="ww-dot" id="wwDot"></span>
+        <span id="wwStatus">Wakeword: not loaded</span>
+      </div>
+    </div>
+  </details>
+
+  <div id="log" aria-live="polite"></div>
+</main>
+
+<script>
+const ASSET_PATH = "/static/libs/";
+const WAKEWORD_PATH = "/static/wakeword/";
+const WAKEWORD_THRESHOLD = 0.5;
+
+// ── State ──────────────────────────────────────────────────────────────────
+let ws = null;
+let micVad = null;
+let audioContext = null;
+let nextAudioStartTime = 0;
+let activeAudioSources = new Set();
+let isPassiveMode = true;
+
+// Word offset tracking for barge-in context
+let wordsPlayedAtTime = {}; // audioStartTime -> wordOffset
+
+// Wakeword ONNX
+const WW_CONTEXT_FRAMES = 16;
+const WW_FRAME_SAMPLES = 1280;
+
+let melspecSess = null;
+let embedSess = null;
+let wwSess = null;
+
+let wwPcmBuffer = new Float32Array(0);
+let melBuffer = []; // stores [32] arrays
+let featureBuffer = []; // stores [96] arrays
+
+let useWorker = false;
+let wwWorker = null;
+
+// Settings (persisted in localStorage)
+let silenceTimeout = parseInt(localStorage.getItem("silenceTimeout") || "30");
+let vadPosThresh = parseFloat(localStorage.getItem("vadPosThresh") || "0.50");
+let vadNegThresh = parseFloat(localStorage.getItem("vadNegThresh") || "0.25");
+
+// ── DOM ─────────────────────────────────────────────────────────────────────
+const statusTextEl = document.getElementById("statusText");
+const dotEl = document.getElementById("dot");
+const startBtn = document.getElementById("startBtn");
+const logEl = document.getElementById("log");
+const modeBadge = document.getElementById("modeBadge");
+const wwDot = document.getElementById("wwDot");
+const wwStatusEl = document.getElementById("wwStatus");
+
+const timeoutSlider = document.getElementById("timeoutSlider");
+const timeoutVal = document.getElementById("timeoutVal");
+const vadPosSlider = document.getElementById("vadPosSlider");
+const vadPosVal = document.getElementById("vadPosVal");
+const vadNegSlider = document.getElementById("vadNegSlider");
+const vadNegVal = document.getElementById("vadNegVal");
+
+// Init slider UI from stored values
+timeoutSlider.value = silenceTimeout;
+timeoutVal.textContent = silenceTimeout + "s";
+vadPosSlider.value = Math.round(vadPosThresh * 100);
+vadPosVal.textContent = vadPosThresh.toFixed(2);
+vadNegSlider.value = Math.round(vadNegThresh * 100);
+vadNegVal.textContent = vadNegThresh.toFixed(2);
+
+timeoutSlider.addEventListener("input", () => {
+  silenceTimeout = parseInt(timeoutSlider.value);
+  timeoutVal.textContent = silenceTimeout + "s";
+  localStorage.setItem("silenceTimeout", silenceTimeout);
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: "set_timeout", seconds: silenceTimeout }));
+  }
+});
+
+vadPosSlider.addEventListener("input", () => {
+  vadPosThresh = parseInt(vadPosSlider.value) / 100;
+  vadPosVal.textContent = vadPosThresh.toFixed(2);
+  localStorage.setItem("vadPosThresh", vadPosThresh);
+});
+
+vadNegSlider.addEventListener("input", () => {
+  vadNegThresh = parseInt(vadNegSlider.value) / 100;
+  vadNegVal.textContent = vadNegThresh.toFixed(2);
+  localStorage.setItem("vadNegThresh", vadNegThresh);
+});
+
+// ── Logging ─────────────────────────────────────────────────────────────────
+function log(msg, cls = "") {
+  const e = document.createElement("div");
+  e.className = "log-entry" + (cls ? " " + cls : "");
+  e.textContent = new Date().toLocaleTimeString() + " " + msg;
+  logEl.appendChild(e);
+  logEl.scrollTop = logEl.scrollHeight;
+  if (logEl.children.length > 120) logEl.removeChild(logEl.firstChild);
+}
+
+function setStatus(msg, type = "normal") {
+  statusTextEl.textContent = msg;
+  dotEl.className = "dot" + (type === "idle" ? " idle" : type === "warn" ? " warn" : "");
+}
+
+function setMode(passive) {
+  isPassiveMode = passive;
+  modeBadge.className = "mode-badge " + (passive ? "passive" : "active");
+  modeBadge.textContent = passive ? "Passive" : "Active";
+}
+
+// ── Audio utilities ─────────────────────────────────────────────────────────
+function ensureAudioContext() {
+  if (!audioContext) {
+    audioContext = new AudioContext({ sampleRate: 32000 });
+    nextAudioStartTime = audioContext.currentTime;
+  }
+  if (audioContext.state === "suspended") audioContext.resume();
+}
+
+function base64ToBytes(b64) {
+  const bin = atob(b64);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+
+function floatTo16BitPCM(audio) {
+  const buf = new ArrayBuffer(audio.length * 2);
+  const view = new DataView(buf);
+  for (let i = 0; i < audio.length; i++) {
+    const s = Math.max(-1, Math.min(1, audio[i]));
+    view.setInt16(i * 2, s < 0 ? s * 0x8000 : s * 0x7fff, true);
+  }
+  return buf;
+}
+
+function enqueuePcmAudio(b64Audio, sampleRate, wordOffset) {
+  ensureAudioContext();
+  const bytes = base64ToBytes(b64Audio);
+  const view = new DataView(bytes.buffer);
+  const frameCount = Math.floor(bytes.byteLength / 2);
+  const samples = new Float32Array(frameCount);
+  for (let i = 0; i < frameCount; i++) {
+    samples[i] = view.getInt16(i * 2, true) / 32768;
+  }
+  const buffer = audioContext.createBuffer(1, frameCount, sampleRate);
+  buffer.copyToChannel(samples, 0);
+  const source = audioContext.createBufferSource();
+  source.buffer = buffer;
+  source.connect(audioContext.destination);
+
+  const startAt = Math.max(nextAudioStartTime, audioContext.currentTime + 0.02);
+  if (wordOffset !== undefined) wordsPlayedAtTime[startAt] = wordOffset;
+  source.start(startAt);
+  activeAudioSources.add(source);
+  nextAudioStartTime = startAt + buffer.duration;
+  source.addEventListener("ended", () => {
+    activeAudioSources.delete(source);
+    delete wordsPlayedAtTime[startAt];
+  });
+}
+
+function getWordsPlayedNow() {
+  if (!audioContext) return 0;
+  const now = audioContext.currentTime;
+  let best = 0;
+  for (const [t, w] of Object.entries(wordsPlayedAtTime)) {
+    if (parseFloat(t) <= now) best = Math.max(best, w);
+  }
+  return best;
+}
+
+// Stop any queued audio playback
+function stopQueuedAudio() {
+  for (const src of activeAudioSources) {
+    try { src.stop(); } catch (_) {}
+  }
+  activeAudioSources.clear();
+  wordsPlayedAtTime = {};
+  if (audioContext) nextAudioStartTime = audioContext.currentTime;
+}
+
+// ── Wakeword Pipeline (Worker Code) ─────────────────────────────────────────
+const workerCode = `
+  importScripts('/static/libs/ort.js');
+  
+  let melspecSess = null;
+  let embedSess = null;
+  let wwSess = null;
+  
+  const WW_FRAME_SAMPLES = 1280;
+  let wwPcmBuffer = new Float32Array(0);
+  let melBuffer = [];
+  let featureBuffer = [];
+  const WAKEWORD_THRESHOLD = 0.5;
+  
+  let isProcessing = false;
+  let pendingFrame = null;
+  
+  self.onmessage = async (e) => {
+    if (e.data.type === 'init') {
+      try {
+        ort.env.wasm.numThreads = 1;
+        ort.env.wasm.simd = true;
+        ort.env.wasm.proxy = false;
+        
+        melspecSess = await ort.InferenceSession.create(e.data.paths.melspec, { executionProviders: ["wasm"] });
+        embedSess = await ort.InferenceSession.create(e.data.paths.embed, { executionProviders: ["wasm"] });
+        wwSess = await ort.InferenceSession.create(e.data.paths.ww, { executionProviders: ["wasm"] });
+        self.postMessage({ type: 'ready' });
+      } catch (err) {
+        self.postMessage({ type: 'error', message: err.message });
+      }
+    } else if (e.data.type === 'audio') {
+      if (isProcessing) {
+        pendingFrame = e.data.frame;
+        return;
+      }
+      isProcessing = true;
+      await processAudio(e.data.frame);
+      while (pendingFrame) {
+        const nextFrame = pendingFrame;
+        pendingFrame = null;
+        await processAudio(nextFrame);
+      }
+      isProcessing = false;
+    }
+  };
+  
+  async function processAudio(frame) {
+    const scaled = new Float32Array(frame.length);
+    for (let i = 0; i < frame.length; i++) {
+      scaled[i] = frame[i] * 32767.0;
+    }
+    const buf = new Float32Array(wwPcmBuffer.length + scaled.length);
+    buf.set(wwPcmBuffer);
+    buf.set(scaled, wwPcmBuffer.length);
+    wwPcmBuffer = buf;
+    
+    while (wwPcmBuffer.length >= WW_FRAME_SAMPLES) {
+      const chunk = wwPcmBuffer.slice(0, WW_FRAME_SAMPLES);
+      wwPcmBuffer = wwPcmBuffer.slice(WW_FRAME_SAMPLES);
+      await runPipeline(chunk);
+    }
+  }
+  
+  async function runPipeline(chunk) {
+    if (!melspecSess || !embedSess || !wwSess) return;
+    try {
+      const melTensor = new ort.Tensor("float32", chunk, [1, WW_FRAME_SAMPLES]);
+      const melOut = await melspecSess.run({ "input": melTensor });
+      const melData = Object.values(melOut)[0].data;
+      
+      const numFrames = melData.length / 32;
+      for (let i = 0; i < numFrames; i++) {
+        const frame = new Float32Array(32);
+        for (let j = 0; j < 32; j++) {
+          frame[j] = (melData[i * 32 + j] / 10.0) + 2.0;
+        }
+        melBuffer.push(frame);
+      }
+      
+      while (melBuffer.length >= 76) {
+        const embInput = new Float32Array(76 * 32);
+        for (let i = 0; i < 76; i++) {
+          embInput.set(melBuffer[melBuffer.length - 76 + i], i * 32);
+        }
+        const embTensor = new ort.Tensor("float32", embInput, [1, 76, 32, 1]);
+        const embOut = await embedSess.run({ "input_1": embTensor });
+        featureBuffer.push(Object.values(embOut)[0].data);
+        melBuffer.splice(0, 8);
+      }
+      
+      if (featureBuffer.length >= 16) {
+        const wwInput = new Float32Array(16 * 96);
+        for (let i = 0; i < 16; i++) {
+          wwInput.set(featureBuffer[featureBuffer.length - 16 + i], i * 96);
+        }
+        const wwTensor = new ort.Tensor("float32", wwInput, [1, 16, 96]);
+        const wwOut = await wwSess.run({ "onnx::Flatten_0": wwTensor });
+        const score = Object.values(wwOut)[0].data[0];
+        
+        if (featureBuffer.length > 30) {
+          featureBuffer.shift();
+        }
+        
+        if (score >= WAKEWORD_THRESHOLD) {
+          self.postMessage({ type: 'wakeword', score: score });
+          featureBuffer = [];
+        }
+      }
+    } catch (err) {
+      self.postMessage({ type: 'error', message: err.message });
+    }
+  }
+`;
+
+function feedAudioToWakeword(frame) {
+  if (useWorker && wwWorker) {
+    wwWorker.postMessage({ type: 'audio', frame: frame });
+    return;
+  }
+  
+  const scaled = new Float32Array(frame.length);
+  for (let i = 0; i < frame.length; i++) {
+    scaled[i] = frame[i] * 32767.0;
+  }
+  
+  const buf = new Float32Array(wwPcmBuffer.length + scaled.length);
+  buf.set(wwPcmBuffer);
+  buf.set(scaled, wwPcmBuffer.length);
+  wwPcmBuffer = buf;
+  
+  while (wwPcmBuffer.length >= WW_FRAME_SAMPLES) {
+    const chunk = wwPcmBuffer.slice(0, WW_FRAME_SAMPLES);
+    wwPcmBuffer = wwPcmBuffer.slice(WW_FRAME_SAMPLES);
+    _runWakewordPipeline(chunk);
+  }
+}
+
+async function _runWakewordPipeline(chunk) {
+  if (!melspecSess || !embedSess || !wwSess) return;
+  
+  try {
+    const melTensor = new ort.Tensor("float32", chunk, [1, WW_FRAME_SAMPLES]);
+    const melOut = await melspecSess.run({ "input": melTensor });
+    const melData = Object.values(melOut)[0].data;
+    
+    const numFrames = melData.length / 32;
+    for (let i = 0; i < numFrames; i++) {
+      const frame = new Float32Array(32);
+      for (let j = 0; j < 32; j++) {
+        frame[j] = (melData[i * 32 + j] / 10.0) + 2.0;
+      }
+      melBuffer.push(frame);
+    }
+    
+    while (melBuffer.length >= 76) {
+      const embInput = new Float32Array(76 * 32);
+      for (let i = 0; i < 76; i++) {
+        embInput.set(melBuffer[melBuffer.length - 76 + i], i * 32);
+      }
+      const embTensor = new ort.Tensor("float32", embInput, [1, 76, 32, 1]);
+      const embOut = await embedSess.run({ "input_1": embTensor });
+      const embData = Object.values(embOut)[0].data;
+      featureBuffer.push(embData);
+      melBuffer.splice(0, 8);
+    }
+    
+    if (featureBuffer.length >= 16) {
+      const wwInput = new Float32Array(16 * 96);
+      for (let i = 0; i < 16; i++) {
+        wwInput.set(featureBuffer[featureBuffer.length - 16 + i], i * 96);
+      }
+      const wwTensor = new ort.Tensor("float32", wwInput, [1, 16, 96]);
+      const wwOut = await wwSess.run({ "onnx::Flatten_0": wwTensor });
+      const score = Object.values(wwOut)[0].data[0];
+      
+      if (featureBuffer.length > 30) {
+        featureBuffer.shift();
+      }
+      
+      if (score >= WAKEWORD_THRESHOLD) {
+        log("Wakeword detected! Score: " + score.toFixed(3), "hi");
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: "wakeword" }));
+        }
+        featureBuffer = [];
+      }
+    }
+  } catch (err) {
+    log("WW Error: " + err.message, "warn");
+  }
+}
+
+// Load Wakeword, perform adaptive benchmark, and configure worker offload
+async function loadWakeword() {
+  try {
+    const resp = await fetch(WAKEWORD_PATH + "model.json");
+    if (!resp.ok) throw new Error("model.json not found");
+    const meta = await resp.json();
+    const modelFile = meta.file || "model.onnx";
+    
+    // Load sessions to run benchmark
+    melspecSess = await ort.InferenceSession.create(WAKEWORD_PATH + "melspectrogram.onnx", { executionProviders: ["wasm"] });
+    embedSess = await ort.InferenceSession.create(WAKEWORD_PATH + "embedding_model.onnx", { executionProviders: ["wasm"] });
+    wwSess = await ort.InferenceSession.create(WAKEWORD_PATH + modelFile, { executionProviders: ["wasm"] });
+    
+    // Benchmark 10 passes
+    let totalDuration = 0;
+    const dummyChunk = new Float32Array(WW_FRAME_SAMPLES);
+    const dummyMel = new Float32Array(76 * 32);
+    const dummyFeature = new Float32Array(16 * 96);
+    
+    for (let i = 0; i < 10; i++) {
+      const start = performance.now();
+      
+      const melTensor = new ort.Tensor("float32", dummyChunk, [1, WW_FRAME_SAMPLES]);
+      await melspecSess.run({ "input": melTensor });
+      
+      const embTensor = new ort.Tensor("float32", dummyMel, [1, 76, 32, 1]);
+      await embedSess.run({ "input_1": embTensor });
+      
+      const wwTensor = new ort.Tensor("float32", dummyFeature, [1, 16, 96]);
+      await wwSess.run({ "onnx::Flatten_0": wwTensor });
+      
+      totalDuration += (performance.now() - start);
+    }
+    const avgLatency = totalDuration / 10;
+    log(`Wakeword pipeline benchmark: average latency ${avgLatency.toFixed(2)} ms/frame`);
+    
+    if (avgLatency > 30) {
+      log(`Average latency ${avgLatency.toFixed(1)}ms > 30ms. Offloading wakeword pipeline to Web Worker.`);
+      useWorker = true;
+      
+      // Release main thread sessions to free memory
+      melspecSess = null;
+      embedSess = null;
+      wwSess = null;
+      
+      const blob = new Blob([workerCode], { type: 'application/javascript' });
+      wwWorker = new Worker(URL.createObjectURL(blob));
+      
+      wwWorker.onmessage = (e) => {
+        if (e.data.type === 'ready') {
+          wwDot.className = "ww-dot ok";
+          wwStatusEl.textContent = "Wakeword: " + (meta.name || modelFile) + " loaded (Worker)";
+          log("Wakeword pipeline ready in Web Worker", "hi");
+        } else if (e.data.type === 'wakeword') {
+          log("Wakeword detected! Score: " + e.data.score.toFixed(3), "hi");
+          if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: "wakeword" }));
+          }
+        } else if (e.data.type === 'error') {
+          log("WW Worker Error: " + e.data.message, "warn");
+        }
+      };
+      
+      wwWorker.postMessage({
+        type: 'init',
+        paths: {
+          melspec: WAKEWORD_PATH + "melspectrogram.onnx",
+          embed: WAKEWORD_PATH + "embedding_model.onnx",
+          ww: WAKEWORD_PATH + modelFile
+        }
+      });
+    } else {
+      log(`Average latency ${avgLatency.toFixed(1)}ms <= 30ms. Running wakeword pipeline on main thread.`);
+      useWorker = false;
+      wwDot.className = "ww-dot ok";
+      wwStatusEl.textContent = "Wakeword: " + (meta.name || modelFile) + " loaded (Main)";
+    }
+  } catch (err) {
+    wwDot.className = "ww-dot err";
+    wwStatusEl.textContent = "Wakeword: failed to load pipeline";
+    log("Wakeword not loaded: " + err.message, "warn");
+  }
+}
+
+// ── WebSocket ────────────────────────────────────────────────────────────────
+function connectWebSocket() {
+  if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
+    return Promise.resolve();
+  }
+  return new Promise((resolve, reject) => {
+    const proto = location.protocol === "https:" ? "wss:" : "ws:";
+    ws = new WebSocket(`${proto}//${location.host}/ws`);
+    ws.binaryType = "arraybuffer";
+
+    ws.onopen = () => { log("WebSocket connected", "hi"); resolve(); };
+
+    ws.onmessage = (event) => {
+      if (typeof event.data !== "string") return;
+      const msg = JSON.parse(event.data);
+
+      if (msg.type === "status") {
+        const s = msg.state;
+        setStatus(s.replace(/_/g, " "), s === "idle" ? "idle" : "normal");
+        if (s === "passive_listening") setMode(true);
+        if (s === "active_listening" || s === "assistant_streaming") setMode(false);
+      }
+      if (msg.type === "transcript") log("You: " + msg.text, "hi");
+      if (msg.type === "decision") {
+        const r = msg.reason ? ` (${msg.reason})` : "";
+        log("Decision: " + msg.action + r);
+      }
+      if (msg.type === "assistant_response") log("Ordis: " + msg.text, "hi");
+      if (msg.type === "assistant_delta") { /* suppress noisy deltas */ }
+      if (msg.type === "tool_call_status") log("Tool " + msg.status + ": " + (msg.name || msg.tool_name));
+      if (msg.type === "task_complete") log("Background task done", "hi");
+      if (msg.type === "audio") {
+        enqueuePcmAudio(msg.data, msg.sample_rate || 32000, msg.word_offset);
+      }
+      if (msg.type === "flush_audio") {
+        stopQueuedAudio();
+        log("Audio flushed by server");
+      }
+      if (msg.type === "audio_end") log("TTS complete");
+      if (msg.type === "error") { setStatus("Error — see log", "warn"); log("ERROR: " + msg.message, "warn"); }
+    };
+
+    ws.onclose = () => { log("WebSocket disconnected", "warn"); setStatus("Disconnected", "idle"); setMode(true); };
+    ws.onerror = () => reject(new Error("WebSocket failed"));
+  });
+}
+
+function sendInterrupt() {
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+  const wordsPlayed = getWordsPlayedNow();
+  ws.send(JSON.stringify({ type: "playback_progress", words_played: wordsPlayed }));
+  ws.send(JSON.stringify({ type: "interrupt" }));
+  stopQueuedAudio();
+}
+
+// ── VAD ──────────────────────────────────────────────────────────────────────
+async function startListening() {
+  startBtn.disabled = true;
+  setStatus("Initializing...", "idle");
+
+  try {
+    ensureAudioContext();
+    ort.env.wasm.numThreads = 1;
+    ort.env.wasm.simd = true;
+    ort.env.wasm.proxy = false;
+
+    await connectWebSocket();
+    ws.send(JSON.stringify({ type: "set_timeout", seconds: silenceTimeout }));
+
+    await loadWakeword();
+
+    micVad = await vad.MicVAD.new({
+      model: "v5",
+      baseAssetPath: ASSET_PATH,
+      onnxWASMBasePath: ASSET_PATH,
+      preSpeechPadFrames: 38,
+      positiveSpeechThreshold: vadPosThresh,
+      negativeSpeechThreshold: vadNegThresh,
+      redemptionFrames: 24,
+      minSpeechFrames: 6,
+
+      onFrameProcessed: async (probs, audioFrame) => {
+        if (isPassiveMode) {
+          feedAudioToWakeword(audioFrame);
+        }
+      },
+
+      onSpeechStart: () => {
+        if (!isPassiveMode) {
+          sendInterrupt();
+          setStatus("Listening...");
+          log("Speech started (barge-in)");
+        } else {
+          log("Speech detected (passive — waiting for wakeword)");
+        }
+      },
+
+      onSpeechEnd: (audio) => {
+        if (isPassiveMode) return;
+
+        const pcm = floatTo16BitPCM(audio);
+        log("Speech ended — " + pcm.byteLength + " PCM bytes");
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          ws.send(pcm);
+        } else {
+          setStatus("WebSocket unavailable", "warn");
+        }
+      },
+
+      onVADMisfire: () => {
+        log("VAD misfire — ignored");
+      },
+    });
+
+    micVad.start();
+    if (micVad.audioContext && micVad.audioContext.state === "suspended") {
+      await micVad.audioContext.resume();
+    }
+
+    setMode(true);
+    setStatus("Passive listening — waiting for wakeword", "idle");
+    startBtn.textContent = "Listening";
+    log("VAD started in passive mode", "hi");
+
+  } catch (err) {
+    startBtn.disabled = false;
+    setStatus("Startup failed", "warn");
+    log("Startup error: " + (err.message || err), "warn");
+  }
+}
+
+startBtn.addEventListener("click", startListening);
+</script>
+</body>
+</html>

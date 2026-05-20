@@ -50,7 +50,7 @@ auto_commit:
     message: "[Spec Kit] Add tasks"
   after_implement:
     enabled: true
-    message: "[Spec Kit] Implement session state machine and ConversationSession. Closes #11"
+    message: "[Spec Kit] Implement the wakeword and VAD frontend in static/index.html. Closes #12"
   after_checklist:
     enabled: false
     message: "[Spec Kit] Add checklist"
