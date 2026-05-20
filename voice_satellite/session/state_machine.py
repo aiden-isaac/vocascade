@@ -78,6 +78,7 @@ class ConversationSession:
         self._current_response_words: list[str] = []
         self._words_played_before_interrupt: int = 0
         self.last_transcript: str = ""
+        self.audio_buffer: bytes = b""
 
     @property
     def state(self) -> SessionState:

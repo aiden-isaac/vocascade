@@ -28,5 +28,28 @@ class TestServer(unittest.TestCase):
                 with self.assertRaises(WebSocketDisconnect):
                     ws2.receive_json()
 
+    def test_websocket_wakeword_and_pcm(self):
+        with self.client.websocket_connect("/ws") as ws:
+            # 1. Check initial state
+            msg1 = ws.receive_json()
+            self.assertEqual(msg1, {"type": "status", "state": "passive_listening"})
+            
+            # 2. Send set_timeout
+            ws.send_json({"type": "set_timeout", "seconds": 45.0})
+            
+            # 3. Send wakeword
+            ws.send_json({"type": "wakeword"})
+            
+            # 4. Check acknowledging state
+            msg2 = ws.receive_json()
+            self.assertEqual(msg2, {"type": "status", "state": "acknowledging"})
+            
+            # 5. Check active_listening state
+            msg3 = ws.receive_json()
+            self.assertEqual(msg3, {"type": "status", "state": "active_listening"})
+            
+            # 6. Send binary PCM (should not raise error or disconnect)
+            ws.send_bytes(b"some_pcm_bytes")
+
 if __name__ == "__main__":
     unittest.main()

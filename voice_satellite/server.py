@@ -10,6 +10,8 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
+from voice_satellite.session import SessionState, ConversationSession
+
 logger = logging.getLogger("voice_satellite.server")
 
 app = FastAPI()
@@ -46,37 +48,66 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
         await websocket.close(code=1008)  # Policy Violation close code
         return
 
+    session = ConversationSession()
+
     try:
         async with _session_lock:
             await websocket.accept()
             logger.info("WebSocket connection accepted")
-            
+
+            # Set up the callback to send state updates over WebSocket
+            def on_state_change(old_state: SessionState, new_state: SessionState) -> None:
+                asyncio.create_task(websocket.send_json({
+                    "type": "status",
+                    "state": new_state.value
+                }))
+
+            session.set_state_change_callback(on_state_change)
+
+            # Send initial state to the client
+            await websocket.send_json({
+                "type": "status",
+                "state": session.state.value
+            })
+
             while True:
                 message = await websocket.receive()
                 if message.get("type") == "websocket.disconnect":
                     raise WebSocketDisconnect(message.get("code", 1000))
-                
-                # Skeleton: log incoming messages
+
                 bytes_data = message.get("bytes")
                 text_data = message.get("text")
-                
+
                 if bytes_data is not None:
-                    logger.debug(f"Received {len(bytes_data)} bytes of binary data")
+                    # On binary PCM message, when in active_listening, store audio buffer
+                    if session.state == SessionState.ACTIVE_LISTENING:
+                        session.audio_buffer = bytes_data
+                        logger.info(f"Stored {len(bytes_data)} bytes of audio data in session")
                 elif text_data is not None:
-                    logger.info(f"Received text message: {text_data}")
                     try:
                         payload = json.loads(text_data)
-                        await websocket.send_json({
-                            "type": "status",
-                            "state": "received",
-                            "echo": payload
-                        })
                     except json.JSONDecodeError:
-                        pass
-                        
+                        payload = {}
+
+                    msg_type = payload.get("type", "")
+
+                    if msg_type == "wakeword":
+                        if session.is_passive():
+                            logger.info("Wakeword received — transitioning to acknowledging")
+                            session.state = SessionState.ACKNOWLEDGING
+                            # Simulate acknowledgment delay
+                            await asyncio.sleep(0.5)
+                            session.state = SessionState.ACTIVE_LISTENING
+                    elif msg_type == "set_timeout":
+                        seconds = float(payload.get("seconds", 30.0))
+                        seconds = max(10.0, min(120.0, seconds))
+                        session.silence_timeout = seconds
+                        logger.info(f"Updated session silence timeout to {seconds}s")
+
     except WebSocketDisconnect:
         logger.info("WebSocket disconnected")
     except Exception as e:
         logger.error(f"WebSocket error: {e}", exc_info=True)
     finally:
+        await session.close()
         logger.info("WebSocket connection closed")
