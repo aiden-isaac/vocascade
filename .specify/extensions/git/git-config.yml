@@ -50,7 +50,7 @@ auto_commit:
     message: "[Spec Kit] Add tasks"
   after_implement:
     enabled: true
-    message: "[Spec Kit] Implement FillerEngine with random selection and fallbacks. Closes #18"
+    message: "[Spec Kit] Implement Ed25519 device auth and keypair manager. Closes #19"
   after_checklist:
     enabled: false
     message: "[Spec Kit] Add checklist"
