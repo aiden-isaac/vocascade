@@ -18,7 +18,7 @@
 - [x] T001 Create project directory structure with all `__init__.py` files per plan layout: `voice_satellite/`, `voice_satellite/audio/`, `voice_satellite/stt/`, `voice_satellite/tts/`, `voice_satellite/gateway/`, `voice_satellite/session/`, `voice_satellite/llm/`, `static/`, `static/libs/`, `static/wakeword/`, `static/fillers/`, `scripts/`, `tests/`
 - [x] T002 [P] Create `requirements.txt` with all Python dependencies: fastapi, uvicorn, websockets, openai, python-dotenv, faster-whisper, numpy, scipy, aiohttp
 - [x] T003 [P] Create `.env.example` with all configuration variables documented (LLM, Gateway, TTS, STT, Filler, Server, Feature flags) per plan §Config Module and data-model.md §SatelliteConfig
-- [ ] T004 [P] Create `.gitignore` excluding `.env`, `__pycache__/`, `*.pyc`, `venv/`, `.venv/`, `*.onnx` (user-provided models), and `static/fillers/**/*.pcm` (generated audio)
+- [x] T004 [P] Create `.gitignore` excluding `.env`, `__pycache__/`, `*.pyc`, `venv/`, `.venv/`, `*.onnx` (user-provided models), and `static/fillers/**/*.pcm` (generated audio)
 ---
 ## Phase 2: Foundational (Blocking Prerequisites)
 **Purpose**: Core infrastructure that MUST be complete before ANY user story can be implemented

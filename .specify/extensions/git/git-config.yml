@@ -50,7 +50,7 @@ auto_commit:
     message: "[Spec Kit] Add tasks"
   after_implement:
     enabled: true
-    message: "[Spec Kit] Create .env.example template. Closes #3"
+    message: "[Spec Kit] Verify and update .gitignore patterns. Closes #4"
   after_checklist:
     enabled: false
     message: "[Spec Kit] Add checklist"
