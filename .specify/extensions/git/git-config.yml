@@ -50,7 +50,7 @@ auto_commit:
     message: "[Spec Kit] Add tasks"
   after_implement:
     enabled: true
-    message: "[Spec Kit] Implement TTS streaming with word offset tracking. Closes #24"
+    message: "[Spec Kit] Implement filler audio race. Closes #25"
   after_checklist:
     enabled: false
     message: "[Spec Kit] Add checklist"
