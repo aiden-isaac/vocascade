@@ -50,7 +50,7 @@ auto_commit:
     message: "[Spec Kit] Add tasks"
   after_implement:
     enabled: true
-    message: "[Spec Kit] Implement audio constants. Closes #5"
+    message: "[Spec Kit] Implement configuration loader. Closes #6"
   after_checklist:
     enabled: false
     message: "[Spec Kit] Add checklist"
