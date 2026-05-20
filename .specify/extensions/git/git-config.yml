@@ -50,7 +50,7 @@ auto_commit:
     message: "[Spec Kit] Add tasks"
   after_implement:
     enabled: true
-    message: "[Spec Kit] Implement Ed25519 device auth and keypair manager. Closes #19"
+    message: "[Spec Kit] Implement OpenClawClient with handshake, streaming, and reconnections. Closes #20"
   after_checklist:
     enabled: false
     message: "[Spec Kit] Add checklist"
