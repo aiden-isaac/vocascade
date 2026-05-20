@@ -17,6 +17,62 @@ INPUT_DIR = REPO_ROOT / "genie_input"
 PROFILES_DIR = REPO_ROOT / "genie_profiles"
 VENV_PYTHON = REPO_ROOT / "genie_tts_env" / "bin" / "python"
 
+def update_env(character_name, export_dir, wav_path, txt_path):
+    env_file = REPO_ROOT / ".env"
+    
+    new_genie_vars = {
+        "GENIE_TTS_URL": "http://127.0.0.1:8000",
+        "GENIE_CHARACTER_NAME": character_name,
+        "GENIE_ONNX_MODEL_DIR": str(export_dir.resolve()),
+        "GENIE_REFERENCE_AUDIO": str(wav_path.resolve()),
+        "GENIE_REFERENCE_TEXT": "",
+        "GENIE_LANGUAGE": "en"
+    }
+    
+    try:
+        with open(txt_path, "r", encoding="utf-8") as f:
+            new_genie_vars["GENIE_REFERENCE_TEXT"] = f.readline().strip()
+    except Exception as e:
+        print(f"Warning: Could not read reference text from {txt_path}: {e}")
+
+    lines = []
+    if env_file.exists():
+        with open(env_file, "r", encoding="utf-8") as f:
+            lines = f.readlines()
+            
+    output_lines = []
+    found_keys = set()
+    
+    for line in lines:
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            output_lines.append(line)
+            continue
+            
+        if "=" in stripped:
+            key = stripped.split("=", 1)[0].strip()
+            if key in new_genie_vars:
+                output_lines.append(f"{key}={new_genie_vars[key]}\n")
+                found_keys.add(key)
+            elif key.startswith("GENIE_"):
+                # Spec: preserving all non-GENIE_* lines (implicitly drops unused GENIE_ vars)
+                pass
+            else:
+                output_lines.append(line)
+        else:
+            output_lines.append(line)
+            
+    for key, value in new_genie_vars.items():
+        if key not in found_keys:
+            output_lines.append(f"{key}={value}\n")
+            
+    with open(env_file, "w", encoding="utf-8") as f:
+        f.writelines(output_lines)
+        
+    print("[4/4] Updated .env file with new character configuration:")
+    for key, value in new_genie_vars.items():
+        print(f"  + {key}={value}")
+
 def validate_input_files():
     if not INPUT_DIR.exists():
         print(f"Error: Staging directory '{INPUT_DIR}' does not exist.")
@@ -64,7 +120,7 @@ def main():
     print(f"Generating character profile: {character_name}")
     
     # 1. Validate files
-    print("[1/3] Validating input files...")
+    print("[1/4] Validating input files...")
     files = validate_input_files()
     
     # Check virtualenv python exists
@@ -74,7 +130,7 @@ def main():
         sys.exit(1)
         
     # 2. Convert to ONNX
-    print("[2/3] Converting models to ONNX format...")
+    print("[2/4] Converting models to ONNX format...")
     profile_dir.mkdir(parents=True, exist_ok=True)
     export_dir.mkdir(parents=True, exist_ok=True)
     
@@ -94,7 +150,7 @@ def main():
         sys.exit(1)
         
     # 3. Copy reference files and cleanup staging
-    print("[3/3] Archiving source models and reference files...")
+    print("[3/4] Archiving source models and reference files...")
     
     # We move all files from INPUT_DIR into profile_dir
     # (this includes .ckpt, .pth, .wav, .txt, and anything else in there)
@@ -104,6 +160,9 @@ def main():
             if target_path.exists():
                 target_path.unlink()
             shutil.move(str(item), str(target_path))
+            
+    # 4. Patch .env
+    update_env(character_name, export_dir, profile_dir / files[".wav"].name, profile_dir / files[".txt"].name)
             
     print(f"\nSuccess! Character profile '{character_name}' generated at '{profile_dir}'.")
 
