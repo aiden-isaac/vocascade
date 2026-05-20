@@ -50,6 +50,7 @@ class OpenClawClient:
         self.last_run_id = None
         self.last_event_name = None
         self.last_session_key = None
+        self.protocol = None
 
     @property
     def degraded_mode(self) -> bool:
@@ -104,6 +105,7 @@ class OpenClawClient:
                 code = error_info.get("code", "unknown")
                 msg = error_info.get("message", "auth failed")
                 raise ConnectionError(f"Gateway connection rejected: {code} - {msg}")
+            self.protocol = res_frame.get("payload", {}).get("protocol") or self.max_protocol
         else:
             raise ConnectionError(f"Unexpected frame instead of handshake response: {res_frame}")
 
