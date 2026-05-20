@@ -50,7 +50,7 @@ auto_commit:
     message: "[Spec Kit] Add tasks"
   after_implement:
     enabled: true
-    message: "[Spec Kit] Implement WhisperSTT wrapper using faster-whisper. Closes #15"
+    message: "[Spec Kit] Implement sentence_splitter with glitch tags and punctuation checks. Closes #16"
   after_checklist:
     enabled: false
     message: "[Spec Kit] Add checklist"
