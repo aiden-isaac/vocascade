@@ -50,7 +50,7 @@ auto_commit:
     message: "[Spec Kit] Add tasks"
   after_implement:
     enabled: true
-    message: "[Spec Kit] Copy vendored WASM/VAD assets. Closes #9"
+    message: "[Spec Kit] Copy wakeword ONNX models. Closes #10"
   after_checklist:
     enabled: false
     message: "[Spec Kit] Add checklist"
