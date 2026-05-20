@@ -50,7 +50,7 @@ auto_commit:
     message: "[Spec Kit] Add tasks"
   after_implement:
     enabled: true
-    message: "[Spec Kit] Implement the startup health report in voice_satellite/__main__.py. Closes #35"
+    message: "[Spec Kit] Add structured logging throughout all modules. Closes #36"
   after_checklist:
     enabled: false
     message: "[Spec Kit] Add checklist"

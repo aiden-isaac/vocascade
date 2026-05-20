@@ -129,28 +129,36 @@ class LLMRouter:
         if task_context:
             system_prompt += f"\n\nCURRENTLY RUNNING BACKGROUND TASKS:\n{task_context}"
 
-        response = await self.client.chat.completions.create(
-            model=self.model,
-            messages=[
-                {
-                    "role": "system",
-                    "content": system_prompt,
-                },
-                *self.history,
-                {
-                    "role": "user",
-                    "content": transcript,
-                },
-            ],
-            response_format={"type": "json_object"},
-            temperature=0,
-        )
+        try:
+            response = await self.client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": system_prompt,
+                    },
+                    *self.history,
+                    {
+                        "role": "user",
+                        "content": transcript,
+                    },
+                ],
+                response_format={"type": "json_object"},
+                temperature=0,
+            )
+        except Exception as e:
+            logger.error(f"LLM coordinator chat completion request failed: {e}")
+            raise
 
         content = response.choices[0].message.content or "{}"
         payload = _parse_json_object(content)
         if not payload and content.strip():
-            return CoordinatorDecision(action="answer", message=content.strip(), reason="plain text fallback")
-        return CoordinatorDecision.from_payload(payload, fallback_message=transcript)
+            decision = CoordinatorDecision(action="answer", message=content.strip(), reason="plain text fallback")
+        else:
+            decision = CoordinatorDecision.from_payload(payload, fallback_message=transcript)
+        
+        logger.info(f"Coordinator routed transcript to action: {decision.action} (reason: {decision.reason})")
+        return decision
 
     async def route(
         self,
@@ -178,36 +186,40 @@ class LLMRouter:
         if decision.openclaw is None:
             raise ValueError("OpenClaw decision is required to complete with a tool result")
 
-        response = await self.client.chat.completions.create(
-            model=self.model,
-            messages=[
-                {
-                    "role": "system",
-                    "content": get_tool_result_system_prompt(),
-                },
-                *self.history,
-                {
-                    "role": "user",
-                    "content": transcript,
-                },
-                {
-                    "role": "assistant",
-                    "content": (
-                        "I called OpenClaw as a tool.\n"
-                        f"agent_id: {decision.openclaw.agent_id}\n"
-                        f"mode: {decision.openclaw.mode}\n"
-                        f"reason: {decision.reason}\n"
-                        f"tool_result:\n{tool_result}"
-                    ),
-                },
-                {
-                    "role": "user",
-                    "content": "Answer the user naturally using the tool result.",
-                },
-            ],
-            temperature=0.4,
-            stream=True,
-        )
+        try:
+            response = await self.client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": get_tool_result_system_prompt(),
+                    },
+                    *self.history,
+                    {
+                        "role": "user",
+                        "content": transcript,
+                    },
+                    {
+                        "role": "assistant",
+                        "content": (
+                            "I called OpenClaw as a tool.\n"
+                            f"agent_id: {decision.openclaw.agent_id}\n"
+                            f"mode: {decision.openclaw.mode}\n"
+                            f"reason: {decision.reason}\n"
+                            f"tool_result:\n{tool_result}"
+                        ),
+                    },
+                    {
+                        "role": "user",
+                        "content": "Answer the user naturally using the tool result.",
+                    },
+                ],
+                temperature=0.4,
+                stream=True,
+            )
+        except Exception as e:
+            logger.error(f"LLM coordinator stream completion failed: {e}")
+            raise
 
         async for chunk in response:
             content = chunk.choices[0].delta.content
