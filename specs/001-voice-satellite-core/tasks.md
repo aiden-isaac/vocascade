@@ -74,7 +74,7 @@
 ---
 ## Phase 6: Polish & Cross-Cutting Concerns
 **Purpose**: Documentation, startup reporting, and production readiness
-- [ ] T032 [P] Create `README.md` at repository root with project overview, architecture diagram reference, link to `specs/001-voice-satellite-core/quickstart.md`, and contribution guidelines referencing constitution.md
+- [x] T032 [P] Create `README.md` at repository root with project overview, architecture diagram reference, link to `specs/001-voice-satellite-core/quickstart.md`, and contribution guidelines referencing constitution.md
 - [ ] T033 [P] Create `scripts/generate_fillers.py` that batch-renders filler phrases via the Genie TTS server: define phrase lists per category (thinking, working, acknowledge, slow_task, signoff), call `GenieTTSClient.synthesize()` for each, write raw PCM to `static/fillers/<category>/<slug>.pcm`
 - [ ] T034 [P] Create `scripts/download_wakeword_models.sh` that downloads the OpenWakeWord ONNX pipeline (melspectrogram.onnx, embedding_model.onnx) from the official release and places them in `static/wakeword/`
 - [ ] T035 Implement the startup health report in `voice_satellite/__main__.py`: after all bootstrap checks complete, print the formatted health report box showing config status, STT model, TTS character + URL, gateway URL + negotiated protocol, filler count by category, wakeword model name, and listen address
