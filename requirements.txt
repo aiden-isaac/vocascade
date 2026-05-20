@@ -1,0 +1,9 @@
+fastapi
+uvicorn
+websockets
+openai
+python-dotenv
+faster-whisper
+numpy
+scipy
+aiohttp

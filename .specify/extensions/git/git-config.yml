@@ -50,7 +50,7 @@ auto_commit:
     message: "[Spec Kit] Add tasks"
   after_implement:
     enabled: true
-    message: "[Spec Kit] Create project directory structure. Closes #1"
+    message: "[Spec Kit] Create requirements.txt. Closes #2"
   after_checklist:
     enabled: false
     message: "[Spec Kit] Add checklist"
