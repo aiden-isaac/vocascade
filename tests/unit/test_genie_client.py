@@ -1,0 +1,127 @@
+import asyncio
+import unittest
+from unittest.mock import MagicMock, AsyncMock, patch
+from voice_satellite.tts import GenieTTSClient
+
+class TestGenieTTSClient(unittest.IsolatedAsyncioTestCase):
+    @patch("voice_satellite.tts.genie_client.aiohttp.ClientSession")
+    async def test_load_character_success(self, mock_session_cls):
+        # Setup session mock
+        mock_session = MagicMock()
+        mock_session_cls.return_value.__aenter__.return_value = mock_session
+        
+        # Setup post mock
+        mock_response = AsyncMock()
+        mock_response.status = 200
+        mock_session.post.return_value.__aenter__.return_value = mock_response
+
+        client = GenieTTSClient(
+            tts_url="http://localhost:8000",
+            character_name="ordis",
+            onnx_model_dir="/path/to/onnx",
+            reference_audio="/path/to/ref.wav",
+            reference_text="Ref text"
+        )
+        
+        await client.load_character()
+        
+        self.assertTrue(client.initialized)
+        self.assertFalse(client.degraded_mode)
+        # Check load_character and set_reference_audio post calls
+        self.assertEqual(mock_session.post.call_count, 2)
+
+    @patch("voice_satellite.tts.genie_client.aiohttp.ClientSession")
+    async def test_load_character_failure(self, mock_session_cls):
+        # Setup session mock
+        mock_session = MagicMock()
+        mock_session_cls.return_value.__aenter__.return_value = mock_session
+        
+        # Setup post mock returning 500
+        mock_response = AsyncMock()
+        mock_response.status = 500
+        mock_response.text = AsyncMock(return_value="Internal Server Error")
+        mock_session.post.return_value.__aenter__.return_value = mock_response
+
+        client = GenieTTSClient(
+            tts_url="http://localhost:8000",
+            character_name="ordis",
+            onnx_model_dir="/path/to/onnx",
+            reference_audio="/path/to/ref.wav",
+            reference_text="Ref text"
+        )
+        
+        await client.load_character()
+        
+        self.assertFalse(client.initialized)
+        self.assertTrue(client.degraded_mode)
+
+    @patch("voice_satellite.tts.genie_client.aiohttp.ClientSession")
+    async def test_synthesize_success(self, mock_session_cls):
+        # Setup session mock
+        mock_session = MagicMock()
+        mock_session_cls.return_value.__aenter__.return_value = mock_session
+        
+        # Setup post mock for /tts
+        mock_response = AsyncMock()
+        mock_response.status = 200
+        
+        # Mock streaming content iterator
+        async def mock_iter_chunked(chunk_size):
+            yield b"\x01\x02\x03\x04"
+            yield b"\x05\x06"
+        mock_response.content.iter_chunked = mock_iter_chunked
+        mock_session.post.return_value.__aenter__.return_value = mock_response
+
+        client = GenieTTSClient(
+            tts_url="http://localhost:8000",
+            character_name="ordis",
+            onnx_model_dir="/path/to/onnx",
+            reference_audio="/path/to/ref.wav",
+            reference_text="Ref text"
+        )
+        # Pretend it was already initialized so it doesn't call load_character again
+        client.initialized = True
+        
+        chunks = []
+        async for chunk in client.synthesize("Hello world"):
+            chunks.append(chunk)
+            
+        self.assertEqual(b"".join(chunks), b"\x01\x02\x03\x04\x05\x06")
+
+    async def test_input_sanitisation(self):
+        client = GenieTTSClient(
+            tts_url="http://localhost:8000",
+            character_name="ordis",
+            onnx_model_dir=None  # Degraded mode
+        )
+        
+        # Non-alphanumeric should return nothing
+        chunks = []
+        async for chunk in client.synthesize("!!!"):
+            chunks.append(chunk)
+        self.assertEqual(chunks, [])
+
+    @patch("voice_satellite.tts.genie_client.aiohttp.ClientSession")
+    async def test_synthesize_unreachable_server(self, mock_session_cls):
+        # Mock a connection error / exception
+        mock_session = MagicMock()
+        mock_session_cls.return_value.__aenter__.return_value = mock_session
+        mock_session.post.side_effect = Exception("Connection refused")
+
+        client = GenieTTSClient(
+            tts_url="http://localhost:8000",
+            character_name="ordis",
+            onnx_model_dir="/path/to/onnx",
+            reference_audio="/path/to/ref.wav",
+            reference_text="Ref text"
+        )
+        client.initialized = True
+
+        # Should yield nothing and not raise exception
+        chunks = []
+        async for chunk in client.synthesize("Hello world"):
+            chunks.append(chunk)
+        self.assertEqual(chunks, [])
+
+if __name__ == "__main__":
+    unittest.main()
