@@ -3,26 +3,81 @@ FastAPI server orchestrator for the Voice Satellite, managing routing, static fi
 """
 
 import asyncio
+import base64
 import json
 import logging
+import os
+import random
+from contextlib import asynccontextmanager
 from pathlib import Path
+import numpy as np
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
+from voice_satellite.config import load_config
+from voice_satellite.stt.whisper_stt import WhisperSTT
+from voice_satellite.tts.genie_client import GenieTTSClient
+from voice_satellite.tts.sentence_splitter import split_sentences
+from voice_satellite.audio.filler_engine import FillerEngine
+from voice_satellite.gateway.openclaw_client import OpenClawClient
+from voice_satellite.llm.router import LLMRouter, RouterDecision, CoordinatorDecision
 from voice_satellite.session import SessionState, ConversationSession
+from voice_satellite.session.task_tracker import TaskTracker, TrackedTask
 
 logger = logging.getLogger("voice_satellite.server")
-
-app = FastAPI()
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
 STATIC_DIR = ROOT_DIR / "static"
 
-app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
-
 # Module-level lock for enforcing single active WebSocket session
 _session_lock = asyncio.Lock()
+
+@asynccontextmanager
+async def lifespan(app_: FastAPI):
+    # Load config
+    config = load_config()
+    app_.state.config = config
+
+    # Initialize STT
+    app_.state.stt = WhisperSTT(
+        model_name=config.whisper_model,
+        language=config.whisper_language
+    )
+
+    # Initialize TTS
+    degraded = not (config.tts_onnx_model_dir and config.tts_reference_audio and config.tts_reference_text)
+    app_.state.tts = GenieTTSClient(
+        tts_url=config.tts_url,
+        character_name=config.tts_character_name,
+        onnx_model_dir=config.tts_onnx_model_dir,
+        reference_audio=config.tts_reference_audio,
+        reference_text=config.tts_reference_text,
+        language=config.tts_language,
+        degraded_mode=degraded
+    )
+    if not config.skip_genie_init and not degraded:
+        await app_.state.tts.load_character()
+
+    # Initialize filler engine
+    app_.state.filler_engine = FillerEngine(filler_dir=config.filler_dir)
+    app_.state.filler_engine.load_fillers()
+
+    # Initialize base gateway client
+    app_.state.openclaw_client = OpenClawClient(
+        gateway_url=config.gateway_url,
+        gateway_token=config.gateway_token,
+        min_protocol=config.gateway_min_protocol,
+        max_protocol=config.gateway_max_protocol
+    )
+
+    try:
+        yield
+    finally:
+        app_.state.stt.close()
+
+app = FastAPI(lifespan=lifespan)
+app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 @app.get("/")
 async def index() -> HTMLResponse:
@@ -31,6 +86,62 @@ async def index() -> HTMLResponse:
     if index_file.exists():
         return HTMLResponse(index_file.read_text(encoding="utf-8"))
     return HTMLResponse("<h1>Voice Satellite Core Client</h1>")
+
+def apply_ordis_glitch(pcm_bytes: bytes) -> bytes:
+    if not pcm_bytes:
+        return pcm_bytes
+
+    # Needs to be a multiple of 2 bytes for 16-bit PCM
+    if len(pcm_bytes) % 2 != 0:
+        pcm_bytes = pcm_bytes[:-1]
+
+    arr = np.frombuffer(pcm_bytes, dtype=np.int16).copy()
+
+    # Dynamic randomized parameters
+    current_pitch = round(random.uniform(0.55, 0.63), 3)
+    current_tremolo = round(random.uniform(8.0, 14.0), 1)
+    current_overdrive = round(random.uniform(2.5, 4.5), 1)
+    current_bitcrush = random.randint(1, 4)
+    current_stutter_ms = random.randint(70, 120)
+    current_stutter_count = random.randint(2, 4)
+    current_downsample = 2 if random.random() < 0.10 else 1
+
+    # 0. Pitch Shift (Resampling)
+    indices = np.arange(0, len(arr), current_pitch)
+    floor = np.floor(indices).astype(int)
+    ceil = np.minimum(floor + 1, len(arr) - 1)
+    weight = indices - floor
+    arr = (arr[floor] * (1 - weight) + arr[ceil] * weight).astype(np.int16)
+
+    # 0.5 Tremolo / Ring Modulation (Growl effect)
+    t = np.arange(len(arr)) / 32000.0
+    mod = np.sin(2 * np.pi * current_tremolo * t)
+    arr = (arr * (0.5 + 0.5 * mod)).astype(np.int16)
+
+    # 1. Overdrive/Clipping
+    arr_32 = arr.astype(np.int32) * current_overdrive
+    arr = np.clip(arr_32, -32768, 32767).astype(np.int16)
+
+    # 2. Bitcrush
+    if current_bitcrush > 0:
+        arr = (arr >> current_bitcrush) << current_bitcrush
+
+    # 3. Downsample
+    if current_downsample > 1:
+        sub = arr[::current_downsample]
+        arr = np.repeat(sub, current_downsample)[:len(arr)]
+
+    # 4. Stutter
+    if current_stutter_ms > 0 and current_stutter_count > 0:
+        stutter_samples = int(32000 * (current_stutter_ms / 1000.0))
+        start_idx = min(stutter_samples, len(arr) // 4)
+        if len(arr) > start_idx + stutter_samples * (current_stutter_count + 1):
+            stutter_chunk = arr[start_idx : start_idx + stutter_samples].copy()
+            for i in range(current_stutter_count):
+                insert_idx = start_idx + stutter_samples * (i + 1)
+                arr[insert_idx : insert_idx + stutter_samples] = stutter_chunk
+
+    return arr.tobytes()
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket) -> None:
@@ -49,6 +160,18 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
         return
 
     session = ConversationSession()
+    task_tracker = TaskTracker()
+    ws_lock = asyncio.Lock()
+
+    config = getattr(app.state, "config", None)
+    if not config:
+        config = load_config()
+
+    router = LLMRouter(
+        model=config.llm_model,
+        api_key=config.litellm_api_key,
+        base_url=config.litellm_url
+    )
 
     try:
         async with _session_lock:
@@ -57,10 +180,13 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
 
             # Set up the callback to send state updates over WebSocket
             def on_state_change(old_state: SessionState, new_state: SessionState) -> None:
-                asyncio.create_task(websocket.send_json({
-                    "type": "status",
-                    "state": new_state.value
-                }))
+                async def send_state():
+                    async with ws_lock:
+                        await websocket.send_json({
+                            "type": "status",
+                            "state": new_state.value
+                        })
+                asyncio.create_task(send_state())
                 if new_state == SessionState.ACTIVE_LISTENING:
                     session.start_silence_timer()
                 else:
@@ -73,6 +199,249 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                 session.state = SessionState.PASSIVE_LISTENING
 
             session.set_silence_callback(on_silence_expire)
+
+            async def send_filler(category: str) -> None:
+                filler_engine = getattr(app.state, "filler_engine", None)
+                if not filler_engine:
+                    return
+                pcm = filler_engine.get_filler(category)
+                if pcm:
+                    async with ws_lock:
+                        await websocket.send_json({
+                            "type": "audio",
+                            "data": base64.b64encode(pcm).decode("ascii"),
+                            "word_offset": 0,
+                            "sample_rate": 32000
+                        })
+
+            async def speak_text_to_tts(text: str) -> None:
+                chunks = split_sentences(text)
+                if not chunks:
+                    return
+
+                session.set_current_response(text)
+
+                async with ws_lock:
+                    await websocket.send_json({"type": "assistant_response", "text": text})
+
+                tts_client = getattr(app.state, "tts", None)
+                if not tts_client or tts_client.degraded_mode:
+                    async with ws_lock:
+                        await websocket.send_json({"type": "audio_end"})
+                    return
+
+                first_chunk = chunks[0]
+                first_iter = tts_client.synthesize(first_chunk.text)
+
+                async def get_next_item(it):
+                    try:
+                        return await it.__anext__()
+                    except StopAsyncIteration:
+                        return None
+
+                first_chunk_task = asyncio.create_task(get_next_item(first_iter))
+
+                done, pending = await asyncio.wait(
+                    [first_chunk_task],
+                    timeout=config.filler_threshold_secs
+                )
+
+                first_audio = None
+                if first_chunk_task in done:
+                    first_audio = first_chunk_task.result()
+                else:
+                    logger.info("TTS synthesis latency exceeded threshold, playing filler")
+                    session.state = SessionState.FILLER_SPEAKING
+                    filler_engine = getattr(app.state, "filler_engine", None)
+                    if filler_engine:
+                        filler_pcm = filler_engine.get_filler("thinking")
+                        if filler_pcm:
+                            async with ws_lock:
+                                await websocket.send_json({
+                                    "type": "audio",
+                                    "data": base64.b64encode(filler_pcm).decode("ascii"),
+                                    "word_offset": 0,
+                                    "sample_rate": 32000
+                                })
+                    first_audio = await first_chunk_task
+
+                session.state = SessionState.SPEAKING
+
+                current_word_offset = 0
+                if first_audio:
+                    if first_chunk.tagged:
+                        first_audio = apply_ordis_glitch(first_audio)
+                    async with ws_lock:
+                        await websocket.send_json({
+                            "type": "audio",
+                            "data": base64.b64encode(first_audio).decode("ascii"),
+                            "word_offset": current_word_offset,
+                            "sample_rate": 32000
+                        })
+
+                async for audio_chunk in first_iter:
+                    if audio_chunk:
+                        if first_chunk.tagged:
+                            audio_chunk = apply_ordis_glitch(audio_chunk)
+                        async with ws_lock:
+                            await websocket.send_json({
+                                "type": "audio",
+                                "data": base64.b64encode(audio_chunk).decode("ascii"),
+                                "word_offset": current_word_offset,
+                                "sample_rate": 32000
+                            })
+
+                current_word_offset += len(first_chunk.text.split())
+
+                for chunk in chunks[1:]:
+                    async for audio_chunk in tts_client.synthesize(chunk.text):
+                        if audio_chunk:
+                            if chunk.tagged:
+                                audio_chunk = apply_ordis_glitch(audio_chunk)
+                            async with ws_lock:
+                                await websocket.send_json({
+                                    "type": "audio",
+                                    "data": base64.b64encode(audio_chunk).decode("ascii"),
+                                    "word_offset": current_word_offset,
+                                    "sample_rate": 32000
+                                })
+                    current_word_offset += len(chunk.text.split())
+
+                async with ws_lock:
+                    await websocket.send_json({"type": "audio_end"})
+
+            async def on_task_complete(task: TrackedTask) -> None:
+                if task.status == "cancelled":
+                    return
+                summary = task.result or ""
+                notify_text = f"Operator, that task is complete. {summary[:200]}" if summary else "Operator, the background task has finished."
+                if task.status == "failed":
+                    notify_text = f"Operator, the task has failed. Error: {task.error[:200]}"
+
+                try:
+                    async with ws_lock:
+                        await websocket.send_json({
+                            "type": "task_complete",
+                            "task_id": task.task_id,
+                            "summary": summary[:500],
+                        })
+
+                    if session.is_passive():
+                        session.state = SessionState.ACKNOWLEDGING
+                        await send_filler("acknowledge")
+                        session.state = SessionState.ACTIVE_LISTENING
+
+                    session.set_generation_task(asyncio.create_task(speak_text_to_tts(notify_text)))
+                    router.remember_turn("[background task completed]", notify_text)
+                except Exception as exc:
+                    logger.error("on_task_complete error: %s", exc)
+
+            task_tracker.register_callback(on_task_complete)
+
+            async def handle_audio(audio_data: bytes) -> None:
+                try:
+                    session.state = SessionState.TRANSCRIBING
+
+                    stt_client = getattr(app.state, "stt", None)
+                    if stt_client:
+                        transcript = await stt_client.transcribe(audio_data)
+                    else:
+                        transcript = ""
+
+                    if not transcript:
+                        session.state = SessionState.ACTIVE_LISTENING
+                        return
+
+                    session.last_transcript = transcript
+                    session.reset_silence_timer()
+
+                    async with ws_lock:
+                        await websocket.send_json({"type": "transcript", "text": transcript})
+                        await websocket.send_json({"type": "status", "state": "thinking"})
+
+                    session.state = SessionState.THINKING
+
+                    # Route decision
+                    task_summary = task_tracker.get_summary()
+                    decision = await router.route(transcript, task_summaries=task_summary)
+
+                    async with ws_lock:
+                        await websocket.send_json({
+                            "type": "decision",
+                            "action": decision.action,
+                            "reason": decision.reason
+                        })
+
+                    if decision.action == "check_tasks":
+                        await speak_text_to_tts(decision.message)
+                        router.remember_turn(transcript, decision.message)
+                        session.state = SessionState.ACTIVE_LISTENING
+
+                    elif decision.action == "conversation_end":
+                        await speak_text_to_tts(decision.message)
+                        await send_filler("signoff")
+                        router.remember_turn(transcript, decision.message)
+                        session.state = SessionState.PASSIVE_LISTENING
+
+                    elif decision.action == "openclaw" and decision.openclaw is not None:
+                        # Dispatch to gateway via task tracker
+                        async def run_gateway_task():
+                            client = OpenClawClient(
+                                gateway_url=config.gateway_url,
+                                gateway_token=config.gateway_token,
+                                min_protocol=config.gateway_min_protocol,
+                                max_protocol=config.gateway_max_protocol
+                            )
+                            try:
+                                await client.connect()
+                                run_id = await client.send_message(
+                                    agent_id=decision.openclaw.agent_id,
+                                    message=decision.openclaw.message,
+                                    mode=decision.openclaw.mode,
+                                    session_key=decision.openclaw.session_key
+                                )
+                                chunks = []
+                                async for chunk in client.stream_response(run_id):
+                                    if chunk:
+                                        chunks.append(chunk)
+                                        try:
+                                            async with ws_lock:
+                                                await websocket.send_json({"type": "tool_delta", "text": chunk})
+                                        except Exception:
+                                            pass
+                                return "".join(chunks)
+                            finally:
+                                await client.close()
+
+                        task_tracker.start_task(
+                            agent_id=decision.openclaw.agent_id,
+                            description=decision.openclaw.message,
+                            coro=run_gateway_task()
+                        )
+
+                        await speak_text_to_tts(decision.message)
+                        router.remember_turn(transcript, decision.message)
+                        session.state = SessionState.ACTIVE_LISTENING
+
+                    else: # "answer"
+                        await speak_text_to_tts(decision.message)
+                        router.remember_turn(transcript, decision.message)
+                        session.state = SessionState.ACTIVE_LISTENING
+
+                except asyncio.CancelledError:
+                    logger.info("handle_audio task cancelled")
+                    raise
+                except Exception as e:
+                    logger.error(f"Error in handle_audio: {e}", exc_info=True)
+                    try:
+                        async with ws_lock:
+                            await websocket.send_json({
+                                "type": "error",
+                                "message": "Error processing audio"
+                            })
+                    except Exception:
+                        pass
+                    session.state = SessionState.ACTIVE_LISTENING
 
             # Send initial state to the client
             await websocket.send_json({
@@ -89,11 +458,25 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                 text_data = message.get("text")
 
                 if bytes_data is not None:
-                    # On binary PCM message, when in active_listening, store audio buffer
-                    if session.state == SessionState.ACTIVE_LISTENING:
-                        session.audio_buffer = bytes_data
-                        logger.info(f"Stored {len(bytes_data)} bytes of audio data in session")
-                        session.reset_silence_timer()
+                    if session.is_passive():
+                        logger.debug("Passive mode: discarding audio (no wakeword)")
+                        continue
+
+                    # Cancel ongoing generation / stop TTS
+                    if session.generation_task and not session.generation_task.done():
+                        partial = await session.cancel_generation()
+                        if partial and session.last_transcript:
+                            router.remember_turn(
+                                session.last_transcript,
+                                f"{partial}... [interrupted by user]"
+                            )
+                        tts_client = getattr(app.state, "tts", None)
+                        if tts_client:
+                            await tts_client.stop()
+
+                    generation_task = asyncio.create_task(handle_audio(bytes_data))
+                    session.set_generation_task(generation_task)
+
                 elif text_data is not None:
                     try:
                         payload = json.loads(text_data)
@@ -106,9 +489,32 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                         if session.is_passive():
                             logger.info("Wakeword received — transitioning to acknowledging")
                             session.state = SessionState.ACKNOWLEDGING
-                            # Simulate acknowledgment delay
-                            await asyncio.sleep(0.5)
+                            await send_filler("acknowledge")
                             session.state = SessionState.ACTIVE_LISTENING
+
+                    elif msg_type == "interrupt":
+                        # Cancel ongoing generation
+                        partial = await session.cancel_generation()
+                        if partial and session.last_transcript:
+                            router.remember_turn(
+                                session.last_transcript,
+                                f"{partial}... [interrupted by user]"
+                            )
+                        tts_client = getattr(app.state, "tts", None)
+                        if tts_client:
+                            await tts_client.stop()
+
+                        session.state = SessionState.ACTIVE_LISTENING
+                        session.reset_silence_timer()
+                        async with ws_lock:
+                            await websocket.send_json({"type": "flush_audio"})
+                            await websocket.send_json({"type": "status", "state": "interrupted"})
+                            await websocket.send_json({"type": "status", "state": "active_listening"})
+
+                    elif msg_type == "playback_progress":
+                        words_played = int(payload.get("words_played", 0))
+                        session.update_words_played(words_played)
+
                     elif msg_type == "set_timeout":
                         seconds = float(payload.get("seconds", 30.0))
                         seconds = max(10.0, min(120.0, seconds))
@@ -123,4 +529,11 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
         logger.error(f"WebSocket error: {e}", exc_info=True)
     finally:
         await session.close()
+        task_tracker.cancel_all()
+        tts_client = getattr(app.state, "tts", None)
+        if tts_client:
+            try:
+                await tts_client.stop()
+            except Exception:
+                pass
         logger.info("WebSocket connection closed")

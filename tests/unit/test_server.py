@@ -84,5 +84,148 @@ class TestServer(unittest.TestCase):
                 
                 mock_start.assert_called()
 
+    @patch("voice_satellite.llm.router.LLMRouter.route")
+    def test_full_voice_pipeline_answer(self, mock_route):
+        from unittest.mock import AsyncMock, MagicMock
+        from voice_satellite.llm.router import CoordinatorDecision
+        mock_route.side_effect = AsyncMock(return_value=CoordinatorDecision(
+            action="answer",
+            message="i am ordis. <glitch>hello</glitch>",
+            reason="just answering"
+        ))
+
+        with self.client.websocket_connect("/ws") as ws:
+            # Mock STT on app state
+            mock_stt = AsyncMock()
+            mock_stt.transcribe.return_value = "hello world"
+            app.state.stt = mock_stt
+
+            # Mock TTS on app state
+            mock_tts = MagicMock()
+            mock_tts.degraded_mode = False
+            mock_tts.stop = AsyncMock()
+            async def mock_synth(text):
+                yield b"audio_chunk_1"
+                yield b"audio_chunk_2"
+            mock_tts.synthesize.side_effect = mock_synth
+            app.state.tts = mock_tts
+
+            ws.receive_json()  # passive_listening
+            
+            ws.send_json({"type": "wakeword"})
+            ws.receive_json()  # acknowledging
+            ws.receive_json()  # active_listening
+            
+            ws.send_bytes(b"user_speech_pcm")
+            
+            received_messages = []
+            for _ in range(13):
+                received_messages.append(ws.receive_json())
+            
+            types = [m.get("type") for m in received_messages]
+            states = [m.get("state") for m in received_messages if m.get("type") == "status"]
+            
+            self.assertIn("transcript", types)
+            self.assertIn("decision", types)
+            self.assertIn("assistant_response", types)
+            self.assertIn("audio", types)
+            self.assertIn("audio_end", types)
+            
+            self.assertIn("transcribing", states)
+            self.assertIn("thinking", states)
+            self.assertIn("speaking", states)
+            self.assertIn("active_listening", states)
+            
+            transcript_msg = next(m for m in received_messages if m.get("type") == "transcript")
+            self.assertEqual(transcript_msg["text"], "hello world")
+            
+            response_msg = next(m for m in received_messages if m.get("type") == "assistant_response")
+            self.assertEqual(response_msg["text"], "i am ordis. <glitch>hello</glitch>")
+
+    def test_barge_in_interrupt(self):
+        with self.client.websocket_connect("/ws") as ws:
+            from unittest.mock import MagicMock, AsyncMock
+            mock_tts = MagicMock()
+            mock_tts.stop = AsyncMock()
+            app.state.tts = mock_tts
+
+            ws.receive_json()  # passive_listening
+            
+            ws.send_json({"type": "wakeword"})
+            ws.receive_json()  # acknowledging
+            ws.receive_json()  # active_listening
+            
+            ws.send_json({"type": "playback_progress", "words_played": 5})
+            ws.send_json({"type": "interrupt"})
+            
+            msgs = []
+            for _ in range(3):
+                msgs.append(ws.receive_json())
+            
+            types = [m.get("type") for m in msgs]
+            states = [m.get("state") for m in msgs if m.get("type") == "status"]
+            self.assertIn("flush_audio", types)
+            self.assertIn("interrupted", states)
+            self.assertIn("active_listening", states)
+            
+            mock_tts.stop.assert_called()
+
+    @patch("voice_satellite.llm.router.LLMRouter.route")
+    @patch("voice_satellite.gateway.openclaw_client.OpenClawClient.connect")
+    @patch("voice_satellite.gateway.openclaw_client.OpenClawClient.send_message")
+    @patch("voice_satellite.gateway.openclaw_client.OpenClawClient.stream_response")
+    def test_openclaw_dispatch(self, mock_stream, mock_send, mock_connect, mock_route):
+        from unittest.mock import AsyncMock, MagicMock
+        from voice_satellite.llm.router import CoordinatorDecision, RouterDecision
+        mock_route.side_effect = AsyncMock(return_value=CoordinatorDecision(
+            action="openclaw",
+            message="i am dispatching the openclaw task.",
+            reason="dispatching",
+            openclaw=RouterDecision(
+                agent_id="test_agent",
+                message="deploy application",
+                mode="one-shot"
+            )
+        ))
+        
+        mock_connect.side_effect = AsyncMock()
+        mock_send.side_effect = AsyncMock(return_value="run-12345")
+        
+        async def mock_stream_resp(run_id):
+            yield "Deployment complete."
+        mock_stream.side_effect = mock_stream_resp
+
+        with self.client.websocket_connect("/ws") as ws:
+            # Mock STT on app state
+            mock_stt = AsyncMock()
+            mock_stt.transcribe.return_value = "run task"
+            app.state.stt = mock_stt
+
+            # Mock TTS on app state
+            mock_tts = MagicMock()
+            mock_tts.stop = AsyncMock()
+            app.state.tts = mock_tts
+
+            ws.receive_json()  # passive_listening
+            
+            ws.send_json({"type": "wakeword"})
+            ws.receive_json()  # acknowledging
+            ws.receive_json()  # active_listening
+            
+            ws.send_bytes(b"user_speech_pcm")
+            
+            msgs = []
+            for _ in range(20):
+                msg = ws.receive_json()
+                msgs.append(msg)
+                if msg.get("type") == "task_complete":
+                    break
+                    
+            types = [m.get("type") for m in msgs]
+            self.assertIn("transcript", types)
+            self.assertIn("decision", types)
+            self.assertIn("tool_delta", types)
+            self.assertIn("task_complete", types)
+
 if __name__ == "__main__":
     unittest.main()

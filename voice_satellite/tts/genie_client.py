@@ -148,3 +148,18 @@ class GenieTTSClient:
         """
         await self.load_character()
         return not self.degraded_mode
+
+    async def stop(self) -> None:
+        """
+        Sends a stop request to the Genie TTS server to abort any ongoing playback/synthesis.
+        """
+        if self.degraded_mode:
+            return
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(f"{self.tts_url}/stop", timeout=5) as resp:
+                    if resp.status != 200:
+                        body = await resp.text()
+                        logger.error(f"Genie /stop failed with status {resp.status}: {body}")
+        except Exception as e:
+            logger.error(f"Failed to stop Genie TTS: {e}")
