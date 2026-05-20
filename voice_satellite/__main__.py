@@ -45,16 +45,24 @@ async def bootstrap():
         logger.warning("TTS config incomplete. Running in degraded mode.")
         tts_status = f"{config.tts_character_name} (degraded) ⚠"
     else:
-        tts_client = GenieTTSClient(tts_url=config.tts_url, character_name=config.tts_character_name)
+        tts_client = GenieTTSClient(
+            tts_url=config.tts_url,
+            character_name=config.tts_character_name,
+            onnx_model_dir=config.tts_onnx_model_dir,
+            reference_audio=config.tts_reference_audio,
+            reference_text=config.tts_reference_text,
+            language=config.tts_language,
+        )
         try:
-            success = await tts_client.ping_and_load()
-            if success:
+            await tts_client.load_character()
+            if not tts_client.degraded_mode:
                 tts_status = f"{config.tts_character_name} @ {config.tts_url} ✓"
             else:
-                tts_status = f"{config.tts_character_name} (unreachable) ⚠"
+                tts_status = f"{config.tts_character_name} (degraded) ⚠"
         except Exception as e:
-            logger.warning(f"Genie TTS ping failed: {e}")
+            logger.warning(f"Genie TTS initialization failed: {e}")
             tts_status = f"{config.tts_character_name} (failed) ⚠"
+
             
     # 4. Fillers load
     filler_engine = FillerEngine(filler_dir=config.filler_dir)
