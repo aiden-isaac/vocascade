@@ -140,6 +140,9 @@ class GenieTTSClient:
             raise
         except Exception as e:
             logger.warning(f"Genie TTS server unreachable during synthesis: {e}. Gracefully yielding empty audio.")
+            self.degraded_mode = True
+            self.initialized = False
+
 
     async def ping_and_load(self) -> bool:
         """

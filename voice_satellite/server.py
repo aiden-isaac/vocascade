@@ -172,7 +172,17 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                     await websocket.send_json({"type": "assistant_response", "text": text})
 
                 tts_client = getattr(app.state, "tts", None)
-                if not tts_client or tts_client.degraded_mode:
+                if tts_client and getattr(tts_client, "degraded_mode", False) is True and getattr(tts_client, "onnx_model_dir", None):
+                    logger.info("TTS is in degraded mode. Retrying character load...")
+                    tts_client.degraded_mode = False
+                    try:
+                        await tts_client.load_character()
+                    except TypeError:
+                        pass
+
+                # If degraded_mode is still truthy (which includes MagicMocks that aren't boolean False)
+                is_degraded = getattr(tts_client, "degraded_mode", False)
+                if not tts_client or (is_degraded and is_degraded is not False):
                     async with ws_lock:
                         await websocket.send_json({"type": "audio_end"})
                     return

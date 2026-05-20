@@ -227,5 +227,62 @@ class TestServer(unittest.TestCase):
             self.assertIn("tool_delta", types)
             self.assertIn("task_complete", types)
 
+    @patch("voice_satellite.llm.router.LLMRouter.route")
+    def test_tts_degraded_mode_retry(self, mock_route):
+        from unittest.mock import AsyncMock, MagicMock
+        from voice_satellite.llm.router import CoordinatorDecision
+
+        mock_route.side_effect = AsyncMock(return_value=CoordinatorDecision(
+            action="answer",
+            message="hello there",
+            reason="just answering"
+        ))
+
+        # Setup mock STT
+        mock_stt = AsyncMock()
+        mock_stt.transcribe.return_value = "hello"
+        app.state.stt = mock_stt
+
+        # Create a mock client that behaves like GenieTTSClient under degraded mode/retry
+        mock_tts = MagicMock()
+        mock_tts.degraded_mode = True
+        mock_tts.onnx_model_dir = "/path/to/onnx"
+        mock_tts.stop = AsyncMock()
+
+        # We will track calls to load_character
+        load_calls = []
+        async def mock_load_character():
+            load_calls.append(1)
+            # Simulate a successful recovery on the retry call
+            mock_tts.degraded_mode = False
+
+        mock_tts.load_character = mock_load_character
+
+        # Mock synthesize to yield mock audio chunks
+        async def mock_synth(text):
+            yield b"audio_chunk_1"
+        mock_tts.synthesize.side_effect = mock_synth
+        app.state.tts = mock_tts
+
+        with self.client.websocket_connect("/ws") as ws:
+            ws.receive_json()  # passive_listening
+            ws.send_json({"type": "wakeword"})
+            ws.receive_json()  # acknowledging
+            ws.receive_json()  # active_listening
+            
+            ws.send_bytes(b"some_pcm")
+            
+            # Read messages until we get audio or audio_end
+            received_types = []
+            for _ in range(12):
+                msg = ws.receive_json()
+                received_types.append(msg.get("type"))
+                if msg.get("type") == "audio_end":
+                    break
+            
+            # Since load_character recovered the client, we expect audio and audio_end to be sent
+            self.assertIn("audio", received_types)
+            self.assertEqual(len(load_calls), 1)
+
 if __name__ == "__main__":
     unittest.main()

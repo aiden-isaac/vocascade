@@ -122,6 +122,8 @@ class TestGenieTTSClient(unittest.IsolatedAsyncioTestCase):
         async for chunk in client.synthesize("Hello world"):
             chunks.append(chunk)
         self.assertEqual(chunks, [])
+        self.assertTrue(client.degraded_mode)
+        self.assertFalse(client.initialized)
 
 if __name__ == "__main__":
     unittest.main()
