@@ -26,7 +26,7 @@
 - [x] T005 Implement `voice_satellite/audio/constants.py` defining `CAPTURE_SAMPLE_RATE = 16_000`, `TTS_SAMPLE_RATE = 32_000`, `PCM_SAMPLE_WIDTH = 2` as the canonical audio rate boundary constants referenced by all modules
 - [x] T006 Implement `voice_satellite/config.py` with frozen `SatelliteConfig` dataclass, `.env` loading via `python-dotenv`, fail-fast validation for required keys (`LITELLM_API_KEY`, `OPENCLAW_GATEWAY_TOKEN`), warn-and-degrade for optional TTS keys, and all defaults per plan §Config Module
 - [x] T007 Implement `voice_satellite/__main__.py` as the CLI entry point that loads config, runs the bootstrap sequence (STT init → TTS ping → filler load → gateway test), prints the startup health report, and launches uvicorn with configured host/port
-- [ ] T008 Implement `voice_satellite/server.py` with FastAPI app creation, static file mounting (`static/`), single-session WebSocket endpoint skeleton (`/ws`) with `asyncio.Lock`-based enforcement (FR-007a), and JSON error response for rejected connections
+- [x] T008 Implement `voice_satellite/server.py` with FastAPI app creation, static file mounting (`static/`), single-session WebSocket endpoint skeleton (`/ws`) with `asyncio.Lock`-based enforcement (FR-007a), and JSON error response for rejected connections
 **Checkpoint**: Foundation ready — config loads, server starts, single WebSocket connection accepted, static files served
 ---
 ## Phase 3: User Story 1 — Wakeword Activation & VAD (Priority: P1) 🎯 MVP

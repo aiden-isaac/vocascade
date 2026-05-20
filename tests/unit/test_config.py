@@ -6,6 +6,10 @@ from voice_satellite.config import load_config, SatelliteConfig
 
 class TestConfig(unittest.TestCase):
     def setUp(self):
+        # Patch load_dotenv to prevent loading from .env on disk during unit testing
+        self.dotenv_patcher = patch("voice_satellite.config.load_dotenv")
+        self.mock_load_dotenv = self.dotenv_patcher.start()
+
         # Clear environment variables of interest to prevent cross-contamination
         self.env_keys = [
             "LITELLM_API_KEY", "LITELLM_URL", "LLM_MODEL", "LLM_HISTORY_MESSAGES",
@@ -23,6 +27,9 @@ class TestConfig(unittest.TestCase):
                 del os.environ[key]
 
     def tearDown(self):
+        # Stop load_dotenv patcher
+        self.dotenv_patcher.stop()
+
         # Restore environment variables
         for key in self.env_keys:
             if key in os.environ:
