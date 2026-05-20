@@ -126,6 +126,59 @@ audio effects applied.
    cancellation signal arrives, **Then** the TTS pipeline cancels the
    in-flight request and releases resources cleanly.
 ---
+### User Story 4 — Automated Genie TTS Character Setup (Priority: P2)
+A user who wants to use a custom TTS voice character downloads a trained
+GPT-SoVITS model (`.ckpt` and `.pth` files) plus a reference audio clip
+and its text transcription. The current process requires manually running
+Python conversion snippets, copying files to the right directories, and
+editing `.env` by hand — all undocumented and fragile.
+
+With the automated setup, the user runs a one-time environment script
+(`setup_genie.sh`) that creates the virtualenv, installs `genie-tts`, and
+creates a staging input folder. They then drop their model assets into that
+folder, run `generate_character.py --name <character>`, and the script:
+- Validates all required files are present
+- Converts the model to ONNX format
+- Organises all files into a named character profile directory
+- Removes the raw `.ckpt`/`.pth` files from the staging folder (moving them
+  into the profile directory for archival), leaving the input folder clean
+  for the next character
+- Writes all required `GENIE_*` environment variables into `.env` automatically
+
+After running the script, the user starts the Voice Satellite normally and
+the configured voice is active immediately.
+
+**Why this priority**: The existing manual process is the primary adoption
+barrier. Automating it reduces setup time from 20–40 minutes to under 5
+minutes and eliminates the most common class of misconfiguration errors.
+
+**Independent Test**: A user follows the two-script workflow from scratch
+with a set of valid model files. They verify the Satellite starts and uses
+the correct voice without ever manually editing `.env` or writing Python.
+
+**Acceptance Scenarios**:
+1. **Given** `setup_genie.sh` is run, **When** the script completes,
+   **Then** a `genie_tts_env/` virtualenv with `genie-tts` installed and
+   a `genie_input/` staging directory both exist, and clear instructions
+   for the next step are printed.
+2. **Given** a `.ckpt`, `.pth`, `.wav`, and `.txt` file are placed in
+   `genie_input/` and `generate_character.py --name <name>` is run,
+   **When** conversion succeeds, **Then** a `genie_profiles/<name>/`
+   directory contains the ONNX export and reference files, and `.env` is
+   updated with all `GENIE_*` variables.
+3. **Given** conversion completes, **When** checking `genie_input/`,
+   **Then** the raw `.ckpt` and `.pth` files have been moved into
+   `genie_profiles/<name>/` and the staging folder is empty (ready for
+   the next character).
+4. **Given** a required file is missing from `genie_input/`,
+   **When** `generate_character.py` is run, **Then** it exits with a
+   clear error listing exactly which file types are missing, without
+   performing any partial conversion.
+5. **Given** a character profile already exists at `genie_profiles/<name>/`,
+   **When** `generate_character.py --name <name>` is run again,
+   **Then** it warns the user and requires an explicit `--overwrite` flag
+   to replace the existing profile.
+---
 ### Edge Cases
 - What happens when the microphone is disconnected or permission is denied
   mid-session? The system MUST display a clear status message and attempt
@@ -225,6 +278,35 @@ audio effects applied.
   required configuration values are missing, and MUST NOT silently fall
   back to hardcoded defaults for security-sensitive values (API keys,
   tokens).
+- **FR-028**: A one-time setup script (`scripts/setup_genie.sh`) MUST
+  create a dedicated Python virtualenv for Genie TTS, install the
+  `genie-tts` package into it, create a `genie_input/` staging directory
+  with a descriptive README, and print clear next-step instructions —
+  without requiring any manual virtualenv activation or Python invocation
+  from the user.
+- **FR-029**: A character generation script (`scripts/generate_character.py`)
+  MUST scan `genie_input/` for exactly one `*.ckpt`, one `*.pth`, one
+  `*.wav`, and one `*.txt` file. If any required file type is missing or
+  more than one of the same type is present, the script MUST exit with a
+  clear, actionable error message before performing any conversion.
+- **FR-030**: The character generation script MUST perform ONNX model
+  conversion using the `genie_tts_env/` virtualenv (created by the setup
+  script), write the exported ONNX assets to
+  `genie_profiles/<character_name>/export/`, and copy the reference audio
+  (`.wav`) and transcript (`.txt`) files into `genie_profiles/<character_name>/`.
+- **FR-031**: After a successful ONNX export, the character generation
+  script MUST move all source model files (`.ckpt`, `.pth`, and any
+  other non-reference files) from `genie_input/` into
+  `genie_profiles/<character_name>/` for archival, leaving `genie_input/`
+  empty and ready for the next character's assets.
+- **FR-032**: The character generation script MUST automatically write or
+  patch the `.env` file at the repository root with the `GENIE_TTS_URL`,
+  `GENIE_CHARACTER_NAME`, `GENIE_ONNX_MODEL_DIR`, `GENIE_REFERENCE_AUDIO`,
+  `GENIE_REFERENCE_TEXT`, and `GENIE_LANGUAGE` variables, deriving all
+  paths from the generated profile directory. Existing non-Genie `.env`
+  entries MUST be preserved unchanged. If a character profile already
+  exists at the target path, the script MUST require an explicit
+  `--overwrite` flag before replacing it.
 - **FR-022**: The system MUST track background OpenClaw agent tasks
   asynchronously and notify the user (proactively reactivating from
   passive mode if needed) when tasks complete.
@@ -325,7 +407,9 @@ audio effects applied.
 - The OpenClaw gateway server is deployed and reachable over the network
   (LAN or tunnel). The satellite does not embed the gateway.
 - A Genie TTS server (GPT-SoVITS or compatible) is deployed separately.
-  The satellite is a client; it does not embed the TTS engine.
+  The satellite is a client; it does not embed the TTS engine. The
+  `scripts/setup_genie.sh` and `scripts/generate_character.py` scripts
+  handle the Genie TTS environment and character profile creation.
 - The wakeword ONNX model is provided by the user (e.g., trained via
   OpenWakeWord). The satellite does not include a default wakeword model.
 - The STT model (e.g., faster-whisper tiny.en) is downloaded automatically
@@ -334,3 +418,7 @@ audio effects applied.
   with WebAssembly SIMD support.
 - Network connectivity is intermittent but generally available. The
   satellite MUST handle temporary disconnections gracefully.
+- Users have `bash` available on the host system for running setup scripts.
+  Python 3.11+ is required to run `generate_character.py`.
+- The `genie_input/` staging directory and `genie_profiles/` directory are
+  excluded from version control (they contain large binary model files).

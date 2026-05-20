@@ -80,6 +80,17 @@
 - [x] T035 Implement the startup health report in `voice_satellite/__main__.py`: after all bootstrap checks complete, print the formatted health report box showing config status, STT model, TTS character + URL, gateway URL + negotiated protocol, filler count by category, wakeword model name, and listen address
 - [x] T036 Add structured logging throughout all modules using Python `logging` with `%(name)s` namespace per module (e.g., `voice_satellite.stt`, `voice_satellite.gateway`), ensure no sensitive values (API keys, tokens) appear in logs, log state transitions at INFO level and errors at ERROR level
 ---
+## Phase 7: Genie TTS Setup Automation (Priority: P2)
+**Purpose**: Provide two scripts that automate the entire Genie TTS character setup process, eliminating manual virtual-environment management, ONNX conversion, file copying, and `.env` editing.
+**Dependencies**: Can be implemented independently of all other phases — touches only `scripts/`, `.gitignore`, and `quickstart.md`.
+### Implementation for User Story 4
+- [ ] T037 [P] [US4] Create `scripts/setup_genie.sh`: a bash script that (1) creates a `genie_tts_env/` Python virtualenv at the repository root if it does not already exist, (2) installs `genie-tts` into that venv via `pip`, (3) creates a `genie_input/` staging directory, (4) writes `genie_input/README.md` explaining which four file types to place there (`.ckpt`, `.pth`, `.wav`, `.txt`), and (5) prints a summary of what was done plus the exact command to run next
+- [ ] T038 [P] [US4] Create `scripts/generate_character.py`: a Python 3.11+ script with a `--name <character>` required argument that (1) scans `genie_input/` for exactly one file of each required type (`*.ckpt`, `*.pth`, `*.wav`, `*.txt`), (2) exits with a clear error listing missing/ambiguous types without performing any conversion, (3) runs ONNX conversion via `genie_tts_env/bin/python -c "from genie_tts.Converter.Converter import convert; convert(...)"` writing output to `genie_profiles/<name>/export/`, (4) copies the `.wav` and `.txt` files to `genie_profiles/<name>/`
+- [ ] T039 [US4] Implement post-conversion cleanup in `scripts/generate_character.py`: after a successful ONNX export, move all files from `genie_input/` (`.ckpt`, `.pth`, and any additional non-reference files) into `genie_profiles/<name>/` using `shutil.move`, leaving `genie_input/` completely empty and ready for the next character; guard against overwriting an existing profile without `--overwrite` flag (warn and exit)
+- [ ] T040 [US4] Implement `.env` auto-patching in `scripts/generate_character.py`: read existing `.env` (preserving all non-`GENIE_*` lines), write or update the six `GENIE_*` keys (`GENIE_TTS_URL=http://127.0.0.1:8000`, `GENIE_CHARACTER_NAME=<name>`, `GENIE_ONNX_MODEL_DIR=<abs path to export/>`, `GENIE_REFERENCE_AUDIO=<abs path to .wav>`, `GENIE_REFERENCE_TEXT=<first line of .txt>`, `GENIE_LANGUAGE=en`) using absolute paths, and print a diff-style summary of what changed
+- [ ] T041 [P] [US4] Update `.gitignore` to exclude `genie_tts_env/`, `genie_input/`, and `genie_profiles/` (these directories contain large binary model files and virtual environment artifacts that must never be committed)
+- [ ] T042 [P] [US4] Update `specs/001-voice-satellite-core/quickstart.md` Genie TTS Server Setup section: replace the manual multi-step process with the two-script workflow (`scripts/setup_genie.sh` → drop files → `scripts/generate_character.py --name <name>`), add a troubleshooting row for missing input files, and add a note about `--overwrite` for re-generating an existing profile
+**Checkpoint**: Running `scripts/setup_genie.sh` creates the virtualenv and staging dir. Dropping model files and running `scripts/generate_character.py --name ordis` creates `genie_profiles/ordis/`, updates `.env`, and leaves `genie_input/` empty. The satellite starts with the new voice immediately.
 ## Dependencies & Execution Order
 ### Phase Dependencies
 - **Setup (Phase 1)**: No dependencies — can start immediately
@@ -88,6 +99,7 @@
 - **US2 (Phase 4)**: Depends on US1 (Phase 3) — needs wakeword/VAD for audio capture
 - **US3 (Phase 5)**: Depends on US2 (Phase 4) — needs TTS streaming pipeline for voice rendering
 - **Polish (Phase 6)**: Can start after Phase 4 (US2); does not depend on US3
+- **Genie Setup Automation (Phase 7)**: Independent — no dependencies on any other phase. Can be implemented in parallel with any phase.
 ### User Story Dependencies
 ```mermaid
 graph LR
@@ -96,10 +108,12 @@ graph LR
     US1 --> US2[Phase 4: US2 Streaming/Barge-in]
     US2 --> US3[Phase 5: US3 TTS Voices/Effects]
     US2 --> POL[Phase 6: Polish]
+    GS[Phase 7: Genie Setup Automation]
 ```
 - **US1 → US2**: US2 requires active mode audio capture from US1
 - **US2 → US3**: US3 adds configurable voices and effects to the TTS pipeline built in US2
 - **US2 → Polish**: Polish can proceed once the core conversation loop is functional
+- **Phase 7**: Fully independent — can run alongside any other phase
 ### Within Each User Story
 - Models/constants before services
 - Services before server integration
@@ -118,6 +132,8 @@ graph LR
 - T028 → T029 → T030 → T031
 **Phase 6** — T032, T033, T034 are parallel; T035 and T036 are parallel:
 - T032, T033, T034 in parallel → T035, T036 in parallel
+**Phase 7 (Genie Setup Automation)** — T037, T038, T041, T042 are parallel (different files/scripts); T039 and T040 depend on T038:
+- T037, T038, T041, T042 all in parallel → T039 → T040
 ---
 ## Parallel Example: User Story 2 (Maximum Parallelism)
 ```bash
