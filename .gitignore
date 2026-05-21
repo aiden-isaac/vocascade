@@ -18,3 +18,8 @@ clean_files.py
 # OS / editor
 .DS_Store
 Thumbs.db
+
+# Genie TTS Setup
+genie_tts_env/
+genie_input/
+genie_profiles/
