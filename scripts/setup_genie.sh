@@ -24,10 +24,10 @@ else
     echo "[1/4] Virtual environment $VENV_DIR/ already exists. Skipping creation."
 fi
 
-# 2. Install genie-tts
-echo "[2/4] Installing genie-tts package..."
+# 2. Install genie-tts & torch (required for converter module)
+echo "[2/4] Installing genie-tts and torch packages..."
 "$VENV_DIR/bin/pip" install --upgrade pip
-"$VENV_DIR/bin/pip" install genie-tts
+"$VENV_DIR/bin/pip" install torch genie-tts
 
 # 3. Create staging directory
 echo "[3/4] Creating staging directory at $INPUT_DIR/..."
