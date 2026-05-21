@@ -21,7 +21,6 @@ cp .env.example .env
 ```
 Edit `.env` with your values. **Required** fields (satellite will not start without these):
 ```ini
-LITELLM_API_KEY=your_litellm_api_key
 OPENCLAW_GATEWAY_TOKEN=your_openclaw_token
 ```
 **Required for voice** (satellite runs in text-only degraded mode without these):
@@ -131,7 +130,7 @@ python scripts/generate_character.py --name <character_name> --overwrite
 ## Troubleshooting
 | Symptom | Cause | Fix |
 |---------|-------|-----|
-| "LITELLM_API_KEY is required" | Missing `.env` value | Add your API key to `.env` |
+| "OPENCLAW_GATEWAY_TOKEN is required" | Missing `.env` value | Add your gateway token to `.env` |
 | "Invalid files in genie_input/" | Missing or extra model files during character generation | Ensure exactly one `.ckpt`, `.pth`, `.wav`, and `.txt` exist in `genie_input/` |
 | VAD never detects speech | Browser mic permission blocked | Check browser permissions |
 | No audio playback | AudioContext suspended | Click the UI first (browser autoplay policy) |

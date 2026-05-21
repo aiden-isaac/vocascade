@@ -101,15 +101,7 @@ error and are immediately closed (code 1013).
 }
 ```
 **When**: Whisper STT transcription is complete.
-### Decision
-```json
-{
-  "type": "decision",
-  "action": "openclaw",
-  "reason": "user asked about infrastructure"
-}
-```
-**When**: LLM router has made a routing decision.
+
 ### Assistant Response (Complete)
 ```json
 {
@@ -126,15 +118,7 @@ error and are immediately closed (code 1013).
 }
 ```
 **When**: LLM is streaming text tokens.
-### Task Complete
-```json
-{
-  "type": "task_complete",
-  "task_id": "task-abc12345",
-  "summary": "Infrastructure check completed: all services healthy."
-}
-```
-**When**: A background OpenClaw agent task finishes.
+
 ### Error
 ```json
 {
@@ -168,8 +152,6 @@ sequenceDiagram
         C->>S: Binary PCM (on speech end)
         S->>C: {"type":"status","state":"transcribing"}
         S->>C: {"type":"transcript","text":"..."}
-        S->>C: {"type":"status","state":"thinking"}
-        S->>C: {"type":"decision",...}
         S->>C: {"type":"status","state":"speaking"}
         S->>C: {"type":"audio",...} (TTS chunks)
         S->>C: {"type":"audio_end"}

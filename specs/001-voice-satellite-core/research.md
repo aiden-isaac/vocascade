@@ -141,11 +141,14 @@ If timeout fires first, play a random filler. Cancel filler if real response
 arrives.
 ---
 ### R10: Configuration Validation Strategy
-**Decision**: Fail-fast at startup for security-sensitive values (API keys,
-tokens). Warn-and-degrade for non-critical values (TTS URL, filler dir).
-**Required (fail-fast)**: `LITELLM_API_KEY`, `OPENCLAW_GATEWAY_TOKEN`
+**Decision**: Fail-fast at startup for security-sensitive values (tokens). Warn-and-degrade for non-critical values (TTS URL, filler dir).
+**Required (fail-fast)**: `OPENCLAW_GATEWAY_TOKEN`
 **Required for TTS (warn if missing)**:
 `GENIE_TTS_URL`, `GENIE_CHARACTER_NAME`, `GENIE_ONNX_MODEL_DIR`,
 `GENIE_REFERENCE_AUDIO`, `GENIE_REFERENCE_TEXT`
-**Optional with defaults**: `LLM_MODEL`, `WHISPER_MODEL`, `FILLER_DIR`,
+**Optional with defaults**: `WHISPER_MODEL`, `FILLER_DIR`,
 `FILLER_THRESHOLD_SECS`, `HOST`, `PORT`
+---
+### R11: LLM Coordinator Realignment & Latency Optimization
+**Decision**: Connect directly to OpenClaw via a persistent WebSocket client reused across turns. Remove LiteLLM local router. Prepend barge-in interruption context to the next message.
+**Rationale**: Eliminating the LiteLLM router saves a round-trip LLM call, reducing baseline latency by ~1-2 seconds. Reusing a persistent WebSocket connection bypasses the handshake negotiation (challenge/nonce signing) which took ~100-200ms per turn. Context is kept unified in OpenClaw's session.

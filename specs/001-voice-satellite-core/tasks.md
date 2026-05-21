@@ -173,6 +173,20 @@ Within Phase 4, maximise parallelism by writing all 8 independent modules
 (T015–T022) before wiring them into `server.py` (T023–T027). This avoids
 context-switching and ensures each module is self-contained.
 ---
+---
+## Phase 8: LLM Coordinator Realignment & Latency Optimization (Priority: P1)
+**Goal**: Remove the local LLMRouter (LiteLLM) and client-side TaskTracker, transitioning to a single, persistent OpenClaw connection. Optimize conversational latency by streaming text directly to the splitter.
+**Independent Test**: Speak to the satellite, verify that responses are generated with significantly lower latency, and confirm that there are no LiteLLM console logs/errors. Interruption handles gracefully.
+**Dependencies**: Requires Phase 4 (US2) and Phase 7.
+### Implementation for Phase 8
+- [ ] T043 Remove LiteLLM configuration from `voice_satellite/config.py`, add `gateway_agent_id` field (env var `OPENCLAW_AGENT_ID`, default `main`), and delete the `voice_satellite/llm/` directory entirely
+- [ ] T044 Delete `voice_satellite/session/task_tracker.py`
+- [ ] T045 Add `sessions_abort(session_key)` method to `voice_satellite/gateway/openclaw_client.py` that sends a `sessions.abort` RPC with the active session key and run ID; expose it in the persistent client interface
+- [ ] T046 Refactor the main WebSocket endpoint in `voice_satellite/server.py` to route STT transcripts directly to the configured OpenClaw agent (`config.gateway_agent_id`) via the persistent connection and stream response tokens sentence-by-sentence in real-time
+- [ ] T047 Implement two-part barge-in context in `voice_satellite/server.py`: (1) call `openclaw_client.sessions_abort()` to cancel the active gateway run; (2) store the partial response; on the next user turn, if partial words ≥ 10, prepend the interruption context note to the outgoing message (not stored in any local history)
+- [ ] T048 Update unit tests (`test_config.py`, `test_session.py`, `test_server.py`, `test_openclaw_client.py`) to cover the new `gateway_agent_id` field, `sessions_abort`, and barge-in context logic; delete `test_router.py` and `test_task_tracker.py`
+- [ ] T049 Run full test suite and verify clean startup health report without LiteLLM errors
+---
 ## Notes
 - [P] tasks = different files, no dependencies on incomplete tasks
 - [Story] label maps task to specific user story for traceability

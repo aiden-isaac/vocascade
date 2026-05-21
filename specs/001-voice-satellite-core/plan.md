@@ -13,7 +13,7 @@ before entering the main event loop.
 ## Technical Context
 **Language/Version**: Python 3.11+ (backend), JavaScript ES2022 (frontend)
 **Primary Dependencies**:
-- Backend: FastAPI, uvicorn, websockets, faster-whisper, aiohttp, openai (LiteLLM), python-dotenv, numpy, scipy
+- Backend: FastAPI, uvicorn, websockets, faster-whisper, aiohttp, python-dotenv, numpy, scipy
 - Frontend: onnxruntime-web (WASM), @ricky0123/vad-web (Silero VAD v5), Web Audio API
 **Storage**: Filesystem only (PCM filler audio, ONNX models, config files). No database.
 **Testing**: Python unittest (no pytest — aligns with legacy pattern), browser manual testing
@@ -82,12 +82,7 @@ voice_satellite/
 │
 ├── session/                 # Orchestration Layer
 │   ├── __init__.py
-│   ├── state_machine.py     # ConversationSession state machine
-│   └── task_tracker.py      # Background agent task manager
-│
-└── llm/                     # LLM Router Module
-    ├── __init__.py
-    └── router.py            # Coordinator decision routing
+│   └── state_machine.py     # ConversationSession state machine
 static/
 ├── index.html               # Single-page frontend (VAD + wakeword + UI)
 ├── libs/                    # Vendored WASM: ort.js, vad.bundle, silero ONNX
@@ -108,8 +103,6 @@ tests/
 ├── test_config.py
 ├── test_session.py
 ├── test_filler_engine.py
-├── test_task_tracker.py
-├── test_llm_router.py
 ├── test_genie_client.py
 ├── test_openclaw_client.py
 ├── test_whisper_stt.py
@@ -141,11 +134,8 @@ flowchart TB
         WS_S["WebSocket Handler<br/>(server.py)"]
         SESSION["ConversationSession<br/>(state_machine.py)"]
         STT["Whisper STT<br/>(thread pool)"]
-        subgraph Pipeline["Async Pipeline"]
-            ROUTER["LLM Router<br/>(router.py)"]
-            FILLER["FillerEngine<br/>(filler_engine.py)"]
-            TRACKER["TaskTracker<br/>(task_tracker.py)"]
-        end
+        OC_CL["OpenClaw Client<br/>(openclaw_client.py)"]
+        FILLER["FillerEngine<br/>(filler_engine.py)"]
         subgraph TTS_P["TTS Pipeline"]
             SPLIT["Sentence Splitter"]
             GENIE["Genie TTS Client"]
@@ -153,20 +143,17 @@ flowchart TB
         end
         WS_S --> SESSION
         SESSION -->|"PCM bytes"| STT
-        STT -->|"transcript"| ROUTER
-        ROUTER -->|"answer text"| SPLIT
-        ROUTER -->|"openclaw task"| TRACKER
+        STT -->|"transcript"| OC_CL
+        OC_CL -->|"text stream"| SPLIT
         FILLER -->|"filler PCM"| WS_S
         SPLIT --> GENIE --> FX -->|"PCM + word_offset"| WS_S
     end
     subgraph External["External Services"]
         OC["OpenClaw Gateway<br/>(WebSocket)"]
-        LLM["LiteLLM Proxy"]
         TTS_SRV["Genie TTS Server"]
     end
     WS_C <-->|"full-duplex WebSocket"| WS_S
-    ROUTER <--> LLM
-    TRACKER <--> OC
+    OC_CL <-->|"persistent WebSocket"| OC
     GENIE <--> TTS_SRV
 ```
 ---
@@ -194,11 +181,11 @@ sequenceDiagram
     end
     CLI->>FIL: Load filler PCM from static/fillers/
     FIL-->>CLI: Fillers loaded ✓ (or WARNING: no fillers found)
-    CLI->>GW: Test OpenClaw gateway connectivity
+    CLI->>GW: Establish persistent connection & negotiate protocol (v3-v4)
     alt Gateway reachable
-        GW-->>CLI: Protocol negotiated (v3-v4) ✓
+        GW-->>CLI: Connected + authenticated ✓
     else Gateway unreachable
-        GW-->>CLI: WARNING: Gateway unavailable — degraded mode
+        GW-->>CLI: WARNING: Gateway unavailable — degraded mode (reconnect backoff started)
     end
     CLI->>SRV: Start FastAPI + uvicorn (bind configured host:port)
     SRV-->>CLI: Listening on http://0.0.0.0:8000
@@ -227,16 +214,12 @@ fields, and exposes a frozen dataclass consumed by all other modules.
 ```python
 @dataclass(frozen=True)
 class SatelliteConfig:
-    # LLM
-    litellm_api_key: str           # REQUIRED — fail fast
-    litellm_url: str               # default: https://llm.frizzt.com/v1
-    llm_model: str                 # default: qwen-moe-coder-fast
-    llm_history_messages: int      # default: 20
     # OpenClaw Gateway
     gateway_url: str               # default: http://127.0.0.1:18789
     gateway_token: str             # REQUIRED — fail fast
     gateway_min_protocol: int      # default: 3
     gateway_max_protocol: int      # default: 4
+    gateway_agent_id: str          # default: main  (OPENCLAW_AGENT_ID)
     # Genie TTS
     tts_url: str                   # default: http://127.0.0.1:8000
     tts_character_name: str        # default: ordis
@@ -308,10 +291,9 @@ passive_listening → acknowledging → active_listening → transcribing
     → thinking → filler_speaking → speaking → interrupted
 ```
 Manages: generation task lifecycle, silence timer, barge-in word offset
-tracking, partial response context injection.
-**`task_tracker.py`**: Async background task manager for OpenClaw agent work.
-Fires completion callbacks. Proactively reactivates passive sessions when
-background results arrive.
+tracking, partial response context injection (≥10-word threshold).
+On barge-in, sends `sessions.abort` via the persistent OpenClaw client
+before clearing the in-flight TTS pipeline.
 ### 7. Session Enforcement
 The WebSocket endpoint enforces single-session policy (FR-007a). A module-level
 lock tracks the active connection. Additional clients receive a JSON error
@@ -331,17 +313,16 @@ stateDiagram-v2
     active_listening --> passive_listening: Silence timeout (10-120s configurable)
     transcribing --> thinking: Transcript ready
     transcribing --> active_listening: Empty transcript
-    thinking --> speaking: First TTS chunk ready
+    thinking --> speaking: First OpenClaw text token ready
     thinking --> filler_speaking: Latency > threshold (default 2s)
-    thinking --> passive_listening: action=conversation_end
-    filler_speaking --> speaking: Real response ready
+    filler_speaking --> speaking: Real response stream begins
     filler_speaking --> interrupted: Barge-in
-    speaking --> active_listening: TTS complete
+    speaking --> active_listening: TTS complete (stream ends)
     speaking --> interrupted: Barge-in
-    interrupted --> active_listening: Buffers flushed + partial context recorded
+    interrupted --> active_listening: Buffers flushed + partial context saved
     note right of passive_listening: Wakeword ONNX runs on every VAD frame
-    note right of interrupted: Partial utterance injected into LLM history
-    note left of active_listening: TaskTracker completion → proactive re-activation
+    note right of interrupted: Interruption context sent in next prompt
+    note left of active_listening: Gateway async message → proactive re-activation
 ```
 ---
 ## Post-Design Constitution Re-Check

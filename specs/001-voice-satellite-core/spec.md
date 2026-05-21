@@ -241,9 +241,18 @@ the correct voice without ever manually editing `.env` or writing Python.
   assistant audio playback, the client MUST immediately stop all queued
   audio, report the playback position, and the backend MUST cancel the
   in-flight TTS pipeline.
-- **FR-011**: On barge-in, the backend MUST reconstruct the partial
-  assistant response heard by the user (based on word offset) and inject
-  it into conversation history for context continuity.
+- **FR-011**: On barge-in, the backend MUST implement a two-part
+  interruption-context strategy:
+  1. Immediately cancel the active OpenClaw run via `sessions.abort` on the
+     persistent gateway connection, and record the partial assistant text heard
+     (reconstructed from the reported word offset).
+  2. On the next user turn: if the partial text is fewer than 10 words, no
+     context note is injected (the gateway session history already reflects the
+     truncated turn). If 10 or more words were heard, the backend MUST prepend
+     a one-shot context note (not persisted to history) to the outgoing message:
+     `[System Note: The last assistant response was interrupted by the user
+     after saying: "{partial_response} [interrupted]"]
+{user_message}`.
 - **FR-012**: The system MUST support pre-rendered filler audio that plays
   automatically when backend response latency exceeds a configurable
   threshold (default 2 seconds), categorized by purpose (thinking,
@@ -255,7 +264,11 @@ the correct voice without ever manually editing `.env` or writing Python.
   maxProtocol: 4) rather than hard-pinning to a single version, to
   support forward compatibility with gateway upgrades.
 - **FR-014**: The system MUST support both one-shot and persistent
-  (session-based) agent interactions through the OpenClaw gateway.
+  (session-based) agent interactions through the OpenClaw gateway using a
+  single persistent WebSocket connection established at startup and reused
+  across turns to eliminate handshake/negotiation latency. All user
+  transcripts MUST route directly to the gateway, and response tokens MUST
+  stream back in real-time.
 - **FR-015**: The system MUST support configurable TTS voice characters via
   ONNX model files, reference audio, and reference text — all specified
   through configuration, never hardcoded.
@@ -271,13 +284,16 @@ the correct voice without ever manually editing `.env` or writing Python.
 - **FR-019**: The system MUST implement a configurable silence timeout
   (default 30 s, range 10–120 s) that returns the satellite from active
   to passive mode after a period of inactivity.
-- **FR-020**: All configuration (service URLs, model paths, API keys,
-  audio device settings, thresholds) MUST be loaded from a central `.env`
-  file or `config.yaml`, with a documented `.env.example` template.
+- **FR-020**: All configuration (service URLs, model paths, tokens, audio
+  device settings, thresholds) MUST be loaded from a central `.env` file,
+  with a documented `.env.example` template.
 - **FR-021**: The system MUST fail fast with clear error messages when
   required configuration values are missing, and MUST NOT silently fall
-  back to hardcoded defaults for security-sensitive values (API keys,
-  tokens).
+  back to hardcoded defaults for security-sensitive values (tokens).
+- **FR-033**: The target OpenClaw agent identifier MUST be configurable via
+  a single `OPENCLAW_AGENT_ID` environment variable (default: `main`). All
+  user transcripts MUST be routed to this single configured agent. No
+  client-side message routing or prefix-parsing logic is permitted.
 - **FR-028**: A one-time setup script (`scripts/setup_genie.sh`) MUST
   create a dedicated Python virtualenv for Genie TTS, install the
   `genie-tts` package into it, create a `genie_input/` staging directory
@@ -307,9 +323,11 @@ the correct voice without ever manually editing `.env` or writing Python.
   entries MUST be preserved unchanged. If a character profile already
   exists at the target path, the script MUST require an explicit
   `--overwrite` flag before replacing it.
-- **FR-022**: The system MUST track background OpenClaw agent tasks
-  asynchronously and notify the user (proactively reactivating from
-  passive mode if needed) when tasks complete.
+- **FR-022**: The system MUST listen for asynchronous message or notification
+  events on the persistent OpenClaw gateway connection. When a task
+  completion notification or proactive agent message is received while
+  the satellite is in passive mode, the satellite MUST automatically
+  reactivate, play an acknowledgment filler, and speak the summary.
 - **FR-023**: The system MUST expose a conversation state machine with
   well-defined states (passive_listening, acknowledging, active_listening,
   transcribing, thinking, filler_speaking, speaking, interrupted) and
