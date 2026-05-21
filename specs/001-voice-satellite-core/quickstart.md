@@ -89,58 +89,40 @@ Navigate to **http://localhost:8000** in your browser.
 6. The assistant will respond through your speakers
 
 ## Genie TTS Server Setup
-The Voice Satellite leverages **Genie TTS** (a high-performance wrapper around GPT-SoVITS) to clone voices locally. Because of its large PyTorch/CUDA dependencies, it is recommended to run the Genie TTS server in a separate Python virtual environment.
+The Voice Satellite leverages **Genie TTS** (a high-performance wrapper around GPT-SoVITS) to clone voices locally. Because of its large PyTorch/CUDA dependencies, we provide automated setup and generation scripts that handle virtual environment management, model conversion, and client configuration.
 
-### 1. Prerequisites & Environment
-1. Create a dedicated directory or sub-folder for your Genie setup (e.g., `genie_model_reference/`).
-2. Set up and activate a separate virtual environment:
-   ```bash
-   python -m venv .venv
-   source .venv/bin/activate
-   pip install genie-tts
-   ```
-
-### 2. Prepare Model Assets
-Genie TTS requires a trained GPT-SoVITS voice model. Place the following files together in your Genie directory:
-- `*.ckpt` (SoVITS weights)
-- `*.pth` (GPT weights)
-- `*.wav` (Reference audio file representing the voice to clone, ~5-10 seconds)
-- `*.txt` (The exact text transcription of the reference audio)
-
-### 3. Export to ONNX
-For low-latency CPU/GPU execution, convert the PyTorch weights to ONNX format. Use the conversion utility:
-```python
-from genie_tts.Converter.Converter import convert
-
-convert(
-    torch_ckpt_path="path/to/model.ckpt",
-    torch_pth_path="path/to/model.pth",
-    output_dir="path/to/export"
-)
+### 1. Run Setup Script
+Run the setup script to initialize the Genie environment and create the staging directory:
+```bash
+bash scripts/setup_genie.sh
 ```
-This generates optimized ONNX model assets inside the `export/` directory.
+This will:
+1. Create a dedicated Python virtual environment (`genie_tts_env/`) at the repository root.
+2. Install `genie-tts` and its dependencies inside that virtual environment.
+3. Create a `genie_input/` staging folder for raw model assets.
 
-### 4. Running the Server
-Ensure that the `GenieData/` resource folder (containing foundational helper models like `speaker_encoder.onnx`) is located inside your Genie directory. Start the Genie TTS HTTP server on port `8000`:
-```python
-import genie_tts as genie
-import os
+### 2. Stage Model Assets
+Place exactly four files from your trained GPT-SoVITS model into the `genie_input/` directory:
+- Exactly one `*.ckpt` (SoVITS model checkpoint)
+- Exactly one `*.pth` (GPT model weights)
+- Exactly one `*.wav` (Reference audio file, ~5-10 seconds)
+- Exactly one `*.txt` (The exact text transcription of the reference audio)
 
-# Point genie to the resources directory
-os.environ["GENIE_DATA_DIR"] = "/path/to/GenieData"
-
-genie.start_server(host="0.0.0.0", port=8000, workers=1)
+### 3. Generate Character Profile
+With your assets staged in `genie_input/`, run the character generation script from the repository root:
+```bash
+python scripts/generate_character.py --name <character_name>
 ```
+The script will automate the remaining steps:
+1. **Validation**: Check that exactly one of each required file type exists.
+2. **ONNX Export**: Convert the model to optimized ONNX assets and output them to `genie_profiles/<character_name>/export/`.
+3. **Archival & Staging Cleanup**: Move the raw source files (`.ckpt`, `.pth`, `.wav`, `.txt`) from `genie_input/` into the new profile folder at `genie_profiles/<character_name>/` for archival, leaving `genie_input/` clean and ready for the next character.
+4. **Client Auto-Patching**: Automatically append or update the `GENIE_*` environment variables in your `.env` file using absolute paths to the generated profile.
 
-### 5. Client Configuration
-Once the server is running on port `8000`, configure your Voice Satellite client by updating your `.env` file with the paths to the exported ONNX model and the reference audio:
-```ini
-GENIE_TTS_URL=http://127.0.0.1:8000
-GENIE_CHARACTER_NAME=ordis
-GENIE_ONNX_MODEL_DIR=/path/to/genie-ordis/export
-GENIE_REFERENCE_AUDIO=/path/to/ordis_ref.wav
-GENIE_REFERENCE_TEXT=What? A parity drift? How is that possible?
-GENIE_LANGUAGE=en
+### 4. Overwriting or Re-generating Profiles
+If a profile directory already exists under the target name, the generation script will fail safely to protect your files. If you explicitly want to recreate the profile and overwrite it, use the `--overwrite` flag:
+```bash
+python scripts/generate_character.py --name <character_name> --overwrite
 ```
 
 > [!NOTE]
@@ -150,6 +132,7 @@ GENIE_LANGUAGE=en
 | Symptom | Cause | Fix |
 |---------|-------|-----|
 | "LITELLM_API_KEY is required" | Missing `.env` value | Add your API key to `.env` |
+| "Invalid files in genie_input/" | Missing or extra model files during character generation | Ensure exactly one `.ckpt`, `.pth`, `.wav`, and `.txt` exist in `genie_input/` |
 | VAD never detects speech | Browser mic permission blocked | Check browser permissions |
 | No audio playback | AudioContext suspended | Click the UI first (browser autoplay policy) |
 | TTS WARNING at startup | Genie TTS server not running | Start the TTS server first |
