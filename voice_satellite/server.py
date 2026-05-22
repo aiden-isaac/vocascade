@@ -26,7 +26,9 @@ from voice_satellite.stt.whisper_stt import WhisperSTT
 from voice_satellite.tts.genie_client import GenieTTSClient
 from voice_satellite.tts.sentence_splitter import split_sentences
 from voice_satellite.audio.filler_engine import FillerEngine
+from voice_satellite.gateway.base import GatewayClient
 from voice_satellite.gateway.openclaw_client import OpenClawClient
+from voice_satellite.gateway.hermes_client import HermesClient
 from voice_satellite.session import SessionState, ConversationSession
 from voice_satellite.audio.effects import apply_effect_chain, get_character_effects_config
 
@@ -40,6 +42,21 @@ _session_lock = asyncio.Lock()
 
 # Persistent session key used for all chat interactions with the gateway
 _GATEWAY_SESSION_KEY = "voice"
+
+
+def get_gateway_client(config) -> GatewayClient:
+    """
+    Factory to instantiate either HermesClient or OpenClawClient based on config.
+    """
+    if config.gateway_backend == "openclaw":
+        return OpenClawClient(
+            gateway_url=config.gateway_url,
+            gateway_token=config.gateway_token,
+            min_protocol=config.gateway_min_protocol,
+            max_protocol=config.gateway_max_protocol
+        )
+    else:
+        return HermesClient(base_url=config.hermes_base_url)
 
 
 @asynccontextmanager
@@ -72,28 +89,31 @@ async def lifespan(app_: FastAPI):
     app_.state.filler_engine = FillerEngine(filler_dir=config.filler_dir)
     app_.state.filler_engine.load_fillers()
 
-    # Initialize persistent OpenClaw gateway client and attempt connection
-    app_.state.openclaw_client = OpenClawClient(
-        gateway_url=config.gateway_url,
-        gateway_token=config.gateway_token,
-        min_protocol=config.gateway_min_protocol,
-        max_protocol=config.gateway_max_protocol
-    )
+    # Initialize persistent gateway client and attempt connection
+    app_.state.gateway_client = get_gateway_client(config)
+    app_.state.openclaw_client = app_.state.gateway_client
     try:
-        await app_.state.openclaw_client.connect()
-        logger.info(
-            "OpenClaw gateway connected (agent: %s, protocol: v%s)",
-            config.gateway_agent_id,
-            app_.state.openclaw_client.protocol,
-        )
+        await app_.state.gateway_client.connect()
+        if config.gateway_backend == "openclaw":
+            logger.info(
+                "OpenClaw gateway connected (agent: %s, protocol: v%s)",
+                config.gateway_agent_id,
+                getattr(app_.state.gateway_client, "protocol", "unknown"),
+            )
+        else:
+            logger.info(
+                "Hermes gateway connected (base_url: %s, session_id: %s)",
+                config.hermes_base_url,
+                app_.state.gateway_client.session_id,
+            )
     except Exception as exc:
-        logger.warning("OpenClaw gateway unavailable at startup: %s — degraded mode", exc)
+        logger.warning("%s gateway unavailable at startup: %s — degraded mode", config.gateway_backend.upper(), exc)
 
     try:
         yield
     finally:
         app_.state.stt.close()
-        await app_.state.openclaw_client.close()
+        await app_.state.gateway_client.close()
 
 
 app = FastAPI(lifespan=lifespan)
