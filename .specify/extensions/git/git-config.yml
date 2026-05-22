@@ -50,7 +50,7 @@ auto_commit:
     message: "[Spec Kit] Add tasks"
   after_implement:
     enabled: true
-    message: "test(server): Add unit tests to verify gateway client factory and streaming behavior. Closes #61"
+    message: "test(all): Run the complete unit test suite. Closes #62"
   after_checklist:
     enabled: false
     message: "[Spec Kit] Add checklist"
