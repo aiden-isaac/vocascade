@@ -50,7 +50,7 @@ auto_commit:
     message: "[Spec Kit] Add tasks"
   after_implement:
     enabled: true
-    message: "feat(gateway): Create GatewayClient abstract base class. Closes #51"
+    message: "feat(gateway): Make OpenClawClient implement GatewayClient. Closes #52"
   after_checklist:
     enabled: false
     message: "[Spec Kit] Add checklist"

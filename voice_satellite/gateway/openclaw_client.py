@@ -13,10 +13,11 @@ import websockets
 from cryptography.hazmat.primitives import serialization
 
 from voice_satellite.gateway.auth import load_or_generate_keypair, sign_challenge
+from voice_satellite.gateway.base import GatewayClient
 
 logger = logging.getLogger("voice_satellite.gateway")
 
-class OpenClawClient:
+class OpenClawClient(GatewayClient):
     """
     Client for OpenClaw gateway using WebSockets.
     Supports min/max protocol negotiation, device identity signing,
@@ -29,13 +30,17 @@ class OpenClawClient:
         device_key_path: str | Path | None = None,
         min_protocol: int = 3,
         max_protocol: int = 4,
-        connect_impl: Any = None
+        connect_impl: Any = None,
+        agent_id: str = "main",
+        session_key: str = "default",
     ) -> None:
         self.gateway_url = gateway_url
         self.gateway_token = gateway_token
         self.min_protocol = min_protocol
         self.max_protocol = max_protocol
         self.connect_impl = connect_impl or websockets.connect
+        self.agent_id = agent_id
+        self.session_key = session_key
 
         if device_key_path is None:
             self.device_key_path = Path(os.path.expanduser("~")) / ".openclaw" / "identity" / "device.json"
@@ -119,7 +124,7 @@ class OpenClawClient:
             await self._websocket.close()
             self._websocket = None
 
-    async def sessions_abort(self, session_key: str, run_id: str | None = None) -> None:
+    async def sessions_abort(self, session_key: str | None = None, run_id: str | None = None) -> None:
         """
         Sends a sessions.abort RPC to the gateway to cancel any active run on the
         given session. This is called on barge-in to stop the model mid-generation.
@@ -127,6 +132,14 @@ class OpenClawClient:
         This method is best-effort: errors are logged as warnings and never re-raised,
         so a failed abort does not disrupt the local barge-in handling flow.
         """
+        if session_key is None:
+            if self.last_session_key:
+                session_key = self.last_session_key
+            else:
+                session_key = f"agent:{self.agent_id}:{self.session_key}"
+        if run_id is None:
+            run_id = self.last_run_id
+
         try:
             params: dict = {"sessionKey": session_key}
             if run_id:
@@ -136,6 +149,19 @@ class OpenClawClient:
             logger.info("sessions.abort sent for session_key=%s run_id=%s", session_key, run_id)
         except Exception as exc:
             logger.warning("sessions.abort failed (non-fatal): %s", exc)
+
+    async def send_transcript(self, text: str) -> AsyncIterator[str]:
+        """
+        Sends the user's transcript to the backend and yields streamed response tokens/text.
+        """
+        run_id = await self.send_message(
+            agent_id=self.agent_id,
+            message=text,
+            mode="persistent",
+            session_key=self.session_key,
+        )
+        async for token in self.stream_response(run_id=run_id):
+            yield token
 
     async def ensure_connected(self) -> None:
         """
