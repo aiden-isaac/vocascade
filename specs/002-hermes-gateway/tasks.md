@@ -15,7 +15,7 @@
 ## Phase 2: Hermes Client Implementation
 **Goal**: Implement the `HermesClient` that streams HTTP SSE from the Hermes Agent.
 - [x] **T005**: Create `voice_satellite/gateway/hermes_client.py` and implement the `HermesClient` inheriting from `GatewayClient`.
-- [ ] **T006**: Implement HTTP SSE generation via `httpx.AsyncClient` inside `HermesClient.send_transcript`, parsing the OpenAI-compatible stream chunks.
+- [x] **T006**: Implement HTTP SSE generation via `httpx.AsyncClient` inside `HermesClient.send_transcript`, parsing the OpenAI-compatible stream chunks.
 - [ ] **T007** [P]: Implement `HermesClient.sessions_abort` to stop any active generators and generate a new `X-Hermes-Session-Id` UUID for barge-in resets.
 - [ ] **T008**: Create `tests/unit/test_hermes_client.py` to mock `httpx` and verify SSE chunk parsing and session management.
 
