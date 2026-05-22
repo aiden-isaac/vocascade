@@ -10,7 +10,7 @@
 - [x] **T001**: Add `gateway_backend` (`GATEWAY_BACKEND`) and `hermes_base_url` (`HERMES_BASE_URL`) to `voice_satellite/config.py`.
 - [x] **T002**: Create `voice_satellite/gateway/base.py` defining the `GatewayClient` abstract base class with `send_transcript` and `sessions_abort` methods.
 - [x] **T003** [P]: Rename the existing OpenClaw connection logic to `OpenClawClient` in `voice_satellite/gateway/openclaw_client.py` and make it implement the `GatewayClient` interface.
-- [ ] **T004**: Update `tests/unit/test_config.py` to test the new configuration variables.
+- [x] **T004**: Update `tests/unit/test_config.py` to test the new configuration variables.
 
 ## Phase 2: Hermes Client Implementation
 **Goal**: Implement the `HermesClient` that streams HTTP SSE from the Hermes Agent.
