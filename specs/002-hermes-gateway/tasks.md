@@ -29,4 +29,4 @@
 ## Phase 4: Final Verification
 **Goal**: Validate that everything runs end-to-end.
 - [x] **T013**: Run the complete test suite.
-- [ ] **T014**: Manual verification: start the server with Hermes, connect UI, speak, and interrupt. Verify logs for `X-Hermes-Session-Id` and latency.
+- [x] **T014**: Manual verification: start the server with Hermes, connect UI, speak, and interrupt. Verify logs for `X-Hermes-Session-Id` and latency.

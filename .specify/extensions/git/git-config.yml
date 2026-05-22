@@ -50,7 +50,7 @@ auto_commit:
     message: "[Spec Kit] Add tasks"
   after_implement:
     enabled: true
-    message: "test(all): Run the complete unit test suite. Closes #62"
+    message: "test(all): Verify server runs and complete manual testing checks. Closes #63"
   after_checklist:
     enabled: false
     message: "[Spec Kit] Add checklist"
