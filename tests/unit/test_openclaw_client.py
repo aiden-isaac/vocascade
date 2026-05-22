@@ -207,5 +207,67 @@ class TestOpenClawClient(unittest.IsolatedAsyncioTestCase):
             await client.send_message("main", "hello")
         self.assertIn("invalid_request", str(context.exception))
 
+    async def test_sessions_abort_sends_rpc(self):
+        """sessions_abort() sends a sessions.abort RPC with the correct session key."""
+        abort_response = {
+            "type": "res",
+            "id": "abort-id",
+            "ok": True,
+            "payload": {},
+        }
+        websocket = FakeWebSocket([
+            _make_challenge(),
+            _make_hello_ok("connect-id"),
+            abort_response,
+        ])
+
+        client = OpenClawClient(
+            gateway_url="ws://localhost:18789",
+            gateway_token="test-token",
+            device_key_path=self.device_key_path,
+            connect_impl=lambda url: fake_connect(websocket, url),
+        )
+        client._make_id = lambda prefix: {
+            "req": "connect-id",
+            "abort": "abort-id",
+        }.get(prefix, f"{prefix}-id")
+
+        await client.connect()
+        # Must not raise
+        await client.sessions_abort(session_key="agent:main:voice")
+
+        abort_frame = websocket.sent[1]
+        self.assertEqual(abort_frame["method"], "sessions.abort")
+        self.assertEqual(abort_frame["params"]["sessionKey"], "agent:main:voice")
+
+    async def test_sessions_abort_error_is_nonfatal(self):
+        """sessions_abort() swallows errors and logs a warning — never raises."""
+        websocket = FakeWebSocket([
+            _make_challenge(),
+            _make_hello_ok("connect-id"),
+            {
+                "type": "res",
+                "id": "abort-id",
+                "ok": False,
+                "error": {"code": "not_found", "message": "session not found", "retryable": False},
+            },
+        ])
+
+        client = OpenClawClient(
+            gateway_url="ws://localhost:18789",
+            gateway_token="test-token",
+            device_key_path=self.device_key_path,
+            connect_impl=lambda url: fake_connect(websocket, url),
+        )
+        client._make_id = lambda prefix: {
+            "req": "connect-id",
+            "abort": "abort-id",
+        }.get(prefix, f"{prefix}-id")
+
+        await client.connect()
+        # Should NOT raise even though the gateway returned an error
+        await client.sessions_abort(session_key="agent:main:voice", run_id="stale-run")
+
+
 if __name__ == "__main__":
     unittest.main()
