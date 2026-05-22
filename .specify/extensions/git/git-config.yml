@@ -50,7 +50,7 @@ auto_commit:
     message: "[Spec Kit] Add tasks"
   after_implement:
     enabled: true
-    message: "feat(gateway): Handle gateway connection errors gracefully and update test assertions. Closes #60"
+    message: "test(server): Add unit tests to verify gateway client factory and streaming behavior. Closes #61"
   after_checklist:
     enabled: false
     message: "[Spec Kit] Add checklist"

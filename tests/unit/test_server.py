@@ -418,6 +418,7 @@ class TestServer(unittest.TestCase):
             client_oc = get_gateway_client(cfg_openclaw)
             self.assertIsInstance(client_oc, OpenClawClient)
         finally:
+            # Restore patchers for other tests
             self.gateway_patcher.start()
             self.factory_patcher.start()
 
