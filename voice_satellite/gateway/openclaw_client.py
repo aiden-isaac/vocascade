@@ -119,6 +119,23 @@ class OpenClawClient:
             await self._websocket.close()
             self._websocket = None
 
+    async def sessions_abort(self, session_key: str, run_id: str | None = None) -> None:
+        """
+        Sends a sessions.abort RPC to the gateway to cancel any active run on the
+        given session. This is called on barge-in to stop the model mid-generation.
+
+        This method is best-effort: errors are logged as warnings and never re-raised,
+        so a failed abort does not disrupt the local barge-in handling flow.
+        """
+        try:
+            params: dict = {"sessionKey": session_key}
+            if run_id:
+                params["runId"] = run_id
+            await self._request("sessions.abort", params)
+            logger.info("sessions.abort sent for session_key=%s run_id=%s", session_key, run_id)
+        except Exception as exc:
+            logger.warning("sessions.abort failed (non-fatal): %s", exc)
+
     async def ensure_connected(self) -> None:
         """
         Ensures active connection, retrying with exponential backoff on failure.
