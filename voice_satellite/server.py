@@ -355,20 +355,12 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                     # Build outgoing message — may prepend barge-in context note
                     outgoing_message = _build_outgoing_message(transcript)
 
-                    # Route directly to the configured OpenClaw agent
-                    openclaw_client: OpenClawClient = app.state.openclaw_client
-                    run_id = await openclaw_client.send_message(
-                        agent_id=config.gateway_agent_id,
-                        message=outgoing_message,
-                        mode="persistent",
-                        session_key=_GATEWAY_SESSION_KEY,
-                    )
-
                     # Stream response tokens → sentence splitter → TTS → audio chunks
                     response_chunks: list[str] = []
                     sentence_buffer = ""
 
-                    async for token in openclaw_client.stream_response(run_id):
+                    gateway_client: GatewayClient = app.state.gateway_client
+                    async for token in gateway_client.send_transcript(outgoing_message):
                         if not token:
                             continue
                         response_chunks.append(token)
@@ -429,10 +421,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                         if partial:
                             # Part 1 of barge-in: abort the active gateway run (best-effort)
                             try:
-                                openclaw_client = app.state.openclaw_client
-                                await openclaw_client.sessions_abort(
-                                    session_key=f"agent:{config.gateway_agent_id}:{_GATEWAY_SESSION_KEY}"
-                                )
+                                await app.state.gateway_client.sessions_abort()
                             except Exception as exc:
                                 logger.warning("sessions_abort failed (non-fatal): %s", exc)
                             # Store partial for context note on next turn
@@ -466,10 +455,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                         if partial:
                             # Part 1: abort the active gateway run
                             try:
-                                openclaw_client = app.state.openclaw_client
-                                await openclaw_client.sessions_abort(
-                                    session_key=f"agent:{config.gateway_agent_id}:{_GATEWAY_SESSION_KEY}"
-                                )
+                                await app.state.gateway_client.sessions_abort()
                             except Exception as exc:
                                 logger.warning("sessions_abort failed (non-fatal): %s", exc)
                             _interrupted_partial[0] = partial

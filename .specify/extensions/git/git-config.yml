@@ -50,7 +50,7 @@ auto_commit:
     message: "[Spec Kit] Add tasks"
   after_implement:
     enabled: true
-    message: "feat(gateway): Add get_gateway_client factory to server.py. Closes #58"
+    message: "feat(gateway): Update streaming loop to call GatewayClient.send_transcript. Closes #59"
   after_checklist:
     enabled: false
     message: "[Spec Kit] Add checklist"

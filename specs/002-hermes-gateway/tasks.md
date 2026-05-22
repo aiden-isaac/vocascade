@@ -22,7 +22,7 @@
 ## Phase 3: Server Integration & Factory
 **Goal**: Update the FastAPI server to instantiate the correct client dynamically and handle failovers.
 - [x] **T009**: Modify `voice_satellite/server.py` to include a factory function that instantiates either `HermesClient` or `OpenClawClient` based on `config.gateway_backend`.
-- [ ] **T010**: Update the WebSocket streaming loop in `voice_satellite/server.py` to call `GatewayClient.send_transcript` instead of hardcoded OpenClaw logic.
+- [x] **T010**: Update the WebSocket streaming loop in `voice_satellite/server.py` to call `GatewayClient.send_transcript` instead of hardcoded OpenClaw logic.
 - [ ] **T011**: Ensure connection errors from either client are caught gracefully and passed to the TTS error-reporting flow.
 - [ ] **T012**: Update `tests/unit/test_server.py` to patch the gateway client and verify the correct factory instantiation and streaming behavior.
 
