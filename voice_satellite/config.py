@@ -21,6 +21,10 @@ class SatelliteConfig:
     gateway_min_protocol: int
     gateway_max_protocol: int
 
+    # Backend selection
+    gateway_backend: str
+    hermes_base_url: str
+
     # Genie TTS settings
     tts_url: str
     tts_character_name: str
@@ -82,9 +86,9 @@ def load_config() -> SatelliteConfig:
     if not tts_onnx_model_dir:
         tts_missing.append("GENIE_ONNX_MODEL_DIR")
     if not tts_reference_audio:
-        tts_missing.append("GENIE_REFERENCE_AUDIO")
+        tts_reference_audio = None
     if not tts_reference_text:
-        tts_missing.append("GENIE_REFERENCE_TEXT")
+        tts_reference_text = None
 
     if tts_missing:
         logger.warning(
@@ -98,6 +102,9 @@ def load_config() -> SatelliteConfig:
         gateway_agent_id=os.getenv("OPENCLAW_AGENT_ID", "main"),
         gateway_min_protocol=int(os.getenv("GATEWAY_MIN_PROTOCOL", "3")),
         gateway_max_protocol=int(os.getenv("GATEWAY_MAX_PROTOCOL", "4")),
+
+        gateway_backend=os.getenv("GATEWAY_BACKEND", "hermes"),
+        hermes_base_url=os.getenv("HERMES_BASE_URL", "http://localhost:8642/v1"),
 
         tts_url=os.getenv("GENIE_TTS_URL", "http://127.0.0.1:8000"),
         tts_character_name=os.getenv("GENIE_CHARACTER_NAME", "ordis"),

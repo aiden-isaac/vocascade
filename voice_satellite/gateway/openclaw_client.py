@@ -131,7 +131,8 @@ class OpenClawClient:
             params: dict = {"sessionKey": session_key}
             if run_id:
                 params["runId"] = run_id
-            await self._request("sessions.abort", params)
+            req_id = self._make_id("abort")
+            await self._request("sessions.abort", params, request_id=req_id)
             logger.info("sessions.abort sent for session_key=%s run_id=%s", session_key, run_id)
         except Exception as exc:
             logger.warning("sessions.abort failed (non-fatal): %s", exc)
@@ -404,8 +405,26 @@ class OpenClawClient:
             "params": params
         })
 
+        # First, check if the response is already in _pending_frames
+        for i, frame in enumerate(self._pending_frames):
+            if frame.get("type") == "res" and frame.get("id") == req_id:
+                self._pending_frames.pop(i)
+                if frame.get("ok") is True:
+                    return frame.get("payload") or {}
+                error_info = frame.get("error", {})
+                code = error_info.get("code", "unknown")
+                msg = error_info.get("message", "request failed")
+                raise RuntimeError(f"Gateway request {method} failed: {code} - {msg}")
+
+        # If not, read new frames from the websocket until we find it
         while True:
-            frame = await self._recv_frame()
+            if self._websocket is None:
+                raise RuntimeError("OpenClaw gateway is not connected")
+            raw = await self._websocket.recv()
+            if isinstance(raw, bytes):
+                raw = raw.decode("utf-8")
+            frame = json.loads(raw)
+
             if frame.get("type") == "res" and frame.get("id") == req_id:
                 if frame.get("ok") is True:
                     return frame.get("payload") or {}

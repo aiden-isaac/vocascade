@@ -50,7 +50,7 @@ auto_commit:
     message: "[Spec Kit] Add tasks"
   after_implement:
     enabled: true
-    message: "[Spec Kit] Add structured logging throughout all modules. Closes #36"
+    message: "feat(config): Add gateway_backend and hermes_base_url config. Closes #50"
   after_checklist:
     enabled: false
     message: "[Spec Kit] Add checklist"

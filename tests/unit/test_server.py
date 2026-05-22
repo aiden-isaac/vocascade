@@ -10,7 +10,40 @@ from voice_satellite.session import SessionState
 
 class TestServer(unittest.TestCase):
     def setUp(self):
-        self.client = TestClient(app)
+        self.stt_patcher = patch("voice_satellite.server.WhisperSTT")
+        self.mock_stt_cls = self.stt_patcher.start()
+        self.mock_stt = MagicMock()
+        self.mock_stt_cls.return_value = self.mock_stt
+
+        self.tts_patcher = patch("voice_satellite.server.GenieTTSClient")
+        self.mock_tts_cls = self.tts_patcher.start()
+        self.mock_tts = MagicMock()
+        self.mock_tts_cls.return_value = self.mock_tts
+
+        self.filler_patcher = patch("voice_satellite.server.FillerEngine")
+        self.mock_filler_cls = self.filler_patcher.start()
+        self.mock_filler = MagicMock()
+        self.mock_filler_cls.return_value = self.mock_filler
+
+        self.gateway_patcher = patch("voice_satellite.server.OpenClawClient")
+        self.mock_gateway_cls = self.gateway_patcher.start()
+        self.mock_gateway = MagicMock()
+        self.mock_gateway_cls.return_value = self.mock_gateway
+
+        self.mock_tts.load_character = AsyncMock()
+        self.mock_gateway.connect = AsyncMock()
+        self.mock_gateway.close = AsyncMock()
+        self.mock_filler.get_filler.return_value = None
+
+        self.client_ctx = TestClient(app)
+        self.client = self.client_ctx.__enter__()
+
+    def tearDown(self):
+        self.client_ctx.__exit__(None, None, None)
+        self.stt_patcher.stop()
+        self.tts_patcher.stop()
+        self.filler_patcher.stop()
+        self.gateway_patcher.stop()
 
     def test_index_route(self):
         response = self.client.get("/")
@@ -85,15 +118,13 @@ class TestServer(unittest.TestCase):
 
                 mock_start.assert_called()
 
-    @patch("voice_satellite.gateway.openclaw_client.OpenClawClient.send_message")
-    @patch("voice_satellite.gateway.openclaw_client.OpenClawClient.stream_response")
-    def test_full_voice_pipeline_direct_openclaw(self, mock_stream, mock_send):
+    def test_full_voice_pipeline_direct_openclaw(self):
         """Verifies that transcripts go directly to OpenClaw and the response is spoken."""
-        mock_send.side_effect = AsyncMock(return_value="run-1")
+        app.state.openclaw_client.send_message = AsyncMock(return_value="run-1")
 
-        async def mock_stream_resp(run_id):
+        async def mock_stream_resp(run_id=None):
             yield "Hello there."
-        mock_stream.side_effect = mock_stream_resp
+        app.state.openclaw_client.stream_response = MagicMock(side_effect=mock_stream_resp)
 
         with self.client.websocket_connect("/ws") as ws:
             # Mock STT on app state
@@ -120,8 +151,11 @@ class TestServer(unittest.TestCase):
             ws.send_bytes(b"user_speech_pcm")
 
             received_messages = []
-            for _ in range(12):
-                received_messages.append(ws.receive_json())
+            while True:
+                msg = ws.receive_json()
+                received_messages.append(msg)
+                if msg.get("type") == "status" and msg.get("state") == "active_listening":
+                    break
 
             types = [m.get("type") for m in received_messages]
             states = [m.get("state") for m in received_messages if m.get("type") == "status"]
@@ -139,8 +173,8 @@ class TestServer(unittest.TestCase):
             self.assertEqual(transcript_msg["text"], "hello world")
 
             # Verify OpenClaw was called with the configured agent ID
-            mock_send.assert_called_once()
-            call_kwargs = mock_send.call_args
+            app.state.openclaw_client.send_message.assert_called_once()
+            call_kwargs = app.state.openclaw_client.send_message.call_args
             self.assertEqual(call_kwargs.kwargs.get("mode", call_kwargs.args[1] if len(call_kwargs.args) > 1 else None) or call_kwargs.kwargs.get("mode"), "persistent")
 
     def test_barge_in_interrupt(self):
@@ -170,22 +204,22 @@ class TestServer(unittest.TestCase):
 
             mock_tts.stop.assert_called()
 
-    @patch("voice_satellite.gateway.openclaw_client.OpenClawClient.send_message")
-    @patch("voice_satellite.gateway.openclaw_client.OpenClawClient.stream_response")
-    def test_barge_in_context_note_injected_for_long_partial(self, mock_stream, mock_send):
+    def test_barge_in_context_note_injected_for_long_partial(self):
         """
         When a barge-in partial response has ≥10 words, the next outgoing message
         to OpenClaw must be prepended with a context note.
         """
         from voice_satellite.session.state_machine import ConversationSession
 
-        mock_send.side_effect = AsyncMock(return_value="run-1")
+        app.state.openclaw_client.send_message = AsyncMock(return_value="run-1")
 
-        async def mock_stream_resp(run_id):
+        async def mock_stream_resp(run_id=None):
             yield "Response."
-        mock_stream.side_effect = mock_stream_resp
+        app.state.openclaw_client.stream_response = MagicMock(side_effect=mock_stream_resp)
 
+        print("BEFORE WEBSOCKET CONNECT")
         with self.client.websocket_connect("/ws") as ws:
+            print("AFTER WEBSOCKET CONNECT")
             mock_stt = AsyncMock()
             mock_stt.transcribe.return_value = "can you say that again"
             app.state.stt = mock_stt
@@ -200,6 +234,7 @@ class TestServer(unittest.TestCase):
             app.state.tts = mock_tts
 
             ws.receive_json()  # passive_listening
+
             ws.send_json({"type": "wakeword"})
             ws.receive_json()  # acknowledging
             ws.receive_json()  # active_listening
@@ -208,6 +243,7 @@ class TestServer(unittest.TestCase):
             # by directly injecting playback_progress + interrupt
             ws.send_json({"type": "playback_progress", "words_played": 15})
             ws.send_json({"type": "interrupt"})
+
             # drain interrupt response messages
             ws.receive_json()  # flush_audio
             ws.receive_json()  # interrupted
@@ -216,23 +252,23 @@ class TestServer(unittest.TestCase):
             # Now send the follow-up audio (transcript: "can you say that again")
             ws.send_bytes(b"follow_up_pcm")
 
-            # Read until we get the outgoing call
-            for _ in range(12):
-                ws.receive_json()
+            # Read until the turn is complete
+            while True:
+                msg = ws.receive_json()
+                if msg.get("type") == "status" and msg.get("state") == "active_listening":
+                    break
 
             # The second send_message call should contain the context note
             # (only if the session had stored partial from a prior generation task)
             # Since no generation was running, partial is empty — just verify send was called
-            mock_send.assert_called()
+            app.state.openclaw_client.send_message.assert_called()
 
-    @patch("voice_satellite.gateway.openclaw_client.OpenClawClient.send_message")
-    @patch("voice_satellite.gateway.openclaw_client.OpenClawClient.stream_response")
-    def test_tts_degraded_mode_retry(self, mock_stream, mock_send):
-        mock_send.side_effect = AsyncMock(return_value="run-1")
+    def test_tts_degraded_mode_retry(self):
+        app.state.openclaw_client.send_message = AsyncMock(return_value="run-1")
 
-        async def mock_stream_resp(run_id):
+        async def mock_stream_resp(run_id=None):
             yield "hello there"
-        mock_stream.side_effect = mock_stream_resp
+        app.state.openclaw_client.stream_response = MagicMock(side_effect=mock_stream_resp)
 
         # Setup mock STT
         mock_stt = AsyncMock()

@@ -80,7 +80,7 @@ async def lifespan(app_: FastAPI):
         max_protocol=config.gateway_max_protocol
     )
     try:
-        await app_.state.openclaw_client.ensure_connected()
+        await app_.state.openclaw_client.connect()
         logger.info(
             "OpenClaw gateway connected (agent: %s, protocol: v%s)",
             config.gateway_agent_id,

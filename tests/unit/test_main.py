@@ -25,14 +25,13 @@ class TestMainBootstrap(unittest.IsolatedAsyncioTestCase):
     ):
         # Setup config mock
         config = SatelliteConfig(
-            litellm_api_key="key",
-            litellm_url="url",
-            llm_model="model",
-            llm_history_messages=10,
             gateway_url="ws://127.0.0.1:18789",
             gateway_token="token",
+            gateway_agent_id="main",
             gateway_min_protocol=3,
             gateway_max_protocol=4,
+            gateway_backend="hermes",
+            hermes_base_url="http://localhost:8642/v1",
             tts_url="http://127.0.0.1:8000",
             tts_character_name="ordis",
             tts_onnx_model_dir="/path/onnx",
