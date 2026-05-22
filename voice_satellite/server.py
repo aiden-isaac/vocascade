@@ -1,5 +1,12 @@
 """
 FastAPI server orchestrator for the Voice Satellite, managing routing, static files, and WebSockets.
+
+Architecture (Phase 8):
+- All transcripts are routed directly to the configured OpenClaw agent (gateway_agent_id)
+  via a persistent WebSocket connection established at startup.
+- LLMRouter and client-side TaskTracker have been removed.
+- Barge-in uses a two-part strategy: sessions.abort on the gateway + a conditional
+  one-shot context note prepended to the next user message (≥10 words heard threshold).
 """
 
 import asyncio
@@ -7,7 +14,6 @@ import base64
 import json
 import logging
 import os
-import random
 from contextlib import asynccontextmanager
 from pathlib import Path
 import numpy as np
@@ -21,9 +27,7 @@ from voice_satellite.tts.genie_client import GenieTTSClient
 from voice_satellite.tts.sentence_splitter import split_sentences
 from voice_satellite.audio.filler_engine import FillerEngine
 from voice_satellite.gateway.openclaw_client import OpenClawClient
-from voice_satellite.llm.router import LLMRouter, RouterDecision, CoordinatorDecision
 from voice_satellite.session import SessionState, ConversationSession
-from voice_satellite.session.task_tracker import TaskTracker, TrackedTask
 from voice_satellite.audio.effects import apply_effect_chain, get_character_effects_config
 
 logger = logging.getLogger("voice_satellite.server")
@@ -33,6 +37,10 @@ STATIC_DIR = ROOT_DIR / "static"
 
 # Module-level lock for enforcing single active WebSocket session
 _session_lock = asyncio.Lock()
+
+# Persistent session key used for all chat interactions with the gateway
+_GATEWAY_SESSION_KEY = "voice"
+
 
 @asynccontextmanager
 async def lifespan(app_: FastAPI):
@@ -64,21 +72,33 @@ async def lifespan(app_: FastAPI):
     app_.state.filler_engine = FillerEngine(filler_dir=config.filler_dir)
     app_.state.filler_engine.load_fillers()
 
-    # Initialize base gateway client
+    # Initialize persistent OpenClaw gateway client and attempt connection
     app_.state.openclaw_client = OpenClawClient(
         gateway_url=config.gateway_url,
         gateway_token=config.gateway_token,
         min_protocol=config.gateway_min_protocol,
         max_protocol=config.gateway_max_protocol
     )
+    try:
+        await app_.state.openclaw_client.ensure_connected()
+        logger.info(
+            "OpenClaw gateway connected (agent: %s, protocol: v%s)",
+            config.gateway_agent_id,
+            app_.state.openclaw_client.protocol,
+        )
+    except Exception as exc:
+        logger.warning("OpenClaw gateway unavailable at startup: %s — degraded mode", exc)
 
     try:
         yield
     finally:
         app_.state.stt.close()
+        await app_.state.openclaw_client.close()
+
 
 app = FastAPI(lifespan=lifespan)
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+
 
 @app.get("/")
 async def index() -> HTMLResponse:
@@ -87,7 +107,6 @@ async def index() -> HTMLResponse:
     if index_file.exists():
         return HTMLResponse(index_file.read_text(encoding="utf-8"))
     return HTMLResponse("<h1>Voice Satellite Core Client</h1>")
-
 
 
 @app.websocket("/ws")
@@ -107,18 +126,11 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
         return
 
     session = ConversationSession()
-    task_tracker = TaskTracker()
     ws_lock = asyncio.Lock()
 
     config = getattr(app.state, "config", None)
     if not config:
         config = load_config()
-
-    router = LLMRouter(
-        model=config.llm_model,
-        api_key=config.litellm_api_key,
-        base_url=config.litellm_url
-    )
 
     try:
         async with _session_lock:
@@ -268,33 +280,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                 async with ws_lock:
                     await websocket.send_json({"type": "audio_end"})
 
-            async def on_task_complete(task: TrackedTask) -> None:
-                if task.status == "cancelled":
-                    return
-                summary = task.result or ""
-                notify_text = f"Operator, that task is complete. {summary[:200]}" if summary else "Operator, the background task has finished."
-                if task.status == "failed":
-                    notify_text = f"Operator, the task has failed. Error: {task.error[:200]}"
 
-                try:
-                    async with ws_lock:
-                        await websocket.send_json({
-                            "type": "task_complete",
-                            "task_id": task.task_id,
-                            "summary": summary[:500],
-                        })
-
-                    if session.is_passive():
-                        session.state = SessionState.ACKNOWLEDGING
-                        await send_filler("acknowledge")
-                        session.state = SessionState.ACTIVE_LISTENING
-
-                    session.set_generation_task(asyncio.create_task(speak_text_to_tts(notify_text)))
-                    router.remember_turn("[background task completed]", notify_text)
-                except Exception as exc:
-                    logger.error("on_task_complete error: %s", exc)
-
-            task_tracker.register_callback(on_task_complete)
 
             async def handle_audio(audio_data: bytes) -> None:
                 try:
@@ -319,72 +305,41 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
 
                     session.state = SessionState.THINKING
 
-                    # Route decision
-                    task_summary = task_tracker.get_summary()
-                    decision = await router.route(transcript, task_summaries=task_summary)
+                    outgoing_message = transcript
 
-                    async with ws_lock:
-                        await websocket.send_json({
-                            "type": "decision",
-                            "action": decision.action,
-                            "reason": decision.reason
-                        })
+                    # Route directly to the configured OpenClaw agent
+                    openclaw_client: OpenClawClient = app.state.openclaw_client
+                    run_id = await openclaw_client.send_message(
+                        agent_id=config.gateway_agent_id,
+                        message=outgoing_message,
+                        mode="persistent",
+                        session_key=_GATEWAY_SESSION_KEY,
+                    )
 
-                    if decision.action == "check_tasks":
-                        await speak_text_to_tts(decision.message)
-                        router.remember_turn(transcript, decision.message)
-                        session.state = SessionState.ACTIVE_LISTENING
+                    # Stream response tokens → sentence splitter → TTS → audio chunks
+                    response_chunks: list[str] = []
+                    sentence_buffer = ""
 
-                    elif decision.action == "conversation_end":
-                        await speak_text_to_tts(decision.message)
-                        await send_filler("signoff")
-                        router.remember_turn(transcript, decision.message)
-                        session.state = SessionState.PASSIVE_LISTENING
+                    async for token in openclaw_client.stream_response(run_id):
+                        if not token:
+                            continue
+                        response_chunks.append(token)
+                        sentence_buffer += token
 
-                    elif decision.action == "openclaw" and decision.openclaw is not None:
-                        # Dispatch to gateway via task tracker
-                        async def run_gateway_task():
-                            client = OpenClawClient(
-                                gateway_url=config.gateway_url,
-                                gateway_token=config.gateway_token,
-                                min_protocol=config.gateway_min_protocol,
-                                max_protocol=config.gateway_max_protocol
-                            )
-                            try:
-                                await client.connect()
-                                run_id = await client.send_message(
-                                    agent_id=decision.openclaw.agent_id,
-                                    message=decision.openclaw.message,
-                                    mode=decision.openclaw.mode,
-                                    session_key=decision.openclaw.session_key
-                                )
-                                chunks = []
-                                async for chunk in client.stream_response(run_id):
-                                    if chunk:
-                                        chunks.append(chunk)
-                                        try:
-                                            async with ws_lock:
-                                                await websocket.send_json({"type": "tool_delta", "text": chunk})
-                                        except Exception:
-                                            pass
-                                return "".join(chunks)
-                            finally:
-                                await client.close()
+                        # Flush complete sentences to TTS as they arrive
+                        sentences = split_sentences(sentence_buffer)
+                        if len(sentences) > 1:
+                            # All sentences except the last (which may be incomplete)
+                            for s in sentences[:-1]:
+                                await speak_text_to_tts(s.text)
+                            # Keep the trailing incomplete sentence in the buffer
+                            sentence_buffer = sentences[-1].text if sentences[-1].text else ""
 
-                        task_tracker.start_task(
-                            agent_id=decision.openclaw.agent_id,
-                            description=decision.openclaw.message,
-                            coro=run_gateway_task()
-                        )
+                    # Flush any remaining text after the stream ends
+                    if sentence_buffer.strip():
+                        await speak_text_to_tts(sentence_buffer)
 
-                        await speak_text_to_tts(decision.message)
-                        router.remember_turn(transcript, decision.message)
-                        session.state = SessionState.ACTIVE_LISTENING
-
-                    else: # "answer"
-                        await speak_text_to_tts(decision.message)
-                        router.remember_turn(transcript, decision.message)
-                        session.state = SessionState.ACTIVE_LISTENING
+                    session.state = SessionState.ACTIVE_LISTENING
 
                 except asyncio.CancelledError:
                     logger.info("handle_audio task cancelled")
@@ -422,12 +377,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
 
                     # Cancel ongoing generation / stop TTS
                     if session.generation_task and not session.generation_task.done():
-                        partial = await session.cancel_generation()
-                        if partial and session.last_transcript:
-                            router.remember_turn(
-                                session.last_transcript,
-                                f"{partial}... [interrupted by user]"
-                            )
+                        await session.cancel_generation()
                         tts_client = getattr(app.state, "tts", None)
                         if tts_client:
                             await tts_client.stop()
@@ -451,13 +401,8 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                             session.state = SessionState.ACTIVE_LISTENING
 
                     elif msg_type == "interrupt":
-                        # Cancel ongoing generation
-                        partial = await session.cancel_generation()
-                        if partial and session.last_transcript:
-                            router.remember_turn(
-                                session.last_transcript,
-                                f"{partial}... [interrupted by user]"
-                            )
+                        # Barge-in via explicit interrupt message (frontend VAD detected speech)
+                        await session.cancel_generation()
                         tts_client = getattr(app.state, "tts", None)
                         if tts_client:
                             await tts_client.stop()
@@ -487,7 +432,6 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
         logger.error(f"WebSocket error: {e}", exc_info=True)
     finally:
         await session.close()
-        task_tracker.cancel_all()
         tts_client = getattr(app.state, "tts", None)
         if tts_client:
             try:
