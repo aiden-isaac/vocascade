@@ -50,7 +50,7 @@ auto_commit:
     message: "[Spec Kit] Add tasks"
   after_implement:
     enabled: true
-    message: "feat(gateway): Implement HTTP SSE streaming in HermesClient. Closes #55"
+    message: "feat(gateway): Implement sessions_abort session reset in HermesClient. Closes #56"
   after_checklist:
     enabled: false
     message: "[Spec Kit] Add checklist"

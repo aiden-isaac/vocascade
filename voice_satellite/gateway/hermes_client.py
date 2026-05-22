@@ -90,5 +90,8 @@ class HermesClient(GatewayClient):
     async def sessions_abort(self) -> None:
         """
         Signals the backend to abort the current generation (used for barge-in).
+        For Hermes, this generates a new X-Hermes-Session-Id UUID for barge-in resets.
         """
-        pass
+        old_id = self.session_id
+        self.session_id = str(uuid.uuid4())
+        logger.info("Hermes session reset from %s to %s due to sessions_abort", old_id, self.session_id)
