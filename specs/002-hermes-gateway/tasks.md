@@ -17,7 +17,7 @@
 - [x] **T005**: Create `voice_satellite/gateway/hermes_client.py` and implement the `HermesClient` inheriting from `GatewayClient`.
 - [x] **T006**: Implement HTTP SSE generation via `httpx.AsyncClient` inside `HermesClient.send_transcript`, parsing the OpenAI-compatible stream chunks.
 - [x] **T007** [P]: Implement `HermesClient.sessions_abort` to stop any active generators and generate a new `X-Hermes-Session-Id` UUID for barge-in resets.
-- [ ] **T008**: Create `tests/unit/test_hermes_client.py` to mock `httpx` and verify SSE chunk parsing and session management.
+- [x] **T008**: Create `tests/unit/test_hermes_client.py` to mock `httpx` and verify SSE chunk parsing and session management.
 
 ## Phase 3: Server Integration & Factory
 **Goal**: Update the FastAPI server to instantiate the correct client dynamically and handle failovers.
