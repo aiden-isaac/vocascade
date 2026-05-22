@@ -33,7 +33,23 @@ class TestServer(unittest.TestCase):
         self.mock_tts.load_character = AsyncMock()
         self.mock_gateway.connect = AsyncMock()
         self.mock_gateway.close = AsyncMock()
+        self.mock_gateway.sessions_abort = AsyncMock()
+        
+        async def mock_send_transcript(text):
+            run_id = await self.mock_gateway.send_message(
+                agent_id="main",
+                message=text,
+                mode="persistent",
+                session_key="voice"
+            )
+            async for token in self.mock_gateway.stream_response(run_id):
+                yield token
+        self.mock_gateway.send_transcript = mock_send_transcript
         self.mock_filler.get_filler.return_value = None
+
+        self.factory_patcher = patch("voice_satellite.server.get_gateway_client")
+        self.mock_factory = self.factory_patcher.start()
+        self.mock_factory.return_value = self.mock_gateway
 
         self.client_ctx = TestClient(app)
         self.client = self.client_ctx.__enter__()
@@ -44,6 +60,7 @@ class TestServer(unittest.TestCase):
         self.tts_patcher.stop()
         self.filler_patcher.stop()
         self.gateway_patcher.stop()
+        self.factory_patcher.stop()
 
     def test_index_route(self):
         response = self.client.get("/")
@@ -316,6 +333,93 @@ class TestServer(unittest.TestCase):
             # Since load_character recovered the client, we expect audio and audio_end to be sent
             self.assertIn("audio", received_types)
             self.assertEqual(len(load_calls), 1)
+
+    def test_gateway_connection_error_graceful_handling(self):
+        import httpx
+
+        # Mock send_transcript to raise a connection error
+        async def mock_failed_send_transcript(text):
+            raise httpx.ConnectError("Connection refused")
+            yield ""
+        self.mock_gateway.send_transcript = mock_failed_send_transcript
+
+        # Setup mock STT
+        mock_stt = AsyncMock()
+        mock_stt.transcribe.return_value = "hello"
+        app.state.stt = mock_stt
+
+        # Mock TTS on app state
+        mock_tts = MagicMock()
+        mock_tts.degraded_mode = False
+        mock_tts.stop = AsyncMock()
+        async def mock_synth(text):
+            yield b"error_pcm"
+        mock_tts.synthesize.side_effect = mock_synth
+        app.state.tts = mock_tts
+
+        with self.client.websocket_connect("/ws") as ws:
+            ws.receive_json()  # passive_listening
+            ws.send_json({"type": "wakeword"})
+            ws.receive_json()  # acknowledging
+            ws.receive_json()  # active_listening
+
+            ws.send_bytes(b"some_pcm")
+
+            # Receive messages until we get to status: active_listening
+            received_messages = []
+            while True:
+                msg = ws.receive_json()
+                received_messages.append(msg)
+                if msg.get("type") == "status" and msg.get("state") == "active_listening":
+                    break
+
+            # Verify that TTS was asked to speak the connection failure message
+            assistant_response = next(
+                (m for m in received_messages if m.get("type") == "assistant_response"), None
+            )
+            self.assertIsNotNone(assistant_response)
+            self.assertIn("cannot connect to the gateway backend", assistant_response["text"])
+
+            # Verify websocket error message was sent
+            error_msg = next(
+                (m for m in received_messages if m.get("type") == "error"), None
+            )
+            self.assertIsNotNone(error_msg)
+            self.assertEqual(error_msg["message"], "Connection to gateway backend failed")
+
+    def test_get_gateway_client_factory(self):
+        # Temporarily stop the patchers to test actual instantiation logic
+        self.factory_patcher.stop()
+        self.gateway_patcher.stop()
+
+        try:
+            from voice_satellite.server import get_gateway_client
+            from voice_satellite.gateway.hermes_client import HermesClient
+            from voice_satellite.gateway.openclaw_client import OpenClawClient
+            from voice_satellite.config import SatelliteConfig
+
+            # Create a mock config for hermes
+            cfg_hermes = MagicMock(spec=SatelliteConfig)
+            cfg_hermes.gateway_backend = "hermes"
+            cfg_hermes.hermes_base_url = "http://localhost:8642/v1"
+
+            client = get_gateway_client(cfg_hermes)
+            self.assertIsInstance(client, HermesClient)
+            self.assertEqual(client.base_url, "http://localhost:8642/v1")
+
+            # Create a mock config for openclaw
+            cfg_openclaw = MagicMock(spec=SatelliteConfig)
+            cfg_openclaw.gateway_backend = "openclaw"
+            cfg_openclaw.gateway_url = "ws://localhost:8000"
+            cfg_openclaw.gateway_token = "token"
+            cfg_openclaw.gateway_min_protocol = 1
+            cfg_openclaw.gateway_max_protocol = 1
+
+            client_oc = get_gateway_client(cfg_openclaw)
+            self.assertIsInstance(client_oc, OpenClawClient)
+        finally:
+            self.gateway_patcher.start()
+            self.factory_patcher.start()
 
 
 if __name__ == "__main__":

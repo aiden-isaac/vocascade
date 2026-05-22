@@ -386,11 +386,20 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                     raise
                 except Exception as e:
                     logger.error(f"Error in handle_audio: {e}", exc_info=True)
+                    err_msg = "Error processing audio"
+                    try:
+                        import httpx
+                        if isinstance(e, (httpx.HTTPError, ConnectionError, OSError)) or "connection" in str(e).lower() or "websocket" in str(e).lower():
+                            err_msg = "Connection to gateway backend failed"
+                            await speak_text_to_tts("I am sorry, but I cannot connect to the gateway backend.")
+                    except Exception as tts_err:
+                        logger.error("Failed to speak error response via TTS: %s", tts_err)
+
                     try:
                         async with ws_lock:
                             await websocket.send_json({
                                 "type": "error",
-                                "message": "Error processing audio"
+                                "message": err_msg
                             })
                     except Exception:
                         pass
