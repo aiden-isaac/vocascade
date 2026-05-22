@@ -132,6 +132,10 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
     if not config:
         config = load_config()
 
+    # Per-session barge-in context: stores partial response text from last interrupt.
+    # Reset to "" after it has been consumed on the next outgoing message.
+    _interrupted_partial: list[str] = [""]  # mutable cell for closure capture
+
     try:
         async with _session_lock:
             await websocket.accept()
@@ -280,7 +284,30 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                 async with ws_lock:
                     await websocket.send_json({"type": "audio_end"})
 
+            def _build_outgoing_message(transcript: str) -> str:
+                """
+                Builds the outgoing message for OpenClaw, prepending a one-shot barge-in
+                context note if the last response was interrupted with ≥10 words heard.
+                The context note is consumed and cleared after use.
+                """
+                partial = _interrupted_partial[0]
+                _interrupted_partial[0] = ""  # consume
 
+                if not partial:
+                    return transcript
+
+                word_count = len(partial.split())
+                if word_count < 10:
+                    # Short barge-in: gateway history already has the truncated turn.
+                    # No extra context needed.
+                    return transcript
+
+                # Long barge-in: prepend a one-shot context note (not stored in gateway history).
+                context_note = (
+                    f"[System Note: The last assistant response was interrupted by the user "
+                    f'after saying: "{partial} [interrupted]"]\n'
+                )
+                return context_note + transcript
 
             async def handle_audio(audio_data: bytes) -> None:
                 try:
@@ -305,7 +332,8 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
 
                     session.state = SessionState.THINKING
 
-                    outgoing_message = transcript
+                    # Build outgoing message — may prepend barge-in context note
+                    outgoing_message = _build_outgoing_message(transcript)
 
                     # Route directly to the configured OpenClaw agent
                     openclaw_client: OpenClawClient = app.state.openclaw_client
@@ -377,7 +405,19 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
 
                     # Cancel ongoing generation / stop TTS
                     if session.generation_task and not session.generation_task.done():
-                        await session.cancel_generation()
+                        partial = await session.cancel_generation()
+                        if partial:
+                            # Part 1 of barge-in: abort the active gateway run (best-effort)
+                            try:
+                                openclaw_client = app.state.openclaw_client
+                                await openclaw_client.sessions_abort(
+                                    session_key=f"agent:{config.gateway_agent_id}:{_GATEWAY_SESSION_KEY}"
+                                )
+                            except Exception as exc:
+                                logger.warning("sessions_abort failed (non-fatal): %s", exc)
+                            # Store partial for context note on next turn
+                            _interrupted_partial[0] = partial
+
                         tts_client = getattr(app.state, "tts", None)
                         if tts_client:
                             await tts_client.stop()
@@ -402,7 +442,18 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
 
                     elif msg_type == "interrupt":
                         # Barge-in via explicit interrupt message (frontend VAD detected speech)
-                        await session.cancel_generation()
+                        partial = await session.cancel_generation()
+                        if partial:
+                            # Part 1: abort the active gateway run
+                            try:
+                                openclaw_client = app.state.openclaw_client
+                                await openclaw_client.sessions_abort(
+                                    session_key=f"agent:{config.gateway_agent_id}:{_GATEWAY_SESSION_KEY}"
+                                )
+                            except Exception as exc:
+                                logger.warning("sessions_abort failed (non-fatal): %s", exc)
+                            _interrupted_partial[0] = partial
+
                         tts_client = getattr(app.state, "tts", None)
                         if tts_client:
                             await tts_client.stop()

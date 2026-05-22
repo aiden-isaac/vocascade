@@ -183,7 +183,7 @@ context-switching and ensures each module is self-contained.
 - [x] T044 Delete `voice_satellite/session/task_tracker.py`
 - [x] T045 Add `sessions_abort(session_key)` method to `voice_satellite/gateway/openclaw_client.py` that sends a `sessions.abort` RPC with the active session key and run ID; expose it in the persistent client interface
 - [x] T046 Refactor the main WebSocket endpoint in `voice_satellite/server.py` to route STT transcripts directly to the configured OpenClaw agent (`config.gateway_agent_id`) via the persistent connection and stream response tokens sentence-by-sentence in real-time
-- [ ] T047 Implement two-part barge-in context in `voice_satellite/server.py`: (1) call `openclaw_client.sessions_abort()` to cancel the active gateway run; (2) store the partial response; on the next user turn, if partial words ≥ 10, prepend the interruption context note to the outgoing message (not stored in any local history)
+- [x] T047 Implement two-part barge-in context in `voice_satellite/server.py`: (1) call `openclaw_client.sessions_abort()` to cancel the active gateway run; (2) store the partial response; on the next user turn, if partial words ≥ 10, prepend the interruption context note to the outgoing message (not stored in any local history)
 - [ ] T048 Update unit tests (`test_config.py`, `test_session.py`, `test_server.py`, `test_openclaw_client.py`) to cover the new `gateway_agent_id` field, `sessions_abort`, and barge-in context logic; delete `test_router.py` and `test_task_tracker.py`
 - [ ] T049 Run full test suite and verify clean startup health report without LiteLLM errors
 ---
