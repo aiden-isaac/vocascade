@@ -179,7 +179,7 @@ context-switching and ensures each module is self-contained.
 **Independent Test**: Speak to the satellite, verify that responses are generated with significantly lower latency, and confirm that there are no LiteLLM console logs/errors. Interruption handles gracefully.
 **Dependencies**: Requires Phase 4 (US2) and Phase 7.
 ### Implementation for Phase 8
-- [ ] T043 Remove LiteLLM configuration from `voice_satellite/config.py`, add `gateway_agent_id` field (env var `OPENCLAW_AGENT_ID`, default `main`), and delete the `voice_satellite/llm/` directory entirely
+- [x] T043 Remove LiteLLM configuration from `voice_satellite/config.py`, add `gateway_agent_id` field (env var `OPENCLAW_AGENT_ID`, default `main`), and delete the `voice_satellite/llm/` directory entirely
 - [ ] T044 Delete `voice_satellite/session/task_tracker.py`
 - [ ] T045 Add `sessions_abort(session_key)` method to `voice_satellite/gateway/openclaw_client.py` that sends a `sessions.abort` RPC with the active session key and run ID; expose it in the persistent client interface
 - [ ] T046 Refactor the main WebSocket endpoint in `voice_satellite/server.py` to route STT transcripts directly to the configured OpenClaw agent (`config.gateway_agent_id`) via the persistent connection and stream response tokens sentence-by-sentence in real-time
