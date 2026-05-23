@@ -100,7 +100,7 @@ def load_config() -> SatelliteConfig:
         gateway_max_protocol=int(os.getenv("GATEWAY_MAX_PROTOCOL", "4")),
 
         tts_url=os.getenv("GENIE_TTS_URL", "http://127.0.0.1:8000"),
-        tts_character_name=os.getenv("GENIE_CHARACTER_NAME", "ordis"),
+        tts_character_name=os.getenv("GENIE_CHARACTER_NAME", "default"),
         tts_onnx_model_dir=tts_onnx_model_dir,
         tts_reference_audio=tts_reference_audio,
         tts_reference_text=tts_reference_text,

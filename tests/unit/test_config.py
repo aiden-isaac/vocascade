@@ -59,7 +59,7 @@ class TestConfig(unittest.TestCase):
 
         # Default values — TTS
         self.assertEqual(config.tts_url, "http://127.0.0.1:8000")
-        self.assertEqual(config.tts_character_name, "ordis")
+        self.assertEqual(config.tts_character_name, "default")
         self.assertIsNone(config.tts_onnx_model_dir)
         self.assertIsNone(config.tts_reference_audio)
         self.assertIsNone(config.tts_reference_text)

@@ -104,7 +104,7 @@ async def websocket_endpoint(ws: WebSocket):
 boundaries and custom XML-style tags.
 **Rationale**: The legacy `genie_tts.py` uses a simple `re.split` on
 `(?<=[.!?])\s+` but also needs to handle `<glitch>...</glitch>` tags for
-the Ordis persona. Tagged segments must be split out as independent synthesis
+the character personas. Tagged segments must be split out as independent synthesis
 units so audio effects can be applied per-segment.
 **Split order**:
 1. Extract `<glitch>...</glitch>` spans as separate chunks (tagged)

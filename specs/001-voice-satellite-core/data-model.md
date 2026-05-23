@@ -12,7 +12,7 @@ Frozen dataclass loaded once at startup from `.env`. Consumed by all modules.
 | gateway_min_protocol | int | `GATEWAY_MIN_PROTOCOL` | — | `3` |
 | gateway_max_protocol | int | `GATEWAY_MAX_PROTOCOL` | — | `4` |
 | tts_url | str | `GENIE_TTS_URL` | — | `http://127.0.0.1:8000` |
-| tts_character_name | str | `GENIE_CHARACTER_NAME` | — | `ordis` |
+| tts_character_name | str | `GENIE_CHARACTER_NAME` | — | `default` |
 | tts_onnx_model_dir | str | `GENIE_ONNX_MODEL_DIR` | ⚠️ | — |
 | tts_reference_audio | str | `GENIE_REFERENCE_AUDIO` | ⚠️ | — |
 | tts_reference_text | str | `GENIE_REFERENCE_TEXT` | ⚠️ | — |
@@ -67,7 +67,7 @@ Configuration from `static/wakeword/model.json`.
 | Field | Type | Description |
 |-------|------|-------------|
 | file | str | Classifier ONNX filename (e.g., `model.onnx`) |
-| name | str | Human-readable wakeword name (e.g., `Hey Ordis`) |
+| name | str | Human-readable wakeword name (e.g., `Hey Assistant`) |
 | sample_rate | int | Expected audio sample rate (16000) |
 | threshold | float | Detection confidence threshold (0.0–1.0) |
 ---

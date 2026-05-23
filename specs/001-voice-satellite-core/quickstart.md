@@ -26,10 +26,10 @@ OPENCLAW_GATEWAY_TOKEN=your_openclaw_token
 **Required for voice** (satellite runs in text-only degraded mode without these):
 ```ini
 GENIE_TTS_URL=http://127.0.0.1:8000
-GENIE_CHARACTER_NAME=ordis
-GENIE_ONNX_MODEL_DIR=/path/to/genie-ordis/export
-GENIE_REFERENCE_AUDIO=/path/to/ordis_ref.wav
-GENIE_REFERENCE_TEXT=What? A parity drift? How is that possible?
+GENIE_CHARACTER_NAME=default
+GENIE_ONNX_MODEL_DIR=/path/to/genie-character/export
+GENIE_REFERENCE_AUDIO=/path/to/character_ref.wav
+GENIE_REFERENCE_TEXT=This is the reference audio for the default character.
 ```
 All other values have sensible defaults. See `.env.example` for the full list.
 ## 3. Add a Wakeword Model
@@ -45,7 +45,7 @@ Example `model.json`:
 ```json
 {
   "file": "model.onnx",
-  "name": "Hey Ordis",
+  "name": "Hey Assistant",
   "sample_rate": 16000,
   "threshold": 0.5
 }
@@ -71,10 +71,10 @@ You should see the startup health report:
 ╠══════════════════════════════════════════════════╣
 ║  Config:     .env loaded ✓                       ║
 ║  STT:        tiny.en (CPU) ✓                     ║
-║  TTS:        ordis @ http://127.0.0.1:8000 ✓     ║
+║  TTS:        default @ http://127.0.0.1:8000 ✓   ║
 ║  Gateway:    ws://127.0.0.1:18789 (v3) ✓         ║
 ║  Fillers:    14 loaded (5 categories) ✓          ║
-║  Wakeword:   model.onnx (Hey Ordis) [frontend]   ║
+║  Wakeword:   model.onnx (Hey Assistant) [frontend] ║
 ║  Listening:  http://0.0.0.0:8000                 ║
 ╚══════════════════════════════════════════════════╝
 ```
@@ -83,7 +83,7 @@ Navigate to **http://localhost:8000** in your browser.
 1. Click **Start Listening**
 2. Grant microphone permission when prompted
 3. Wait for "Passive listening — waiting for wakeword"
-4. Say your wakeword (e.g., "Hey Ordis")
+4. Say your wakeword (e.g., "Hey Assistant")
 5. After the acknowledgement sound, speak naturally
 6. The assistant will respond through your speakers
 

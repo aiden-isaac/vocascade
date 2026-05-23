@@ -10,7 +10,44 @@ from voice_satellite.session import SessionState
 
 class TestServer(unittest.TestCase):
     def setUp(self):
+        self.env_patcher = patch.dict("os.environ", {"OPENCLAW_GATEWAY_TOKEN": "test_token"})
+        self.env_patcher.start()
+
+        self.stt_patcher = patch("voice_satellite.server.WhisperSTT")
+        self.tts_patcher = patch("voice_satellite.server.GenieTTSClient")
+        self.openclaw_patcher = patch("voice_satellite.server.OpenClawClient")
+
+        self.mock_stt_class = self.stt_patcher.start()
+        self.mock_tts_class = self.tts_patcher.start()
+        self.mock_openclaw_class = self.openclaw_patcher.start()
+
+        # Setup standard mock behavior for OpenClawClient
+        self.mock_openclaw_instance = MagicMock()
+        self.mock_openclaw_instance.connect = AsyncMock()
+        self.mock_openclaw_instance.close = AsyncMock()
+        self.mock_openclaw_instance.sessions_abort = AsyncMock()
+        self.mock_openclaw_instance.send_message = AsyncMock(return_value="run-1")
+
+        async def mock_stream(run_id):
+            yield "hello"
+        self.mock_openclaw_instance.stream_response = mock_stream
+        self.mock_openclaw_class.return_value = self.mock_openclaw_instance
+
+        # Setup standard mock behavior for GenieTTSClient
+        self.mock_tts_instance = MagicMock()
+        self.mock_tts_instance.ping = AsyncMock()
+        self.mock_tts_instance.load_character = AsyncMock()
+        self.mock_tts_class.return_value = self.mock_tts_instance
+
         self.client = TestClient(app)
+        self.client.__enter__()
+
+    def tearDown(self):
+        self.client.__exit__(None, None, None)
+        self.stt_patcher.stop()
+        self.tts_patcher.stop()
+        self.openclaw_patcher.stop()
+        self.env_patcher.stop()
 
     def test_index_route(self):
         response = self.client.get("/")
@@ -44,15 +81,19 @@ class TestServer(unittest.TestCase):
             # 3. Send wakeword
             ws.send_json({"type": "wakeword"})
 
-            # 4. Check acknowledging state
-            msg2 = ws.receive_json()
-            self.assertEqual(msg2, {"type": "status", "state": "acknowledging"})
+            # 4. Check acknowledging and active_listening states
+            received_messages = []
+            while True:
+                msg = ws.receive_json()
+                received_messages.append(msg)
+                if msg.get("type") == "status" and msg.get("state") == "active_listening":
+                    break
 
-            # 5. Check active_listening state
-            msg3 = ws.receive_json()
-            self.assertEqual(msg3, {"type": "status", "state": "active_listening"})
+            states = [m.get("state") for m in received_messages if m.get("type") == "status"]
+            self.assertIn("acknowledging", states)
+            self.assertIn("active_listening", states)
 
-            # 6. Send binary PCM (should not raise error or disconnect)
+            # 5. Send binary PCM (should not raise error or disconnect)
             ws.send_bytes(b"some_pcm_bytes")
 
     def test_silence_timer_lifecycle(self):
@@ -69,9 +110,11 @@ class TestServer(unittest.TestCase):
                 # Send wakeword
                 ws.send_json({"type": "wakeword"})
 
-                # Receive acknowledging and active_listening status
-                ws.receive_json()
-                ws.receive_json()
+                # Receive acknowledging, active_listening, and possible filler messages
+                while True:
+                    msg = ws.receive_json()
+                    if msg.get("type") == "status" and msg.get("state") == "active_listening":
+                        break
 
                 # Verify start_silence_timer was called when entering active_listening
                 mock_start.assert_called()
@@ -96,6 +139,9 @@ class TestServer(unittest.TestCase):
         mock_stream.side_effect = mock_stream_resp
 
         with self.client.websocket_connect("/ws") as ws:
+            app.state.openclaw_client.send_message = mock_send
+            app.state.openclaw_client.stream_response = mock_stream
+
             # Mock STT on app state
             mock_stt = AsyncMock()
             mock_stt.transcribe.return_value = "hello world"
@@ -114,14 +160,19 @@ class TestServer(unittest.TestCase):
             ws.receive_json()  # passive_listening
 
             ws.send_json({"type": "wakeword"})
-            ws.receive_json()  # acknowledging
-            ws.receive_json()  # active_listening
+            while True:
+                msg = ws.receive_json()
+                if msg.get("type") == "status" and msg.get("state") == "active_listening":
+                    break
 
             ws.send_bytes(b"user_speech_pcm")
 
             received_messages = []
-            for _ in range(12):
-                received_messages.append(ws.receive_json())
+            while True:
+                msg = ws.receive_json()
+                received_messages.append(msg)
+                if msg.get("type") == "status" and msg.get("state") == "active_listening":
+                    break
 
             types = [m.get("type") for m in received_messages]
             states = [m.get("state") for m in received_messages if m.get("type") == "status"]
@@ -186,6 +237,9 @@ class TestServer(unittest.TestCase):
         mock_stream.side_effect = mock_stream_resp
 
         with self.client.websocket_connect("/ws") as ws:
+            app.state.openclaw_client.send_message = mock_send
+            app.state.openclaw_client.stream_response = mock_stream
+
             mock_stt = AsyncMock()
             mock_stt.transcribe.return_value = "can you say that again"
             app.state.stt = mock_stt
@@ -201,24 +255,29 @@ class TestServer(unittest.TestCase):
 
             ws.receive_json()  # passive_listening
             ws.send_json({"type": "wakeword"})
-            ws.receive_json()  # acknowledging
-            ws.receive_json()  # active_listening
+            while True:
+                msg = ws.receive_json()
+                if msg.get("type") == "status" and msg.get("state") == "active_listening":
+                    break
 
             # Simulate a barge-in that had a long partial response (≥10 words)
             # by directly injecting playback_progress + interrupt
             ws.send_json({"type": "playback_progress", "words_played": 15})
             ws.send_json({"type": "interrupt"})
             # drain interrupt response messages
-            ws.receive_json()  # flush_audio
-            ws.receive_json()  # interrupted
-            ws.receive_json()  # active_listening
+            while True:
+                msg = ws.receive_json()
+                if msg.get("type") == "status" and msg.get("state") == "active_listening":
+                    break
 
             # Now send the follow-up audio (transcript: "can you say that again")
             ws.send_bytes(b"follow_up_pcm")
 
-            # Read until we get the outgoing call
-            for _ in range(12):
-                ws.receive_json()
+            # Read until the turn is fully complete (active_listening)
+            while True:
+                msg = ws.receive_json()
+                if msg.get("type") == "status" and msg.get("state") == "active_listening":
+                    break
 
             # The second send_message call should contain the context note
             # (only if the session had stored partial from a prior generation task)
@@ -234,48 +293,54 @@ class TestServer(unittest.TestCase):
             yield "hello there"
         mock_stream.side_effect = mock_stream_resp
 
-        # Setup mock STT
-        mock_stt = AsyncMock()
-        mock_stt.transcribe.return_value = "hello"
-        app.state.stt = mock_stt
-
-        # Create a mock client that behaves like GenieTTSClient under degraded mode/retry
-        mock_tts = MagicMock()
-        mock_tts.degraded_mode = True
-        mock_tts.onnx_model_dir = "/path/to/onnx"
-        mock_tts.stop = AsyncMock()
-
-        # We will track calls to load_character
-        load_calls = []
-
-        async def mock_load_character():
-            load_calls.append(1)
-            # Simulate a successful recovery on the retry call
-            mock_tts.degraded_mode = False
-
-        mock_tts.load_character = mock_load_character
-
-        # Mock synthesize to yield mock audio chunks
-        async def mock_synth(text):
-            yield b"audio_chunk_1"
-        mock_tts.synthesize.side_effect = mock_synth
-        app.state.tts = mock_tts
-
         with self.client.websocket_connect("/ws") as ws:
+            app.state.openclaw_client.send_message = mock_send
+            app.state.openclaw_client.stream_response = mock_stream
+
+            # Setup mock STT
+            mock_stt = AsyncMock()
+            mock_stt.transcribe.return_value = "hello"
+            app.state.stt = mock_stt
+
+            # Create a mock client that behaves like GenieTTSClient under degraded mode/retry
+            mock_tts = MagicMock()
+            mock_tts.degraded_mode = True
+            mock_tts.onnx_model_dir = "/path/to/onnx"
+            mock_tts.stop = AsyncMock()
+
+            # We will track calls to load_character
+            load_calls = []
+
+            async def mock_load_character():
+                load_calls.append(1)
+                # Simulate a successful recovery on the retry call
+                mock_tts.degraded_mode = False
+
+            mock_tts.load_character = mock_load_character
+
+            # Mock synthesize to yield mock audio chunks
+            async def mock_synth(text):
+                yield b"audio_chunk_1"
+            mock_tts.synthesize.side_effect = mock_synth
+            app.state.tts = mock_tts
+
             ws.receive_json()  # passive_listening
             ws.send_json({"type": "wakeword"})
-            ws.receive_json()  # acknowledging
-            ws.receive_json()  # active_listening
+            while True:
+                msg = ws.receive_json()
+                if msg.get("type") == "status" and msg.get("state") == "active_listening":
+                    break
 
             ws.send_bytes(b"some_pcm")
 
-            # Read messages until we get audio or audio_end
-            received_types = []
-            for _ in range(12):
+            # Read messages until we get active_listening
+            received_messages = []
+            while True:
                 msg = ws.receive_json()
-                received_types.append(msg.get("type"))
-                if msg.get("type") == "audio_end":
+                received_messages.append(msg)
+                if msg.get("type") == "status" and msg.get("state") == "active_listening":
                     break
+            received_types = [m.get("type") for m in received_messages]
 
             # Since load_character recovered the client, we expect audio and audio_end to be sent
             self.assertIn("audio", received_types)

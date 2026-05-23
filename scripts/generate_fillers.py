@@ -5,7 +5,9 @@ Connects to Genie TTS server, synthesizes each filler phrase using the configure
 and saves raw PCM files to static/fillers/<category>/<slug>.pcm.
 """
 
+import argparse
 import asyncio
+import json
 import os
 import re
 import sys
@@ -15,40 +17,10 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 # Prevent load_config from failing on missing key environment variables
-os.environ.setdefault("LITELLM_API_KEY", "dummy_key")
 os.environ.setdefault("OPENCLAW_GATEWAY_TOKEN", "dummy_token")
 
 from voice_satellite.config import load_config
 from voice_satellite.tts.genie_client import GenieTTSClient
-
-# Define filler phrases per category
-FILLER_PHRASES: dict[str, list[str]] = {
-    "thinking": [
-        "Hmm.",
-        "Let me think.",
-        "One moment.",
-    ],
-    "working": [
-        "Let me check the weave.",
-        "Running diagnostics.",
-        "Analyzing.",
-    ],
-    "slow_task": [
-        "This might take a moment.",
-        "Working on that now.",
-        "Processing, Operator.",
-    ],
-    "acknowledge": [
-        "Yes, Operator?",
-        "Ordis is listening.",
-        "Go ahead, Operator.",
-    ],
-    "signoff": [
-        "Until next time, Operator.",
-        "Ordis will be here.",
-        "Farewell, Operator.",
-    ],
-}
 
 def phrase_to_slug(phrase: str) -> str:
     """'Let me check the weave.' -> 'let_me_check_the_weave'"""
@@ -58,11 +30,69 @@ def phrase_to_slug(phrase: str) -> str:
     return slug[:64]
 
 async def main() -> None:
+    parser = argparse.ArgumentParser(description="Batch-render filler audio via the Genie TTS server.")
+    parser.add_argument(
+        "--config",
+        default="static/fillers.json",
+        help="Path to the JSON file containing filler phrases (default: static/fillers.json)"
+    )
+    args = parser.parse_args()
+
     config = load_config()
     print(f"Genie TTS URL : {config.tts_url}")
     print(f"Character     : {config.tts_character_name}")
     print(f"Output dir    : {config.filler_dir}")
+    print(f"Fillers Config: {args.config}")
     print()
+
+    config_path = Path(args.config)
+
+    # Generic default phrases (no character-specific terms like "Ordis" or "Operator")
+    DEFAULT_FILLER_PHRASES: dict[str, list[str]] = {
+        "thinking": [
+            "Hmm.",
+            "Let me think.",
+            "One moment.",
+        ],
+        "working": [
+            "Just a second.",
+            "Running diagnostics.",
+            "Analyzing.",
+        ],
+        "slow_task": [
+            "This might take a moment.",
+            "Working on that now.",
+            "Still processing.",
+        ],
+        "acknowledge": [
+            "Yes?",
+            "I'm listening.",
+            "Go ahead.",
+        ],
+        "signoff": [
+            "Goodbye.",
+            "Talk to you later.",
+            "Farewell.",
+        ],
+    }
+
+    if config_path.exists():
+        try:
+            with open(config_path, "r", encoding="utf-8") as f:
+                filler_phrases = json.load(f)
+            print(f"Loaded filler phrases from: {config_path}")
+        except Exception as e:
+            print(f"Error reading {config_path}: {e}. Falling back to default phrases.")
+            filler_phrases = DEFAULT_FILLER_PHRASES
+    else:
+        print(f"Config file not found. Creating default fillers file at: {config_path}")
+        try:
+            config_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(config_path, "w", encoding="utf-8") as f:
+                json.dump(DEFAULT_FILLER_PHRASES, f, indent=2)
+        except Exception as e:
+            print(f"Warning: Could not save default fillers file: {e}")
+        filler_phrases = DEFAULT_FILLER_PHRASES
 
     config.filler_dir.mkdir(parents=True, exist_ok=True)
 
@@ -80,7 +110,7 @@ async def main() -> None:
     total_ok = 0
     total_err = 0
 
-    for category, phrases in FILLER_PHRASES.items():
+    for category, phrases in filler_phrases.items():
         cat_dir = config.filler_dir / category
         cat_dir.mkdir(exist_ok=True)
         print(f"  [{category}]")

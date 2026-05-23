@@ -3,20 +3,20 @@ from voice_satellite.tts import split_sentences, SentenceChunk
 
 class TestSentenceSplitter(unittest.TestCase):
     def test_basic_splitting(self):
-        text = "Hello master. How are you today? Ordis is ready."
+        text = "Hello friend. How are you today? The system is ready."
         chunks = split_sentences(text)
         self.assertEqual(len(chunks), 3)
-        self.assertEqual(chunks[0], SentenceChunk("Hello master.", False))
+        self.assertEqual(chunks[0], SentenceChunk("Hello friend.", False))
         self.assertEqual(chunks[1], SentenceChunk("How are you today?", False))
-        self.assertEqual(chunks[2], SentenceChunk("Ordis is ready.", False))
+        self.assertEqual(chunks[2], SentenceChunk("The system is ready.", False))
 
     def test_glitch_tag_extraction(self):
-        text = "Hello master. <glitch>— PURGE THEM ALL —</glitch> uh, Ordis is back."
+        text = "Hello friend. <glitch>— DISTORTION —</glitch> uh, the system is back."
         chunks = split_sentences(text)
         self.assertEqual(len(chunks), 3)
-        self.assertEqual(chunks[0], SentenceChunk("Hello master.", False))
-        self.assertEqual(chunks[1], SentenceChunk("— PURGE THEM ALL —.", True))
-        self.assertEqual(chunks[2], SentenceChunk("uh, Ordis is back.", False))
+        self.assertEqual(chunks[0], SentenceChunk("Hello friend.", False))
+        self.assertEqual(chunks[1], SentenceChunk("— DISTORTION —.", True))
+        self.assertEqual(chunks[2], SentenceChunk("uh, the system is back.", False))
 
     def test_filtering_non_alphanumeric(self):
         text = "Hello. !!!. <glitch>...</glitch> World."

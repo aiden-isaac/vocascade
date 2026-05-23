@@ -25,16 +25,13 @@ class TestMainBootstrap(unittest.IsolatedAsyncioTestCase):
     ):
         # Setup config mock
         config = SatelliteConfig(
-            litellm_api_key="key",
-            litellm_url="url",
-            llm_model="model",
-            llm_history_messages=10,
             gateway_url="ws://127.0.0.1:18789",
             gateway_token="token",
+            gateway_agent_id="main",
             gateway_min_protocol=3,
             gateway_max_protocol=4,
             tts_url="http://127.0.0.1:8000",
-            tts_character_name="ordis",
+            tts_character_name="default",
             tts_onnx_model_dir="/path/onnx",
             tts_reference_audio="/path/ref.wav",
             tts_reference_text="hello",
@@ -94,7 +91,7 @@ class TestMainBootstrap(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Voice Satellite — Startup Health Report", report_output)
         self.assertIn("Config:      .env loaded ✓", report_output)
         self.assertIn("STT:         tiny.en (CPU) ✓", report_output)
-        self.assertIn("TTS:         ordis @ http://127.0.0.1:8000 ✓", report_output)
+        self.assertIn("TTS:         default @ http://127.0.0.1:8000 ✓", report_output)
         self.assertIn("Gateway:     ws://127.0.0.1:18789 (v3) ✓", report_output)
         self.assertIn("Fillers:     14 loaded (thinking: 3, working: 3, acknowledge: 3, slow_task: 3, signoff: 2) ✓", report_output)
         self.assertIn("Wakeword:    None (always active)", report_output)

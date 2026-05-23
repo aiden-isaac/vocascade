@@ -17,7 +17,7 @@ class TestGenieTTSClient(unittest.IsolatedAsyncioTestCase):
 
         client = GenieTTSClient(
             tts_url="http://localhost:8000",
-            character_name="ordis",
+            character_name="default",
             onnx_model_dir="/path/to/onnx",
             reference_audio="/path/to/ref.wav",
             reference_text="Ref text"
@@ -44,7 +44,7 @@ class TestGenieTTSClient(unittest.IsolatedAsyncioTestCase):
 
         client = GenieTTSClient(
             tts_url="http://localhost:8000",
-            character_name="ordis",
+            character_name="default",
             onnx_model_dir="/path/to/onnx",
             reference_audio="/path/to/ref.wav",
             reference_text="Ref text"
@@ -74,7 +74,7 @@ class TestGenieTTSClient(unittest.IsolatedAsyncioTestCase):
 
         client = GenieTTSClient(
             tts_url="http://localhost:8000",
-            character_name="ordis",
+            character_name="default",
             onnx_model_dir="/path/to/onnx",
             reference_audio="/path/to/ref.wav",
             reference_text="Ref text"
@@ -91,7 +91,7 @@ class TestGenieTTSClient(unittest.IsolatedAsyncioTestCase):
     async def test_input_sanitisation(self):
         client = GenieTTSClient(
             tts_url="http://localhost:8000",
-            character_name="ordis",
+            character_name="default",
             onnx_model_dir=None  # Degraded mode
         )
         
@@ -110,7 +110,7 @@ class TestGenieTTSClient(unittest.IsolatedAsyncioTestCase):
 
         client = GenieTTSClient(
             tts_url="http://localhost:8000",
-            character_name="ordis",
+            character_name="default",
             onnx_model_dir="/path/to/onnx",
             reference_audio="/path/to/ref.wav",
             reference_text="Ref text"

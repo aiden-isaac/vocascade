@@ -124,7 +124,7 @@ def get_character_effects_config(character_name: str) -> dict:
     if not character_name:
         return {}
     name = character_name.lower().strip()
-    if name == "ordis":
+    if name in ("ordis", "default"):
         pitch_factor = random.uniform(0.55, 0.63)
         semitones = 12.0 * math.log2(pitch_factor)
         return {

@@ -8,7 +8,7 @@ The user places a satellite device (laptop or Raspberry Pi) in a room. The
 system continuously monitors ambient audio through the microphone. In passive
 mode, only a lightweight wakeword detection model evaluates audio frames; all
 other speech is discarded. When the user utters the configured wakeword
-(e.g., "Hey Ordis"), the system immediately acknowledges (via a short
+(e.g., "Hey Assistant"), the system immediately acknowledges (via a short
 pre-rendered audio clip) and transitions to active listening mode. In active
 mode, a Voice Activity Detection (VAD) model segments speech from silence.
 When the user finishes speaking (VAD detects speech end), the captured audio

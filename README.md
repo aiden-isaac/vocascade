@@ -5,7 +5,7 @@ A hardware-agnostic, low-latency client application for conversational assistant
 ## Key Features
 
 - **Local Wakeword & VAD**: Uses lightweight ONNX models (via OpenWakeWord) and Silero VAD running directly in the browser/client to minimize network bandwidth.
-- **Dynamic TTS Effects**: Real-time DSP audio effects pipeline supporting pitch-shifting, overdrive, tremolo, bit-crushing, and stuttering for custom character voice rendering (such as Ordis' glitchy synthesised voice).
+- **Dynamic TTS Effects**: Real-time DSP audio effects pipeline supporting pitch-shifting, overdrive, tremolo, bit-crushing, and stuttering for custom character voice rendering (such as a glitchy synthesised voice).
 - **Graceful Degraded Mode**: Automatically detects network/service dropouts and degrades gracefully to a text-only interface, retrying connection on the next user turn.
 - **Barge-in Support**: Interrupt the assistant mid-response by speaking or pressing the interrupt trigger.
 - **Low-Latency Streaming**: Supports low-latency streaming backends using OpenAI-compatible HTTP SSE (Hermes Agent) or bidirectional WebSocket protocols (OpenClaw Gateway).

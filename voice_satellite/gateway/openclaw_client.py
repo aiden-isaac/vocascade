@@ -131,7 +131,8 @@ class OpenClawClient:
             params: dict = {"sessionKey": session_key}
             if run_id:
                 params["runId"] = run_id
-            await self._request("sessions.abort", params)
+            req_id = self._make_id("abort")
+            await self._request("sessions.abort", params, request_id=req_id)
             logger.info("sessions.abort sent for session_key=%s run_id=%s", session_key, run_id)
         except Exception as exc:
             logger.warning("sessions.abort failed (non-fatal): %s", exc)

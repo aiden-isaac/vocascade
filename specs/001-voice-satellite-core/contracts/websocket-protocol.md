@@ -106,7 +106,7 @@ error and are immediately closed (code 1013).
 ```json
 {
   "type": "assistant_response",
-  "text": "The server is running normally, Operator."
+  "text": "The server is running normally."
 }
 ```
 **When**: Full assistant response text is available (after all TTS chunks sent).

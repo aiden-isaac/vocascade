@@ -199,10 +199,10 @@ After bootstrap, the server logs a health report:
 ╠══════════════════════════════════════════════════╣
 ║  Config:     .env loaded ✓                       ║
 ║  STT:        tiny.en (CPU) ✓                     ║
-║  TTS:        ordis @ http://127.0.0.1:8000 ✓     ║
+║  TTS:        default @ http://127.0.0.1:8000 ✓   ║
 ║  Gateway:    ws://127.0.0.1:18789 (v3) ✓         ║
 ║  Fillers:    14 loaded (5 categories) ✓          ║
-║  Wakeword:   model.onnx (Hey Ordis) [frontend]   ║
+║  Wakeword:   model.onnx (Hey Assistant) [frontend] ║
 ║  Listening:  http://0.0.0.0:8000                 ║
 ╚══════════════════════════════════════════════════╝
 ```
@@ -222,7 +222,7 @@ class SatelliteConfig:
     gateway_agent_id: str          # default: main  (OPENCLAW_AGENT_ID)
     # Genie TTS
     tts_url: str                   # default: http://127.0.0.1:8000
-    tts_character_name: str        # default: ordis
+    tts_character_name: str        # default: default
     tts_onnx_model_dir: str        # REQUIRED for TTS
     tts_reference_audio: str       # REQUIRED for TTS
     tts_reference_text: str        # REQUIRED for TTS
