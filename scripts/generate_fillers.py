@@ -47,52 +47,18 @@ async def main() -> None:
 
     config_path = Path(args.config)
 
-    # Generic default phrases (no character-specific terms like "Ordis" or "Operator")
-    DEFAULT_FILLER_PHRASES: dict[str, list[str]] = {
-        "thinking": [
-            "Hmm.",
-            "Let me think.",
-            "One moment.",
-        ],
-        "working": [
-            "Just a second.",
-            "Running diagnostics.",
-            "Analyzing.",
-        ],
-        "slow_task": [
-            "This might take a moment.",
-            "Working on that now.",
-            "Still processing.",
-        ],
-        "acknowledge": [
-            "Yes?",
-            "I'm listening.",
-            "Go ahead.",
-        ],
-        "signoff": [
-            "Goodbye.",
-            "Talk to you later.",
-            "Farewell.",
-        ],
-    }
+    if not config_path.exists():
+        print(f"Error: Filler config file not found at {config_path}")
+        print("Please create the file or specify a valid path using --config.")
+        sys.exit(1)
 
-    if config_path.exists():
-        try:
-            with open(config_path, "r", encoding="utf-8") as f:
-                filler_phrases = json.load(f)
-            print(f"Loaded filler phrases from: {config_path}")
-        except Exception as e:
-            print(f"Error reading {config_path}: {e}. Falling back to default phrases.")
-            filler_phrases = DEFAULT_FILLER_PHRASES
-    else:
-        print(f"Config file not found. Creating default fillers file at: {config_path}")
-        try:
-            config_path.parent.mkdir(parents=True, exist_ok=True)
-            with open(config_path, "w", encoding="utf-8") as f:
-                json.dump(DEFAULT_FILLER_PHRASES, f, indent=2)
-        except Exception as e:
-            print(f"Warning: Could not save default fillers file: {e}")
-        filler_phrases = DEFAULT_FILLER_PHRASES
+    try:
+        with open(config_path, "r", encoding="utf-8") as f:
+            filler_phrases = json.load(f)
+        print(f"Loaded filler phrases from: {config_path}")
+    except Exception as e:
+        print(f"Error reading {config_path}: {e}")
+        sys.exit(1)
 
     config.filler_dir.mkdir(parents=True, exist_ok=True)
 
@@ -114,6 +80,16 @@ async def main() -> None:
         cat_dir = config.filler_dir / category
         cat_dir.mkdir(exist_ok=True)
         print(f"  [{category}]")
+
+        # Clean up files not in the JSON list of phrases for this category
+        active_slugs = {f"{phrase_to_slug(p)}.pcm" for p in phrases}
+        for file in cat_dir.glob("*.pcm"):
+            if file.name not in active_slugs:
+                try:
+                    file.unlink()
+                    print(f"    Removed old/unused clip: {file.name}")
+                except Exception as e:
+                    print(f"    Warning: Could not remove old clip {file.name}: {e}")
 
         for phrase in phrases:
             slug = phrase_to_slug(phrase)
