@@ -50,7 +50,7 @@ auto_commit:
     message: "[Spec Kit] Add tasks"
   after_implement:
     enabled: true
-    message: "[Spec Kit] Add structured logging throughout all modules. Closes #36"
+    message: "test(all): Verify server runs and complete manual testing checks. Closes #63"
   after_checklist:
     enabled: false
     message: "[Spec Kit] Add checklist"

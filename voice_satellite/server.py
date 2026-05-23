@@ -26,7 +26,9 @@ from voice_satellite.stt.whisper_stt import WhisperSTT
 from voice_satellite.tts.genie_client import GenieTTSClient
 from voice_satellite.tts.sentence_splitter import split_sentences
 from voice_satellite.audio.filler_engine import FillerEngine
+from voice_satellite.gateway.base import GatewayClient
 from voice_satellite.gateway.openclaw_client import OpenClawClient
+from voice_satellite.gateway.hermes_client import HermesClient
 from voice_satellite.session import SessionState, ConversationSession
 from voice_satellite.audio.effects import apply_effect_chain, get_character_effects_config
 
@@ -40,6 +42,21 @@ _session_lock = asyncio.Lock()
 
 # Persistent session key used for all chat interactions with the gateway
 _GATEWAY_SESSION_KEY = "voice"
+
+
+def get_gateway_client(config) -> GatewayClient:
+    """
+    Factory to instantiate either HermesClient or OpenClawClient based on config.
+    """
+    if config.gateway_backend == "openclaw":
+        return OpenClawClient(
+            gateway_url=config.gateway_url,
+            gateway_token=config.gateway_token,
+            min_protocol=config.gateway_min_protocol,
+            max_protocol=config.gateway_max_protocol
+        )
+    else:
+        return HermesClient(base_url=config.hermes_base_url)
 
 
 @asynccontextmanager
@@ -72,28 +89,31 @@ async def lifespan(app_: FastAPI):
     app_.state.filler_engine = FillerEngine(filler_dir=config.filler_dir)
     app_.state.filler_engine.load_fillers()
 
-    # Initialize persistent OpenClaw gateway client and attempt connection
-    app_.state.openclaw_client = OpenClawClient(
-        gateway_url=config.gateway_url,
-        gateway_token=config.gateway_token,
-        min_protocol=config.gateway_min_protocol,
-        max_protocol=config.gateway_max_protocol
-    )
+    # Initialize persistent gateway client and attempt connection
+    app_.state.gateway_client = get_gateway_client(config)
+    app_.state.openclaw_client = app_.state.gateway_client
     try:
-        await app_.state.openclaw_client.connect()
-        logger.info(
-            "OpenClaw gateway connected (agent: %s, protocol: v%s)",
-            config.gateway_agent_id,
-            app_.state.openclaw_client.protocol,
-        )
+        await app_.state.gateway_client.connect()
+        if config.gateway_backend == "openclaw":
+            logger.info(
+                "OpenClaw gateway connected (agent: %s, protocol: v%s)",
+                config.gateway_agent_id,
+                getattr(app_.state.gateway_client, "protocol", "unknown"),
+            )
+        else:
+            logger.info(
+                "Hermes gateway connected (base_url: %s, session_id: %s)",
+                config.hermes_base_url,
+                app_.state.gateway_client.session_id,
+            )
     except Exception as exc:
-        logger.warning("OpenClaw gateway unavailable at startup: %s — degraded mode", exc)
+        logger.warning("%s gateway unavailable at startup: %s — degraded mode", config.gateway_backend.upper(), exc)
 
     try:
         yield
     finally:
         app_.state.stt.close()
-        await app_.state.openclaw_client.close()
+        await app_.state.gateway_client.close()
 
 
 app = FastAPI(lifespan=lifespan)
@@ -335,20 +355,12 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                     # Build outgoing message — may prepend barge-in context note
                     outgoing_message = _build_outgoing_message(transcript)
 
-                    # Route directly to the configured OpenClaw agent
-                    openclaw_client: OpenClawClient = app.state.openclaw_client
-                    run_id = await openclaw_client.send_message(
-                        agent_id=config.gateway_agent_id,
-                        message=outgoing_message,
-                        mode="persistent",
-                        session_key=_GATEWAY_SESSION_KEY,
-                    )
-
                     # Stream response tokens → sentence splitter → TTS → audio chunks
                     response_chunks: list[str] = []
                     sentence_buffer = ""
 
-                    async for token in openclaw_client.stream_response(run_id):
+                    gateway_client: GatewayClient = app.state.gateway_client
+                    async for token in gateway_client.send_transcript(outgoing_message):
                         if not token:
                             continue
                         response_chunks.append(token)
@@ -374,11 +386,20 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                     raise
                 except Exception as e:
                     logger.error(f"Error in handle_audio: {e}", exc_info=True)
+                    err_msg = "Error processing audio"
+                    try:
+                        import httpx
+                        if isinstance(e, (httpx.HTTPError, ConnectionError, OSError)) or "connection" in str(e).lower() or "websocket" in str(e).lower():
+                            err_msg = "Connection to gateway backend failed"
+                            await speak_text_to_tts("I am sorry, but I cannot connect to the gateway backend.")
+                    except Exception as tts_err:
+                        logger.error("Failed to speak error response via TTS: %s", tts_err)
+
                     try:
                         async with ws_lock:
                             await websocket.send_json({
                                 "type": "error",
-                                "message": "Error processing audio"
+                                "message": err_msg
                             })
                     except Exception:
                         pass
@@ -409,10 +430,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                         if partial:
                             # Part 1 of barge-in: abort the active gateway run (best-effort)
                             try:
-                                openclaw_client = app.state.openclaw_client
-                                await openclaw_client.sessions_abort(
-                                    session_key=f"agent:{config.gateway_agent_id}:{_GATEWAY_SESSION_KEY}"
-                                )
+                                await app.state.gateway_client.sessions_abort()
                             except Exception as exc:
                                 logger.warning("sessions_abort failed (non-fatal): %s", exc)
                             # Store partial for context note on next turn
@@ -446,10 +464,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                         if partial:
                             # Part 1: abort the active gateway run
                             try:
-                                openclaw_client = app.state.openclaw_client
-                                await openclaw_client.sessions_abort(
-                                    session_key=f"agent:{config.gateway_agent_id}:{_GATEWAY_SESSION_KEY}"
-                                )
+                                await app.state.gateway_client.sessions_abort()
                             except Exception as exc:
                                 logger.warning("sessions_abort failed (non-fatal): %s", exc)
                             _interrupted_partial[0] = partial

@@ -19,6 +19,7 @@ class TestConfig(unittest.TestCase):
             "GENIE_REFERENCE_AUDIO", "GENIE_REFERENCE_TEXT", "GENIE_LANGUAGE",
             "WHISPER_MODEL", "WHISPER_LANGUAGE", "FILLER_DIR", "FILLER_THRESHOLD_SECS",
             "HOST", "PORT", "VOICE_SATELLITE_SKIP_GENIE_INIT",
+            "GATEWAY_BACKEND", "HERMES_BASE_URL",
         ]
         self.original_env = {}
         for key in self.env_keys:
@@ -56,6 +57,8 @@ class TestConfig(unittest.TestCase):
         self.assertEqual(config.gateway_agent_id, "main")
         self.assertEqual(config.gateway_min_protocol, 3)
         self.assertEqual(config.gateway_max_protocol, 4)
+        self.assertEqual(config.gateway_backend, "hermes")
+        self.assertEqual(config.hermes_base_url, "http://localhost:8642/v1")
 
         # Default values — TTS
         self.assertEqual(config.tts_url, "http://127.0.0.1:8000")
@@ -95,6 +98,8 @@ class TestConfig(unittest.TestCase):
         os.environ["OPENCLAW_AGENT_ID"] = "custom_agent"
         os.environ["GATEWAY_MIN_PROTOCOL"] = "1"
         os.environ["GATEWAY_MAX_PROTOCOL"] = "2"
+        os.environ["GATEWAY_BACKEND"] = "openclaw"
+        os.environ["HERMES_BASE_URL"] = "http://custom-hermes/v1"
         os.environ["GENIE_TTS_URL"] = "http://custom-tts"
         os.environ["GENIE_CHARACTER_NAME"] = "custom_char"
         os.environ["GENIE_ONNX_MODEL_DIR"] = "/path/onnx"
@@ -116,6 +121,8 @@ class TestConfig(unittest.TestCase):
         self.assertEqual(config.gateway_agent_id, "custom_agent")
         self.assertEqual(config.gateway_min_protocol, 1)
         self.assertEqual(config.gateway_max_protocol, 2)
+        self.assertEqual(config.gateway_backend, "openclaw")
+        self.assertEqual(config.hermes_base_url, "http://custom-hermes/v1")
         self.assertEqual(config.tts_url, "http://custom-tts")
         self.assertEqual(config.tts_character_name, "custom_char")
         self.assertEqual(config.tts_onnx_model_dir, "/path/onnx")

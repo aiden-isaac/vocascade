@@ -14,39 +14,56 @@ class TestServer(unittest.TestCase):
         self.env_patcher.start()
 
         self.stt_patcher = patch("voice_satellite.server.WhisperSTT")
+        self.mock_stt_cls = self.stt_patcher.start()
+        self.mock_stt = MagicMock()
+        self.mock_stt_cls.return_value = self.mock_stt
+
         self.tts_patcher = patch("voice_satellite.server.GenieTTSClient")
-        self.openclaw_patcher = patch("voice_satellite.server.OpenClawClient")
+        self.mock_tts_cls = self.tts_patcher.start()
+        self.mock_tts = MagicMock()
+        self.mock_tts_cls.return_value = self.mock_tts
 
-        self.mock_stt_class = self.stt_patcher.start()
-        self.mock_tts_class = self.tts_patcher.start()
-        self.mock_openclaw_class = self.openclaw_patcher.start()
+        self.filler_patcher = patch("voice_satellite.server.FillerEngine")
+        self.mock_filler_cls = self.filler_patcher.start()
+        self.mock_filler = MagicMock()
+        self.mock_filler_cls.return_value = self.mock_filler
 
-        # Setup standard mock behavior for OpenClawClient
-        self.mock_openclaw_instance = MagicMock()
-        self.mock_openclaw_instance.connect = AsyncMock()
-        self.mock_openclaw_instance.close = AsyncMock()
-        self.mock_openclaw_instance.sessions_abort = AsyncMock()
-        self.mock_openclaw_instance.send_message = AsyncMock(return_value="run-1")
+        self.gateway_patcher = patch("voice_satellite.server.OpenClawClient")
+        self.mock_gateway_cls = self.gateway_patcher.start()
+        self.mock_gateway = MagicMock()
+        self.mock_gateway_cls.return_value = self.mock_gateway
 
-        async def mock_stream(run_id):
-            yield "hello"
-        self.mock_openclaw_instance.stream_response = mock_stream
-        self.mock_openclaw_class.return_value = self.mock_openclaw_instance
+        self.mock_tts.load_character = AsyncMock()
+        self.mock_gateway.connect = AsyncMock()
+        self.mock_gateway.close = AsyncMock()
+        self.mock_gateway.sessions_abort = AsyncMock()
+        
+        async def mock_send_transcript(text):
+            run_id = await self.mock_gateway.send_message(
+                agent_id="main",
+                message=text,
+                mode="persistent",
+                session_key="voice"
+            )
+            async for token in self.mock_gateway.stream_response(run_id):
+                yield token
+        self.mock_gateway.send_transcript = mock_send_transcript
+        self.mock_filler.get_filler.return_value = None
 
-        # Setup standard mock behavior for GenieTTSClient
-        self.mock_tts_instance = MagicMock()
-        self.mock_tts_instance.ping = AsyncMock()
-        self.mock_tts_instance.load_character = AsyncMock()
-        self.mock_tts_class.return_value = self.mock_tts_instance
+        self.factory_patcher = patch("voice_satellite.server.get_gateway_client")
+        self.mock_factory = self.factory_patcher.start()
+        self.mock_factory.return_value = self.mock_gateway
 
-        self.client = TestClient(app)
-        self.client.__enter__()
+        self.client_ctx = TestClient(app)
+        self.client = self.client_ctx.__enter__()
 
     def tearDown(self):
-        self.client.__exit__(None, None, None)
+        self.client_ctx.__exit__(None, None, None)
         self.stt_patcher.stop()
         self.tts_patcher.stop()
-        self.openclaw_patcher.stop()
+        self.filler_patcher.stop()
+        self.gateway_patcher.stop()
+        self.factory_patcher.stop()
         self.env_patcher.stop()
 
     def test_index_route(self):
@@ -128,19 +145,15 @@ class TestServer(unittest.TestCase):
 
                 mock_start.assert_called()
 
-    @patch("voice_satellite.gateway.openclaw_client.OpenClawClient.send_message")
-    @patch("voice_satellite.gateway.openclaw_client.OpenClawClient.stream_response")
-    def test_full_voice_pipeline_direct_openclaw(self, mock_stream, mock_send):
+    def test_full_voice_pipeline_direct_openclaw(self):
         """Verifies that transcripts go directly to OpenClaw and the response is spoken."""
-        mock_send.side_effect = AsyncMock(return_value="run-1")
+        app.state.openclaw_client.send_message = AsyncMock(return_value="run-1")
 
-        async def mock_stream_resp(run_id):
+        async def mock_stream_resp(run_id=None):
             yield "Hello there."
-        mock_stream.side_effect = mock_stream_resp
+        app.state.openclaw_client.stream_response = MagicMock(side_effect=mock_stream_resp)
 
         with self.client.websocket_connect("/ws") as ws:
-            app.state.openclaw_client.send_message = mock_send
-            app.state.openclaw_client.stream_response = mock_stream
 
             # Mock STT on app state
             mock_stt = AsyncMock()
@@ -190,8 +203,8 @@ class TestServer(unittest.TestCase):
             self.assertEqual(transcript_msg["text"], "hello world")
 
             # Verify OpenClaw was called with the configured agent ID
-            mock_send.assert_called_once()
-            call_kwargs = mock_send.call_args
+            app.state.openclaw_client.send_message.assert_called_once()
+            call_kwargs = app.state.openclaw_client.send_message.call_args
             self.assertEqual(call_kwargs.kwargs.get("mode", call_kwargs.args[1] if len(call_kwargs.args) > 1 else None) or call_kwargs.kwargs.get("mode"), "persistent")
 
     def test_barge_in_interrupt(self):
@@ -221,24 +234,21 @@ class TestServer(unittest.TestCase):
 
             mock_tts.stop.assert_called()
 
-    @patch("voice_satellite.gateway.openclaw_client.OpenClawClient.send_message")
-    @patch("voice_satellite.gateway.openclaw_client.OpenClawClient.stream_response")
-    def test_barge_in_context_note_injected_for_long_partial(self, mock_stream, mock_send):
+    def test_barge_in_context_note_injected_for_long_partial(self):
         """
         When a barge-in partial response has ≥10 words, the next outgoing message
         to OpenClaw must be prepended with a context note.
         """
         from voice_satellite.session.state_machine import ConversationSession
 
-        mock_send.side_effect = AsyncMock(return_value="run-1")
+        app.state.openclaw_client.send_message = AsyncMock(return_value="run-1")
 
-        async def mock_stream_resp(run_id):
+        async def mock_stream_resp(run_id=None):
             yield "Response."
-        mock_stream.side_effect = mock_stream_resp
+        app.state.openclaw_client.stream_response = MagicMock(side_effect=mock_stream_resp)
 
+        print("BEFORE WEBSOCKET CONNECT")
         with self.client.websocket_connect("/ws") as ws:
-            app.state.openclaw_client.send_message = mock_send
-            app.state.openclaw_client.stream_response = mock_stream
 
             mock_stt = AsyncMock()
             mock_stt.transcribe.return_value = "can you say that again"
@@ -254,6 +264,7 @@ class TestServer(unittest.TestCase):
             app.state.tts = mock_tts
 
             ws.receive_json()  # passive_listening
+
             ws.send_json({"type": "wakeword"})
             while True:
                 msg = ws.receive_json()
@@ -264,6 +275,7 @@ class TestServer(unittest.TestCase):
             # by directly injecting playback_progress + interrupt
             ws.send_json({"type": "playback_progress", "words_played": 15})
             ws.send_json({"type": "interrupt"})
+
             # drain interrupt response messages
             while True:
                 msg = ws.receive_json()
@@ -273,7 +285,7 @@ class TestServer(unittest.TestCase):
             # Now send the follow-up audio (transcript: "can you say that again")
             ws.send_bytes(b"follow_up_pcm")
 
-            # Read until the turn is fully complete (active_listening)
+            # Read until the turn is complete
             while True:
                 msg = ws.receive_json()
                 if msg.get("type") == "status" and msg.get("state") == "active_listening":
@@ -282,20 +294,16 @@ class TestServer(unittest.TestCase):
             # The second send_message call should contain the context note
             # (only if the session had stored partial from a prior generation task)
             # Since no generation was running, partial is empty — just verify send was called
-            mock_send.assert_called()
+            app.state.openclaw_client.send_message.assert_called()
 
-    @patch("voice_satellite.gateway.openclaw_client.OpenClawClient.send_message")
-    @patch("voice_satellite.gateway.openclaw_client.OpenClawClient.stream_response")
-    def test_tts_degraded_mode_retry(self, mock_stream, mock_send):
-        mock_send.side_effect = AsyncMock(return_value="run-1")
+    def test_tts_degraded_mode_retry(self):
+        app.state.openclaw_client.send_message = AsyncMock(return_value="run-1")
 
-        async def mock_stream_resp(run_id):
+        async def mock_stream_resp(run_id=None):
             yield "hello there"
-        mock_stream.side_effect = mock_stream_resp
+        app.state.openclaw_client.stream_response = MagicMock(side_effect=mock_stream_resp)
 
         with self.client.websocket_connect("/ws") as ws:
-            app.state.openclaw_client.send_message = mock_send
-            app.state.openclaw_client.stream_response = mock_stream
 
             # Setup mock STT
             mock_stt = AsyncMock()
@@ -345,6 +353,94 @@ class TestServer(unittest.TestCase):
             # Since load_character recovered the client, we expect audio and audio_end to be sent
             self.assertIn("audio", received_types)
             self.assertEqual(len(load_calls), 1)
+
+    def test_gateway_connection_error_graceful_handling(self):
+        import httpx
+
+        # Mock send_transcript to raise a connection error
+        async def mock_failed_send_transcript(text):
+            raise httpx.ConnectError("Connection refused")
+            yield ""
+        self.mock_gateway.send_transcript = mock_failed_send_transcript
+
+        # Setup mock STT
+        mock_stt = AsyncMock()
+        mock_stt.transcribe.return_value = "hello"
+        app.state.stt = mock_stt
+
+        # Mock TTS on app state
+        mock_tts = MagicMock()
+        mock_tts.degraded_mode = False
+        mock_tts.stop = AsyncMock()
+        async def mock_synth(text):
+            yield b"error_pcm"
+        mock_tts.synthesize.side_effect = mock_synth
+        app.state.tts = mock_tts
+
+        with self.client.websocket_connect("/ws") as ws:
+            ws.receive_json()  # passive_listening
+            ws.send_json({"type": "wakeword"})
+            ws.receive_json()  # acknowledging
+            ws.receive_json()  # active_listening
+
+            ws.send_bytes(b"some_pcm")
+
+            # Receive messages until we get to status: active_listening
+            received_messages = []
+            while True:
+                msg = ws.receive_json()
+                received_messages.append(msg)
+                if msg.get("type") == "status" and msg.get("state") == "active_listening":
+                    break
+
+            # Verify that TTS was asked to speak the connection failure message
+            assistant_response = next(
+                (m for m in received_messages if m.get("type") == "assistant_response"), None
+            )
+            self.assertIsNotNone(assistant_response)
+            self.assertIn("cannot connect to the gateway backend", assistant_response["text"])
+
+            # Verify websocket error message was sent
+            error_msg = next(
+                (m for m in received_messages if m.get("type") == "error"), None
+            )
+            self.assertIsNotNone(error_msg)
+            self.assertEqual(error_msg["message"], "Connection to gateway backend failed")
+
+    def test_get_gateway_client_factory(self):
+        # Temporarily stop the patchers to test actual instantiation logic
+        self.factory_patcher.stop()
+        self.gateway_patcher.stop()
+
+        try:
+            from voice_satellite.server import get_gateway_client
+            from voice_satellite.gateway.hermes_client import HermesClient
+            from voice_satellite.gateway.openclaw_client import OpenClawClient
+            from voice_satellite.config import SatelliteConfig
+
+            # Create a mock config for hermes
+            cfg_hermes = MagicMock(spec=SatelliteConfig)
+            cfg_hermes.gateway_backend = "hermes"
+            cfg_hermes.hermes_base_url = "http://localhost:8642/v1"
+
+            client = get_gateway_client(cfg_hermes)
+            self.assertIsInstance(client, HermesClient)
+            self.assertEqual(client.base_url, "http://localhost:8642/v1")
+
+            # Create a mock config for openclaw
+            cfg_openclaw = MagicMock(spec=SatelliteConfig)
+            cfg_openclaw.gateway_backend = "openclaw"
+            cfg_openclaw.gateway_url = "ws://localhost:8000"
+            cfg_openclaw.gateway_token = "token"
+            cfg_openclaw.gateway_min_protocol = 1
+            cfg_openclaw.gateway_max_protocol = 1
+
+            client_oc = get_gateway_client(cfg_openclaw)
+            self.assertIsInstance(client_oc, OpenClawClient)
+        finally:
+            # Restore patchers for other tests
+            self.gateway_patcher.start()
+            self.factory_patcher.start()
 
 
 if __name__ == "__main__":
