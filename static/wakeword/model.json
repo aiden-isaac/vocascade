@@ -1,6 +1,6 @@
 {
-  "file": "model.onnx",
-  "name": "Hey Ordus",
+  "file": "eden_wakeword.onnx",
+  "name": "Eden",
   "sample_rate": 16000,
   "threshold": 0.5
 }
