@@ -65,17 +65,22 @@ def load_config() -> SatelliteConfig:
     # Load dotenv if available
     load_dotenv()
 
-    # Required keys — fail-fast
+    gateway_backend = os.getenv("GATEWAY_BACKEND", "hermes").strip().lower()
+
+    # Required keys — fail-fast only if openclaw is the active backend
     gateway_token = os.getenv("OPENCLAW_GATEWAY_TOKEN")
 
     missing = []
-    if not gateway_token:
+    if gateway_backend == "openclaw" and not gateway_token:
         missing.append("OPENCLAW_GATEWAY_TOKEN")
 
     if missing:
         print(f"FATAL ERROR: Missing required configuration variables: {', '.join(missing)}", file=sys.stderr)
         print("Please configure them in your .env file.", file=sys.stderr)
         sys.exit(1)
+
+    if not gateway_token:
+        gateway_token = ""
 
     # Optional TTS keys — warn and degrade
     tts_onnx_model_dir = os.getenv("GENIE_ONNX_MODEL_DIR")
@@ -103,7 +108,7 @@ def load_config() -> SatelliteConfig:
         gateway_min_protocol=int(os.getenv("GATEWAY_MIN_PROTOCOL", "3")),
         gateway_max_protocol=int(os.getenv("GATEWAY_MAX_PROTOCOL", "4")),
 
-        gateway_backend=os.getenv("GATEWAY_BACKEND", "hermes"),
+        gateway_backend=gateway_backend,
         hermes_base_url=os.getenv("HERMES_BASE_URL", "http://localhost:8642/v1"),
 
         tts_url=os.getenv("GENIE_TTS_URL", "http://127.0.0.1:8000"),

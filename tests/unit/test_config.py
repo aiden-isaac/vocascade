@@ -39,7 +39,8 @@ class TestConfig(unittest.TestCase):
             os.environ[key] = val
 
     def test_load_config_missing_required_keys_fails(self):
-        """OPENCLAW_GATEWAY_TOKEN is the only fail-fast required key."""
+        """OPENCLAW_GATEWAY_TOKEN is the only fail-fast required key when backend is openclaw."""
+        os.environ["GATEWAY_BACKEND"] = "openclaw"
         with self.assertRaises(SystemExit) as cm:
             load_config()
         self.assertEqual(cm.exception.code, 1)
