@@ -82,5 +82,29 @@ class TestHermesClient(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(kwargs["headers"]["X-Hermes-Session-Id"], client.session_id)
         self.assertEqual(kwargs["json"]["messages"], [{"role": "user", "content": "Hi"}])
 
+    @patch("voice_satellite.gateway.hermes_client.httpx.AsyncClient")
+    async def test_send_transcript_with_api_key(self, mock_async_client_cls):
+        sse_lines = [
+            'data: {"choices": [{"delta": {"content": "Hello"}}]}',
+            'data: [DONE]'
+        ]
+        
+        mock_client = MagicMock()
+        mock_response = MockResponse(sse_lines)
+        mock_client.stream.return_value = MockStreamContext(mock_response)
+        mock_async_client_cls.return_value = mock_client
+
+        client = HermesClient(base_url="http://localhost:8642/v1", api_key="secret_token")
+        
+        tokens = []
+        async for token in client.send_transcript("Hi"):
+            tokens.append(token)
+
+        self.assertEqual(tokens, ["Hello"])
+        mock_client.stream.assert_called_once()
+        args, kwargs = mock_client.stream.call_args
+        self.assertEqual(kwargs["headers"]["Authorization"], "Bearer secret_token")
+        self.assertEqual(kwargs["headers"]["X-Hermes-Session-Id"], client.session_id)
+
 if __name__ == "__main__":
     unittest.main()

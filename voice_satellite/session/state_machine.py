@@ -55,6 +55,7 @@ VALID_TRANSITIONS = {
     SessionState.SPEAKING: {
         SessionState.ACTIVE_LISTENING,
         SessionState.INTERRUPTED,
+        SessionState.FILLER_SPEAKING,
     },
     SessionState.INTERRUPTED: {
         SessionState.ACTIVE_LISTENING,
@@ -163,7 +164,8 @@ class ConversationSession:
         except asyncio.CancelledError:
             pass
         finally:
-            self.silence_timer = None
+            if self.silence_timer is asyncio.current_task():
+                self.silence_timer = None
 
     def set_generation_task(self, task: asyncio.Task) -> None:
         self.generation_task = task
@@ -192,6 +194,9 @@ class ConversationSession:
     def set_current_response(self, full_text: str) -> None:
         self._current_response_words = full_text.split()
         self._words_played_before_interrupt = 0
+
+    def append_current_response(self, text: str) -> None:
+        self._current_response_words.extend(text.split())
 
     def update_words_played(self, words_played: int) -> None:
         self._words_played_before_interrupt = words_played

@@ -49,11 +49,13 @@ If the active backend becomes unavailable, the satellite should handle the failu
 
 1. **Given** the satellite is connected to Hermes, **When** Hermes connection drops, **Then** the satellite logs the error and returns a clean error voice response to the user.
 
-### Edge Cases
+### Edge Cases & Critical Resolutions
 
-- What happens when Hermes Agent is unreachable on startup?
-- How does the system handle an invalid or expired `X-Hermes-Session-Id`?
-- What happens if the user interrupts Hermes Agent mid-stream?
+- **Hermes Agent unreachable on startup**: Checked via startup check; client reports a connection error gracefully to the user and stays online to retry.
+- **Barge-in / Mid-stream Interrupts**: Client sends `playback_progress` containing the exact cumulative word offset before sending the `interrupt` message. The server uses this to cancel the stream and construct an accurate `_interrupted_partial` context note for the next conversational turn.
+- **Wakeword Self-Ingestion**: Client marks speech segments starting in passive mode and discards them upon speech end, ensuring the spoken wakeword phrase is never sent to the LLM backend.
+- **Self-Interruption / Acoustic Feedback Loop**: A settings toggle "Enable Barge-in" (defaulting to false) was added in the web UI. If disabled, VAD speech starts/ends during assistant playback are ignored and discarded to prevent the speaker audio from triggering a barge-in loop.
+- **Word-by-word streaming latency**: Corrected sentence splitter stream chunks by passing `is_final=False` so trailing subparts are kept as incomplete sentence text and not prematurely padded with punctuation or flushed, allowing full sentences to synthesize smoothly.
 
 ## Requirements *(mandatory)*
 

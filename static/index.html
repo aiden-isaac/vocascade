@@ -103,6 +103,10 @@ button:disabled{opacity:.45;cursor:wait}
         <input type="range" id="vadNegSlider" min="10" max="60" step="5" value="25">
         <span class="val" id="vadNegVal">0.25</span>
       </div>
+      <div class="setting-row">
+        <label>Enable Barge-in</label>
+        <input type="checkbox" id="bargeInCheckbox">
+      </div>
       <div class="ww-row">
         <span class="ww-dot" id="wwDot"></span>
         <span id="wwStatus">Wakeword: not loaded</span>
@@ -125,6 +129,9 @@ let audioContext = null;
 let nextAudioStartTime = 0;
 let activeAudioSources = new Set();
 let isPassiveMode = true;
+let speechStartedInPassiveMode = false;
+let speechSegmentAccepted = false;
+let enableBargeIn = localStorage.getItem("enableBargeIn") === "true"; // default to false
 
 // Word offset tracking for barge-in context
 let wordsPlayedAtTime = {}; // audioStartTime -> wordOffset
@@ -192,6 +199,14 @@ vadNegSlider.addEventListener("input", () => {
   vadNegThresh = parseInt(vadNegSlider.value) / 100;
   vadNegVal.textContent = vadNegThresh.toFixed(2);
   localStorage.setItem("vadNegThresh", vadNegThresh);
+});
+
+const bargeInCheckbox = document.getElementById("bargeInCheckbox");
+bargeInCheckbox.checked = enableBargeIn;
+bargeInCheckbox.addEventListener("change", () => {
+  enableBargeIn = bargeInCheckbox.checked;
+  localStorage.setItem("enableBargeIn", enableBargeIn);
+  log("Barge-in " + (enableBargeIn ? "enabled" : "disabled"));
 });
 
 // ── Logging ─────────────────────────────────────────────────────────────────
@@ -652,17 +667,44 @@ async function startListening() {
       },
 
       onSpeechStart: () => {
-        if (!isPassiveMode) {
-          sendInterrupt();
-          setStatus("Listening...");
-          log("Speech started (barge-in)");
-        } else {
+        if (isPassiveMode) {
+          speechStartedInPassiveMode = true;
+          speechSegmentAccepted = false;
           log("Speech detected (passive — waiting for wakeword)");
+        } else {
+          speechStartedInPassiveMode = false;
+          const isPlayingAudio = activeAudioSources.size > 0;
+          
+          if (!isPlayingAudio || enableBargeIn) {
+            sendInterrupt();
+            setStatus("Listening...");
+            log("Speech started (barge-in)");
+            speechSegmentAccepted = true;
+          } else {
+            log("Speech started during playback (barge-in disabled — ignoring)");
+            speechSegmentAccepted = false;
+          }
         }
       },
 
       onSpeechEnd: (audio) => {
+        if (speechStartedInPassiveMode) {
+          speechStartedInPassiveMode = false;
+          log("Discarding speech segment that started in passive mode (wakeword)");
+          return;
+        }
         if (isPassiveMode) return;
+
+        const isPlayingAudio = activeAudioSources.size > 0;
+        if (isPlayingAudio && !enableBargeIn) {
+          log("Discarding speech segment captured during playback (barge-in disabled)");
+          return;
+        }
+
+        if (!speechSegmentAccepted && isPlayingAudio) {
+          log("Discarding ignored speech segment");
+          return;
+        }
 
         const pcm = floatTo16BitPCM(audio);
         log("Speech ended — " + pcm.byteLength + " PCM bytes");

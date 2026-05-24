@@ -16,8 +16,9 @@ class HermesClient(GatewayClient):
     """
     Client for Hermes Agent gateway using HTTP SSE.
     """
-    def __init__(self, base_url: str) -> None:
+    def __init__(self, base_url: str, api_key: str | None = None) -> None:
         self.base_url = base_url
+        self.api_key = api_key
         self.session_id: str | None = None
         self.client: httpx.AsyncClient | None = None
 
@@ -55,6 +56,8 @@ class HermesClient(GatewayClient):
         }
         if self.session_id:
             headers["X-Hermes-Session-Id"] = self.session_id
+        if self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
 
         payload = {
             "model": "hermes",

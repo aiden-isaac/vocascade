@@ -24,6 +24,7 @@ class SatelliteConfig:
     # Backend selection
     gateway_backend: str
     hermes_base_url: str
+    hermes_api_key: str | None
 
     # Genie TTS settings
     tts_url: str
@@ -110,6 +111,7 @@ def load_config() -> SatelliteConfig:
 
         gateway_backend=gateway_backend,
         hermes_base_url=os.getenv("HERMES_BASE_URL", "http://localhost:8642/v1"),
+        hermes_api_key=os.getenv("HERMES_API_KEY"),
 
         tts_url=os.getenv("GENIE_TTS_URL", "http://127.0.0.1:8000"),
         tts_character_name=os.getenv("GENIE_CHARACTER_NAME", "default"),

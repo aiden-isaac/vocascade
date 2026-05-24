@@ -422,10 +422,12 @@ class TestServer(unittest.TestCase):
             cfg_hermes = MagicMock(spec=SatelliteConfig)
             cfg_hermes.gateway_backend = "hermes"
             cfg_hermes.hermes_base_url = "http://localhost:8642/v1"
+            cfg_hermes.hermes_api_key = "test_key"
 
             client = get_gateway_client(cfg_hermes)
             self.assertIsInstance(client, HermesClient)
             self.assertEqual(client.base_url, "http://localhost:8642/v1")
+            self.assertEqual(client.api_key, "test_key")
 
             # Create a mock config for openclaw
             cfg_openclaw = MagicMock(spec=SatelliteConfig)

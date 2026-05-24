@@ -56,7 +56,7 @@ def get_gateway_client(config) -> GatewayClient:
             max_protocol=config.gateway_max_protocol
         )
     else:
-        return HermesClient(base_url=config.hermes_base_url)
+        return HermesClient(base_url=config.hermes_base_url, api_key=config.hermes_api_key)
 
 
 @asynccontextmanager
@@ -202,7 +202,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                 if not chunks:
                     return
 
-                session.set_current_response(text)
+                session.append_current_response(text)
 
                 async with ws_lock:
                     await websocket.send_json({"type": "assistant_response", "text": text})
@@ -331,6 +331,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
 
             async def handle_audio(audio_data: bytes) -> None:
                 try:
+                    session.set_current_response("")
                     session.state = SessionState.TRANSCRIBING
 
                     stt_client = getattr(app.state, "stt", None)
@@ -367,7 +368,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                         sentence_buffer += token
 
                         # Flush complete sentences to TTS as they arrive
-                        sentences = split_sentences(sentence_buffer)
+                        sentences = split_sentences(sentence_buffer, is_final=False)
                         if len(sentences) > 1:
                             # All sentences except the last (which may be incomplete)
                             for s in sentences[:-1]:

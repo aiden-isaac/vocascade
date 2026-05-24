@@ -38,6 +38,15 @@ class TestSession(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(session.state, SessionState.SPEAKING)
         self.assertTrue(session.is_busy())
         
+        # speaking -> filler_speaking
+        session.state = SessionState.FILLER_SPEAKING
+        self.assertEqual(session.state, SessionState.FILLER_SPEAKING)
+        self.assertTrue(session.is_busy())
+
+        # filler_speaking -> speaking
+        session.state = SessionState.SPEAKING
+        self.assertEqual(session.state, SessionState.SPEAKING)
+
         # speaking -> interrupted
         session.state = SessionState.INTERRUPTED
         self.assertEqual(session.state, SessionState.INTERRUPTED)
@@ -90,6 +99,63 @@ class TestSession(unittest.IsolatedAsyncioTestCase):
         session.cancel_silence_timer()
         self.assertIsNone(session.silence_timer)
         await asyncio.sleep(0.01) # Give loop time to clean up if any
+
+    async def test_silence_timer_race_condition(self):
+        # Create a session with a small timeout
+        session = ConversationSession(silence_timeout=0.01)
+        
+        # Start the first silence timer
+        session.start_silence_timer()
+        task1 = session.silence_timer
+        self.assertIsNotNone(task1)
+        
+        # Cancel the first silence timer (simulating transitioning out of ACTIVE_LISTENING)
+        session.cancel_silence_timer()
+        self.assertIsNone(session.silence_timer)
+        
+        # Immediately start a second silence timer (simulating entering ACTIVE_LISTENING again quickly)
+        session.start_silence_timer()
+        task2 = session.silence_timer
+        self.assertIsNotNone(task2)
+        self.assertIsNot(task1, task2)
+        
+        # Let the event loop execute to allow task1 to run its finally block
+        await asyncio.sleep(0.005)
+        
+        # Verify task2's reference is preserved and not cleared by task1's finally cleanup
+        self.assertEqual(session.silence_timer, task2)
+        
+        # Cleanup
+        session.cancel_silence_timer()
+        self.assertIsNone(session.silence_timer)
+
+    def test_current_response_tracking(self):
+        session = ConversationSession()
+        session.set_current_response("Hello how are you.")
+        self.assertEqual(session._current_response_words, ["Hello", "how", "are", "you."])
+        self.assertEqual(session._words_played_before_interrupt, 0)
+        
+        session.append_current_response("I am doing well today.")
+        self.assertEqual(
+            session._current_response_words,
+            ["Hello", "how", "are", "you.", "I", "am", "doing", "well", "today."]
+        )
+
+    async def test_cancel_generation_barge_in(self):
+        session = ConversationSession()
+        session.set_current_response("Hello friend.")
+        session.append_current_response("How are you?")
+        
+        # Mock active generation task
+        async def dummy_task():
+            await asyncio.sleep(1)
+        task = asyncio.create_task(dummy_task())
+        session.set_generation_task(task)
+        
+        session.update_words_played(3)
+        partial = await session.cancel_generation()
+        self.assertEqual(partial, "Hello friend. How")
+        self.assertIsNone(session.generation_task)
 
 if __name__ == "__main__":
     unittest.main()

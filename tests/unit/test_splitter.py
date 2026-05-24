@@ -33,6 +33,14 @@ class TestSentenceSplitter(unittest.TestCase):
         self.assertEqual(chunks[1], SentenceChunk("— PURGE —.", True))
         self.assertEqual(chunks[2], SentenceChunk("back.", False))
 
+    def test_streaming_splitter_keeps_trailing_incomplete(self):
+        text = "Hello friend. How are you today? I am"
+        chunks = split_sentences(text, is_final=False)
+        self.assertEqual(len(chunks), 3)
+        self.assertEqual(chunks[0], SentenceChunk("Hello friend.", False))
+        self.assertEqual(chunks[1], SentenceChunk("How are you today?", False))
+        self.assertEqual(chunks[2], SentenceChunk("I am", False))
+
     def test_empty_and_none(self):
         self.assertEqual(split_sentences(""), [])
         self.assertEqual(split_sentences(None), [])

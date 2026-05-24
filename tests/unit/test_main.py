@@ -32,6 +32,7 @@ class TestMainBootstrap(unittest.IsolatedAsyncioTestCase):
             gateway_max_protocol=4,
             gateway_backend="hermes",
             hermes_base_url="http://localhost:8642/v1",
+            hermes_api_key=None,
             tts_url="http://127.0.0.1:8000",
             tts_character_name="default",
             tts_onnx_model_dir="/path/onnx",
