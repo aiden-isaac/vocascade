@@ -8,6 +8,8 @@ from concurrent.futures import ThreadPoolExecutor
 import numpy as np
 from faster_whisper import WhisperModel
 
+from voice_satellite.telemetry import LatencyTracker
+
 logger = logging.getLogger("voice_satellite.stt")
 
 class WhisperSTT:
@@ -29,7 +31,7 @@ class WhisperSTT:
         )
         logger.info(f"Loaded faster-whisper model '{model_name}'")
 
-    async def transcribe(self, pcm_bytes: bytes) -> str:
+    async def transcribe(self, pcm_bytes: bytes, *, session: str = "") -> str:
         """
         Transcribes 16-bit PCM bytes to text asynchronously.
         Guarantees that inference runs on a background thread pool and that
@@ -39,12 +41,16 @@ class WhisperSTT:
             return ""
 
         async with self.lock:
+            tracker = LatencyTracker("stt", session)
+            tracker.start()
             loop = asyncio.get_running_loop()
-            return await loop.run_in_executor(
+            result = await loop.run_in_executor(
                 self.executor,
                 self._transcribe_sync,
                 pcm_bytes
             )
+            tracker.record()
+            return result
 
     def _transcribe_sync(self, pcm_bytes: bytes) -> str:
         """Synchronous CPU transcription called on the executor thread."""

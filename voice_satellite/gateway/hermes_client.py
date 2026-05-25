@@ -9,6 +9,7 @@ from typing import AsyncIterator
 import httpx
 
 from voice_satellite.gateway.base import GatewayClient
+from voice_satellite.telemetry import LatencyTracker
 
 logger = logging.getLogger("voice_satellite.gateway")
 
@@ -40,7 +41,7 @@ class HermesClient(GatewayClient):
             await self.client.aclose()
             self.client = None
 
-    async def send_transcript(self, text: str) -> AsyncIterator[str]:
+    async def send_transcript(self, text: str, *, session: str = "") -> AsyncIterator[str]:
         """
         Sends the user's transcript to the backend and yields streamed response tokens/text.
         """
@@ -65,6 +66,10 @@ class HermesClient(GatewayClient):
             "stream": True,
         }
 
+        tracker = LatencyTracker("llm_first_token", session)
+        tracker.start()
+        _first_token_recorded = False
+
         try:
             async with self.client.stream("POST", url, headers=headers, json=payload, timeout=60.0) as response:
                 response.raise_for_status()
@@ -83,6 +88,9 @@ class HermesClient(GatewayClient):
                                 delta = choices[0].get("delta", {})
                                 content = delta.get("content", "")
                                 if content:
+                                    if not _first_token_recorded:
+                                        tracker.record()
+                                        _first_token_recorded = True
                                     yield content
                         except json.JSONDecodeError:
                             logger.warning("Failed to decode SSE JSON chunk: %s", data_str)

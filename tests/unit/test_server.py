@@ -38,7 +38,7 @@ class TestServer(unittest.TestCase):
         self.mock_gateway.close = AsyncMock()
         self.mock_gateway.sessions_abort = AsyncMock()
         
-        async def mock_send_transcript(text):
+        async def mock_send_transcript(text, **kwargs):
             run_id = await self.mock_gateway.send_message(
                 agent_id="main",
                 message=text,
@@ -165,7 +165,7 @@ class TestServer(unittest.TestCase):
             mock_tts.degraded_mode = False
             mock_tts.stop = AsyncMock()
 
-            async def mock_synth(text):
+            async def mock_synth(text, **kwargs):
                 yield b"audio_chunk_1"
             mock_tts.synthesize.side_effect = mock_synth
             app.state.tts = mock_tts
@@ -258,7 +258,7 @@ class TestServer(unittest.TestCase):
             mock_tts.degraded_mode = False
             mock_tts.stop = AsyncMock()
 
-            async def mock_synth(text):
+            async def mock_synth(text, **kwargs):
                 yield b"chunk"
             mock_tts.synthesize.side_effect = mock_synth
             app.state.tts = mock_tts
@@ -327,7 +327,7 @@ class TestServer(unittest.TestCase):
             mock_tts.load_character = mock_load_character
 
             # Mock synthesize to yield mock audio chunks
-            async def mock_synth(text):
+            async def mock_synth(text, **kwargs):
                 yield b"audio_chunk_1"
             mock_tts.synthesize.side_effect = mock_synth
             app.state.tts = mock_tts
@@ -358,7 +358,7 @@ class TestServer(unittest.TestCase):
         import httpx
 
         # Mock send_transcript to raise a connection error
-        async def mock_failed_send_transcript(text):
+        async def mock_failed_send_transcript(text, **kwargs):
             raise httpx.ConnectError("Connection refused")
             yield ""
         self.mock_gateway.send_transcript = mock_failed_send_transcript
@@ -372,7 +372,7 @@ class TestServer(unittest.TestCase):
         mock_tts = MagicMock()
         mock_tts.degraded_mode = False
         mock_tts.stop = AsyncMock()
-        async def mock_synth(text):
+        async def mock_synth(text, **kwargs):
             yield b"error_pcm"
         mock_tts.synthesize.side_effect = mock_synth
         app.state.tts = mock_tts

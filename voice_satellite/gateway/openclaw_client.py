@@ -14,6 +14,7 @@ from cryptography.hazmat.primitives import serialization
 
 from voice_satellite.gateway.auth import load_or_generate_keypair, sign_challenge
 from voice_satellite.gateway.base import GatewayClient
+from voice_satellite.telemetry import LatencyTracker
 
 logger = logging.getLogger("voice_satellite.gateway")
 
@@ -150,10 +151,14 @@ class OpenClawClient(GatewayClient):
         except Exception as exc:
             logger.warning("sessions.abort failed (non-fatal): %s", exc)
 
-    async def send_transcript(self, text: str) -> AsyncIterator[str]:
+    async def send_transcript(self, text: str, *, session: str = "") -> AsyncIterator[str]:
         """
         Sends the user's transcript to the backend and yields streamed response tokens/text.
         """
+        tracker = LatencyTracker("llm_first_token", session)
+        tracker.start()
+        _first_token_recorded = False
+
         run_id = await self.send_message(
             agent_id=self.agent_id,
             message=text,
@@ -161,6 +166,9 @@ class OpenClawClient(GatewayClient):
             session_key=self.session_key,
         )
         async for token in self.stream_response(run_id=run_id):
+            if token and not _first_token_recorded:
+                tracker.record()
+                _first_token_recorded = True
             yield token
 
     async def ensure_connected(self) -> None:

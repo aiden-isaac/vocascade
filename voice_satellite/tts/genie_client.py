@@ -7,6 +7,8 @@ import logging
 from typing import AsyncIterator
 import aiohttp
 
+from voice_satellite.telemetry import LatencyTracker
+
 logger = logging.getLogger("voice_satellite.tts")
 
 class GenieTTSClient:
@@ -78,7 +80,7 @@ class GenieTTSClient:
             logger.warning(f"Genie TTS server unreachable during character load: {e}. Degrading gracefully.")
             self.degraded_mode = True
 
-    async def synthesize(self, text: str) -> AsyncIterator[bytes]:
+    async def synthesize(self, text: str, *, session: str = "") -> AsyncIterator[bytes]:
         """
         Streams synthesized PCM bytes back from Genie TTS.
         Gracefully handles network errors and responds to cancellation.
@@ -112,6 +114,10 @@ class GenieTTSClient:
             "split_sentence": True
         }
 
+        tts_tracker = LatencyTracker("tts_first_chunk", session)
+        tts_tracker.start()
+        _first_chunk_recorded = False
+
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.post(f"{self.tts_url}/tts", json=payload) as response:
@@ -128,6 +134,9 @@ class GenieTTSClient:
                         
                         send_len = len(buffer) - (len(buffer) % 2)
                         if send_len > 0:
+                            if not _first_chunk_recorded:
+                                tts_tracker.record()
+                                _first_chunk_recorded = True
                             yield bytes(buffer[:send_len])
                             del buffer[:send_len]
 

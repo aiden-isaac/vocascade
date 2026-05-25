@@ -14,6 +14,7 @@ import base64
 import json
 import logging
 import os
+import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 import numpy as np
@@ -31,6 +32,7 @@ from voice_satellite.gateway.openclaw_client import OpenClawClient
 from voice_satellite.gateway.hermes_client import HermesClient
 from voice_satellite.session import SessionState, ConversationSession
 from voice_satellite.audio.effects import apply_effect_chain, get_character_effects_config
+from voice_satellite.telemetry import LatencyTracker
 
 logger = logging.getLogger("voice_satellite.server")
 
@@ -159,7 +161,8 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
     try:
         async with _session_lock:
             await websocket.accept()
-            logger.info("WebSocket connection accepted")
+            _session_id = uuid.uuid4().hex[:8]
+            logger.info("WebSocket connection accepted (session=%s)", _session_id)
 
             # Set up the callback to send state updates over WebSocket
             def on_state_change(old_state: SessionState, new_state: SessionState) -> None:
@@ -197,7 +200,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                             "sample_rate": 32000
                         })
 
-            async def speak_text_to_tts(text: str) -> None:
+            async def speak_text_to_tts(text: str, *, _e2e_tracker: LatencyTracker | None = None) -> None:
                 chunks = split_sentences(text)
                 if not chunks:
                     return
@@ -224,7 +227,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                     return
 
                 first_chunk = chunks[0]
-                first_iter = tts_client.synthesize(first_chunk.text)
+                first_iter = tts_client.synthesize(first_chunk.text, session=_session_id)
 
                 async def get_next_item(it):
                     try:
@@ -265,6 +268,9 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                 if first_audio:
                     if first_chunk.tagged:
                         first_audio = apply_effect_chain(first_audio, effects_config)
+                    if _e2e_tracker is not None:
+                        _e2e_tracker.record()
+                        _e2e_tracker = None  # record only once
                     async with ws_lock:
                         await websocket.send_json({
                             "type": "audio",
@@ -288,7 +294,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                 current_word_offset += len(first_chunk.text.split())
 
                 for chunk in chunks[1:]:
-                    async for audio_chunk in tts_client.synthesize(chunk.text):
+                    async for audio_chunk in tts_client.synthesize(chunk.text, session=_session_id):
                         if audio_chunk:
                             if chunk.tagged:
                                 audio_chunk = apply_effect_chain(audio_chunk, effects_config)
@@ -334,9 +340,13 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                     session.set_current_response("")
                     session.state = SessionState.TRANSCRIBING
 
+                    # Start end-to-end timer (wakeword received → first audio sent)
+                    e2e_tracker = LatencyTracker("end_to_end", _session_id)
+                    e2e_tracker.start()
+
                     stt_client = getattr(app.state, "stt", None)
                     if stt_client:
-                        transcript = await stt_client.transcribe(audio_data)
+                        transcript = await stt_client.transcribe(audio_data, session=_session_id)
                     else:
                         transcript = ""
 
@@ -359,9 +369,12 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                     # Stream response tokens → sentence splitter → TTS → audio chunks
                     response_chunks: list[str] = []
                     sentence_buffer = ""
+                    sentence_index = 0
+                    sentence_buffer_start = LatencyTracker("sentence_buffer", _session_id)
+                    sentence_buffer_start.start()
 
                     gateway_client: GatewayClient = app.state.gateway_client
-                    async for token in gateway_client.send_transcript(outgoing_message):
+                    async for token in gateway_client.send_transcript(outgoing_message, session=_session_id):
                         if not token:
                             continue
                         response_chunks.append(token)
@@ -372,13 +385,21 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                         if len(sentences) > 1:
                             # All sentences except the last (which may be incomplete)
                             for s in sentences[:-1]:
-                                await speak_text_to_tts(s.text)
+                                sentence_buffer_start.record(sentence_index=sentence_index)
+                                sentence_index += 1
+                                await speak_text_to_tts(s.text, _e2e_tracker=e2e_tracker)
+                                # After first audio is sent, e2e_tracker is consumed
+                                e2e_tracker = None  # type: ignore[assignment]
+                                # Start timer for next sentence's buffer wait
+                                sentence_buffer_start = LatencyTracker("sentence_buffer", _session_id)
+                                sentence_buffer_start.start()
                             # Keep the trailing incomplete sentence in the buffer
                             sentence_buffer = sentences[-1].text if sentences[-1].text else ""
 
                     # Flush any remaining text after the stream ends
                     if sentence_buffer.strip():
-                        await speak_text_to_tts(sentence_buffer)
+                        sentence_buffer_start.record(sentence_index=sentence_index)
+                        await speak_text_to_tts(sentence_buffer, _e2e_tracker=e2e_tracker)
 
                     session.state = SessionState.ACTIVE_LISTENING
 
