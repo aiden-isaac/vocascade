@@ -8,20 +8,20 @@
 
 ## Phase 1 — Setup
 
-- [ ] T001 Create `specs/003-latency-instrumentation/` directory with spec.md, plan.md, and tasks.md
+- [x] T001 Create `specs/003-latency-instrumentation/` directory with spec.md, plan.md, and tasks.md
 
 ---
 
 ## Phase 2 — Foundational: LatencyTracker helper
 
-- [ ] T002 Create `voice_satellite/telemetry.py` with `LatencyTracker` class
+- [x] T002 Create `voice_satellite/telemetry.py` with `LatencyTracker` class
   - Class accepts `stage: str`, `session: str`, and optional extra kwargs at construction
   - `start()` records `time.perf_counter()` as `_t0`
   - `record(**extra)` computes `duration_ms = int((perf_counter() - _t0) * 1000)`, then emits `[LATENCY] stage=<stage> duration_ms=<ms> <extra k=v pairs> session=<session>` at `logging.INFO` via the `voice_satellite.telemetry` logger
   - If `os.environ.get("LATENCY_LOGGING", "").lower() == "false"`, `record()` is a no-op
   - No imports outside stdlib (`logging`, `os`, `time`)
 
-- [ ] T003 [P] Create `tests/unit/test_telemetry.py` with unit tests for `LatencyTracker`
+- [x] T003 [P] Create `tests/unit/test_telemetry.py` with unit tests for `LatencyTracker`
   - Test 1: `start()` + `record()` emits a log line matching `[LATENCY] stage=stt duration_ms=\d+ session=test123` (use `caplog` or `unittest.mock`)
   - Test 2: `record(sentence_index=0)` includes `sentence_index=0` in the log line before `session=`
   - Test 3: With `LATENCY_LOGGING=false` in env, `record()` emits no log lines (assert logger not called / caplog is empty)
