@@ -1,12 +1,13 @@
-# Feature Specification: Hermes Gateway Integration
+# Feature Specification: Hermes Gateway Integration & Pipeline Optimizations
 
 **Feature Branch**: `feat/hermes-gateway`
 
 **Created**: 2026-05-21
+**Updated**: 2026-05-29
 
 **Status**: Draft
 
-**Input**: User description: "Switch to Hermes Agent as primary backend instead of OpenClaw. OpenClaw should not be deleted, keep it available as a swappable backend. Hermes Agent exposes an OpenAI-compatible HTTP SSE API (default port 8642) with session continuity via X-Hermes-Session-Id, and fits the voice streaming model better than OpenClaw's push-based WebSocket protocol."
+**Input**: User description: "Switch to Hermes Agent as primary backend instead of OpenClaw. OpenClaw should not be deleted, keep it available as a swappable backend. Hermes Agent exposes an OpenAI-compatible HTTP SSE API (default port 8642) with session continuity via X-Hermes-Session-Id, and fits the voice streaming model better than OpenClaw's push-based WebSocket protocol. Optimize Voice Satellite latency by implementing a parallel ordered TTS queue, persistent HTTP client sessions, clause-level splitting, and contextual barge-in memory."
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -49,13 +50,43 @@ If the active backend becomes unavailable, the satellite should handle the failu
 
 1. **Given** the satellite is connected to Hermes, **When** Hermes connection drops, **Then** the satellite logs the error and returns a clean error voice response to the user.
 
+---
+
+### User Story 4 - Parallel Ordered TTS & Low-Latency Pipeline (Priority: P1)
+
+Users experience fluid, uninterrupted conversational speech where successive sentences are generated in parallel and played back with sub-100ms gaps.
+
+**Why this priority**: Eliminates the "dead air" gap between sentences by overlap-synthesizing future sentences while current ones are streaming/playing.
+**Independent Test**: Monitor server logs and confirm that TTS synthesis for Sentence 2 is initiated before Sentence 1 has finished playing back, and that audio frames are sent over the WebSocket in the correct sequence.
+
+**Acceptance Scenarios**:
+
+1. **Given** the LLM generates a multi-sentence response, **When** Sentence 1 begins playing back on the client, **Then** Sentence 2 starts TTS synthesis concurrently on the backend.
+2. **Given** concurrent TTS tasks finish out-of-order, **When** delivering audio payloads to the client, **Then** the server buffers and delivers them strictly in the original sentence sequence order.
+3. **Given** sequential TTS generation requests, **When** connecting to the Genie backend, **Then** the client reuses a persistent HTTP session, avoiding TCP connection handshake overhead for each call.
+
+---
+
+### User Story 5 - Contextual Barge-in & Interruption Memory (Priority: P2)
+
+When users interrupt the assistant, the assistant remembers exactly what it said up to the point of interruption and handles the next conversational turn contextually.
+
+**Why this priority**: Prevents context loss. Currently, session ID rotation clears all short-term memory.
+**Independent Test**: Interrupt the assistant mid-sentence. Send a follow-up query like "Why did you stop at [word]?" or "What was the rest of that sentence?" and verify that the LLM has the partial assistant output in its chat history.
+
+**Acceptance Scenarios**:
+
+1. **Given** the assistant is playing back audio, **When** the user starts speaking (triggering barge-in), **Then** all pending token-consumer tasks and TTS synthesis tasks are cancelled immediately.
+2. **Given** a user interruption, **When** updating session history, **Then** the server records the exact text spoken before the interruption as the assistant's turn, appended with `[Interrupted by user]`, instead of losing all conversation state.
+
 ### Edge Cases & Critical Resolutions
 
 - **Hermes Agent unreachable on startup**: Checked via startup check; client reports a connection error gracefully to the user and stays online to retry.
 - **Barge-in / Mid-stream Interrupts**: Client sends `playback_progress` containing the exact cumulative word offset before sending the `interrupt` message. The server uses this to cancel the stream and construct an accurate `_interrupted_partial` context note for the next conversational turn.
 - **Wakeword Self-Ingestion**: Client marks speech segments starting in passive mode and discards them upon speech end, ensuring the spoken wakeword phrase is never sent to the LLM backend.
 - **Self-Interruption / Acoustic Feedback Loop**: A settings toggle "Enable Barge-in" (defaulting to false) was added in the web UI. If disabled, VAD speech starts/ends during assistant playback are ignored and discarded to prevent the speaker audio from triggering a barge-in loop.
-- **Word-by-word streaming latency**: Corrected sentence splitter stream chunks by passing `is_final=False` so trailing subparts are kept as incomplete sentence text and not prematurely padded with punctuation or flushed, allowing full sentences to synthesize smoothly.
+- **Clause-Level Sentence Splitting**: For long sentences without punctuation, the sentence splitter breaks text at clauses (commas, semicolons, colons, em-dashes) if the accumulated clause contains 8 or more words. This ensures prompt TTS synthesis of the first segment.
+- **Redundant splitting / Double Splitting**: Disable re-splitting within `speak_text_to_tts` and disable the `split_sentence` flag in the external Genie TTS payload, keeping sentence-splitting logic exclusively in the server coordinator level.
 
 ## Requirements *(mandatory)*
 
@@ -67,22 +98,32 @@ If the active backend becomes unavailable, the satellite should handle the failu
 - **FR-004**: System MUST maintain session continuity across requests using the `X-Hermes-Session-Id` header.
 - **FR-005**: System MUST preserve existing OpenClaw integration code and make it conditionally loadable.
 - **FR-006**: System MUST gracefully handle connection errors to the backend.
+- **FR-007**: System MUST implement a concurrent producer-consumer architecture using an asynchronous queue to decouple token streaming from audio generation.
+- **FR-008**: System MUST support parallel TTS synthesis with ordered client delivery utilizing sequence numbers.
+- **FR-009**: System MUST reuse a single persistent `aiohttp.ClientSession` instance inside `GenieTTSClient` for all synthesis operations.
+- **FR-010**: System MUST support clause-level splitting (e.g. splitting on `,`, `;`, `:`, `—`) in the sentence splitter when the segment length exceeds 8 words.
+- **FR-011**: System MUST record the partial assistant transcript actually delivered to the client before an interruption occurs, appending `[Interrupted by user]` to the conversation context without resetting the session context.
+- **FR-012**: System MUST bypass secondary sentence splitting in the TTS client flow.
 
 ### Key Entities
 
 - **Gateway Client**: An abstraction over the AI backend (Hermes or OpenClaw) that handles sending transcripts and receiving streamed token responses.
+- **TTSTaskManager**: An orchestrator that manages parallel TTS synthesis tasks and delivers the resulting audio payloads to the client strictly in order.
+- **Sentence Splitter**: A utility that segments raw text stream tokens into speakable clauses and sentences.
 
 ## Success Criteria *(mandatory)*
 
 ### Measurable Outcomes
 
 - **SC-001**: Users can switch between Hermes and OpenClaw backends by changing a single configuration value and restarting the server.
-- **SC-002**: Voice response latency (time to first audio chunk) with Hermes is equivalent to or better than OpenClaw.
-- **SC-003**: Conversations maintain state/context seamlessly across multiple turns using session IDs.
-- **SC-004**: Codebase contains no legacy OpenClaw logic in the main path; all backend logic is abstracted behind a common interface.
+- **SC-002**: Voice response latency (time to first audio chunk) with Hermes is under 400ms.
+- **SC-003**: Conversations maintain state/context seamlessly across multiple turns using session IDs, even after barge-in/interruption.
+- **SC-004**: Inter-sentence delay/gap is reduced to less than 50ms on a standard CPU host setup.
+- **SC-005**: Genie TTS connection overhead is reduced by avoiding repeated TCP/TLS setups (saving 20-50ms per sentence).
 
 ## Assumptions
 
 - Hermes Agent API is fully OpenAI compatible for chat completions (`/v1/chat/completions`).
 - `X-Hermes-Session-Id` can be any valid string generated by the client to group requests.
 - The existing OpenClaw client will remain unchanged and functional as long as it's selected in the config.
+

@@ -1,7 +1,7 @@
-# Implementation Tasks: Hermes Gateway Integration
+# Implementation Tasks: Hermes Gateway Integration & Pipeline Optimizations
 
 ## Context
-**Feature**: Hermes Gateway Integration
+**Feature**: Hermes Gateway Integration & Pipeline Optimizations
 **Plan**: [specs/002-hermes-gateway/plan.md](specs/002-hermes-gateway/plan.md)
 **Status**: Pending
 
@@ -26,7 +26,24 @@
 - [x] **T011**: Ensure connection errors from either client are caught gracefully and passed to the TTS error-reporting flow.
 - [x] **T012**: Update `tests/unit/test_server.py` to patch the gateway client and verify the correct factory instantiation and streaming behavior.
 
-## Phase 4: Final Verification
+## Phase 4: Final Verification of Gateway
 **Goal**: Validate that everything runs end-to-end.
 - [x] **T013**: Run the complete test suite.
 - [x] **T014**: Manual verification: start the server with Hermes, connect UI, speak, and interrupt. Verify logs for `X-Hermes-Session-Id` and latency.
+
+## Phase 5: Pipeline & TTS Optimizations (US4)
+**Goal**: Implement parallel ordered TTS queuing, persistent HTTP client sessions, clause-level splitting, and eliminate double-splitting.
+- [ ] **T015** [US4]: Refactor `voice_satellite/tts/genie_client.py` to use a persistent `aiohttp.ClientSession` reused across requests, closing it gracefully on server shutdown.
+- [ ] **T016** [US4]: Update `voice_satellite/tts/sentence_splitter.py` to support clause-level splitting on `,`, `;`, `:`, `—` when the accumulated segment exceeds 8 words.
+- [ ] **T017** [US4]: Remove redundant double-splitting logic inside `voice_satellite/server.py`'s `speak_text_to_tts` and disable Genie payload `split_sentence` flag.
+- [ ] **T018** [P] [US4]: Implement `TTSTaskManager` in `voice_satellite/tts/manager.py` to run parallel TTS generation tasks and buffer/stream results over WebSocket in sequential order.
+- [ ] **T019** [US4]: Integrate `TTSTaskManager` and the non-blocking token producer/consumer `asyncio.Queue` loop inside `voice_satellite/server.py`.
+- [ ] **T020** [P] [US4]: Create `tests/unit/test_sentence_splitter.py` verifying clause-level splitting rules.
+- [ ] **T021** [P] [US4]: Create `tests/unit/test_tts_manager.py` verifying parallel synthesis task ordering and buffer delivery.
+
+## Phase 6: Contextual Barge-in & Interruption Memory (US5)
+**Goal**: Retain session memory on barge-in/interruption by avoiding session rotation and calculating the partial text spoken.
+- [ ] **T022** [US5]: Refactor barge-in handling in `voice_satellite/server.py` to preserve the `X-Hermes-Session-Id` and avoid session ID rotation.
+- [ ] **T023** [US5]: Track the exact cumulative word offset of the audio played back, and compute the partial text spoken before interruption in `voice_satellite/server.py`.
+- [ ] **T024** [US5]: Store the partial interrupted response in the session history under assistant role, appended with `[Interrupted by user]`, inside `voice_satellite/server.py`.
+- [ ] **T025** [US5]: Perform manual verification of barge-in contextual retention.
