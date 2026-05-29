@@ -24,3 +24,9 @@ genie_tts_env/
 genie_input/
 genie_profiles/
 GenieData/
+
+# Scratch files and test scripts
+scratch/
+scripts/test_voice_profile.py
+scripts/voice_test_output/
+*.wav
