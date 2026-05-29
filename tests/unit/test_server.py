@@ -244,10 +244,9 @@ class TestServer(unittest.TestCase):
         app.state.openclaw_client.send_message = AsyncMock(return_value="run-1")
 
         async def mock_stream_resp(run_id=None):
-            yield "Response."
+            yield "Response word one two three four five six seven eight nine ten eleven twelve."
         app.state.openclaw_client.stream_response = MagicMock(side_effect=mock_stream_resp)
 
-        print("BEFORE WEBSOCKET CONNECT")
         with self.client.websocket_connect("/ws") as ws:
 
             mock_stt = AsyncMock()
@@ -271,9 +270,17 @@ class TestServer(unittest.TestCase):
                 if msg.get("type") == "status" and msg.get("state") == "active_listening":
                     break
 
+            # Start a generation first
+            ws.send_bytes(b"first_pcm")
+
+            # Wait until it is speaking
+            while True:
+                msg = ws.receive_json()
+                if msg.get("type") == "status" and msg.get("state") == "speaking":
+                    break
+
             # Simulate a barge-in that had a long partial response (≥10 words)
-            # by directly injecting playback_progress + interrupt
-            ws.send_json({"type": "playback_progress", "words_played": 15})
+            ws.send_json({"type": "playback_progress", "words_played": 11})
             ws.send_json({"type": "interrupt"})
 
             # drain interrupt response messages
@@ -291,10 +298,11 @@ class TestServer(unittest.TestCase):
                 if msg.get("type") == "status" and msg.get("state") == "active_listening":
                     break
 
-            # The second send_message call should contain the context note
-            # (only if the session had stored partial from a prior generation task)
-            # Since no generation was running, partial is empty — just verify send was called
-            app.state.openclaw_client.send_message.assert_called()
+            # Verify send_message was called and the second call prepended the context note
+            self.assertEqual(app.state.openclaw_client.send_message.call_count, 2)
+            last_call_args = app.state.openclaw_client.send_message.call_args_list[-1]
+            outgoing_text = last_call_args.kwargs.get("message") or last_call_args[1].get("message")
+            self.assertIn("[System Note: The last assistant response was interrupted by the user after saying:", outgoing_text)
 
     def test_tts_degraded_mode_retry(self):
         app.state.openclaw_client.send_message = AsyncMock(return_value="run-1")
