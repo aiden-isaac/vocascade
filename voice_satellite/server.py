@@ -348,6 +348,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                         return
 
                     session.last_transcript = transcript
+                    session.history.append({"role": "user", "content": transcript})
                     session.reset_silence_timer()
 
                     async with ws_lock:
@@ -513,6 +514,11 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                         producer_task.cancel()
                         consumer_task.cancel()
 
+                    # Successful generation:
+                    full_response = "".join(response_chunks)
+                    if full_response.strip():
+                        session.history.append({"role": "assistant", "content": full_response})
+
                     session.state = SessionState.ACTIVE_LISTENING
 
                 except asyncio.CancelledError:
@@ -569,6 +575,9 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                                 logger.warning("sessions_abort failed (non-fatal): %s", exc)
                             # Store partial for context note on next turn
                             _interrupted_partial[0] = partial
+                            if session.history and session.history[-1]["role"] == "assistant":
+                                session.history.pop()
+                            session.history.append({"role": "assistant", "content": f"{partial} [Interrupted by user]"})
 
                         tts_client = getattr(app.state, "tts", None)
                         if tts_client:
@@ -602,6 +611,9 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                             except Exception as exc:
                                 logger.warning("sessions_abort failed (non-fatal): %s", exc)
                             _interrupted_partial[0] = partial
+                            if session.history and session.history[-1]["role"] == "assistant":
+                                session.history.pop()
+                            session.history.append({"role": "assistant", "content": f"{partial} [Interrupted by user]"})
 
                         tts_client = getattr(app.state, "tts", None)
                         if tts_client:

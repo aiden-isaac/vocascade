@@ -444,6 +444,64 @@ class TestServer(unittest.TestCase):
             self.gateway_patcher.start()
             self.factory_patcher.start()
 
+    @patch("voice_satellite.server.ConversationSession")
+    def test_barge_in_history_tracking(self, mock_session_cls):
+        from voice_satellite.session.state_machine import ConversationSession
+        real_session = ConversationSession()
+        mock_session_cls.return_value = real_session
+
+        app.state.openclaw_client.send_message = AsyncMock(return_value="run-1")
+        async def mock_stream_resp(run_id=None):
+            yield "Response word one two three four five six seven eight nine ten."
+        app.state.openclaw_client.stream_response = MagicMock(side_effect=mock_stream_resp)
+
+        with self.client.websocket_connect("/ws") as ws:
+            mock_stt = AsyncMock()
+            mock_stt.transcribe.return_value = "hello there"
+            app.state.stt = mock_stt
+
+            mock_tts = MagicMock()
+            mock_tts.degraded_mode = False
+            mock_tts.stop = AsyncMock()
+            async def mock_synth(text, **kwargs):
+                yield b"chunk"
+            mock_tts.synthesize.side_effect = mock_synth
+            app.state.tts = mock_tts
+
+            ws.receive_json()  # passive_listening
+
+            # Trigger wakeword and send user audio
+            ws.send_json({"type": "wakeword"})
+            while True:
+                msg = ws.receive_json()
+                if msg.get("type") == "status" and msg.get("state") == "active_listening":
+                    break
+
+            ws.send_bytes(b"user_audio")
+            
+            # Wait until it starts speaking
+            while True:
+                msg = ws.receive_json()
+                if msg.get("type") == "status" and msg.get("state") == "speaking":
+                    break
+
+            # Now send playback progress and interrupt
+            ws.send_json({"type": "playback_progress", "words_played": 4})
+            ws.send_json({"type": "interrupt"})
+
+            # Drain messages until back to active listening
+            while True:
+                msg = ws.receive_json()
+                if msg.get("type") == "status" and msg.get("state") == "active_listening":
+                    break
+
+            # Verify history contains:
+            # 1. user turn: "hello there"
+            # 2. assistant turn: partial response with "[Interrupted by user]"
+            self.assertEqual(len(real_session.history), 2)
+            self.assertEqual(real_session.history[0], {"role": "user", "content": "hello there"})
+            self.assertEqual(real_session.history[1], {"role": "assistant", "content": "Response word one two [Interrupted by user]"})
+
 
 if __name__ == "__main__":
     unittest.main()
