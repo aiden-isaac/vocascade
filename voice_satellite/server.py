@@ -116,6 +116,12 @@ async def lifespan(app_: FastAPI):
     finally:
         app_.state.stt.close()
         await app_.state.gateway_client.close()
+        if hasattr(app_.state, "tts"):
+            close_method = getattr(app_.state.tts, "close", None)
+            if close_method:
+                res = close_method()
+                if asyncio.iscoroutine(res):
+                    await res
 
 
 app = FastAPI(lifespan=lifespan)
