@@ -33,7 +33,7 @@
 
 ### US1: STT stage
 
-- [ ] T004 [US1] Instrument `WhisperSTT.transcribe()` in `voice_satellite/stt/whisper_stt.py`
+- [x] T004 [US1] Instrument `WhisperSTT.transcribe()` in `voice_satellite/stt/whisper_stt.py`
   - Accept optional `session: str = ""` keyword argument in `transcribe()`
   - Before `async with self.lock`: create `tracker = LatencyTracker("stt", session)` and call `tracker.start()`
   - After `await loop.run_in_executor(...)` returns: call `tracker.record()`
@@ -41,7 +41,7 @@
 
 ### US1: LLM first-token stage (Hermes)
 
-- [ ] T005 [US1] Instrument `HermesClient.send_transcript()` in `voice_satellite/gateway/hermes_client.py`
+- [x] T005 [US1] Instrument `HermesClient.send_transcript()` in `voice_satellite/gateway/hermes_client.py`
   - Accept optional `session: str = ""` keyword argument in `send_transcript()`
   - Before the `async with self.client.stream(...)` block: create `tracker = LatencyTracker("llm_first_token", session)` and call `tracker.start()`
   - After the first non-empty `content` is yielded: call `tracker.record()` (set a `_first_token_recorded` flag so `record()` is only called once)
@@ -49,13 +49,13 @@
 
 ### US1: LLM first-token stage (OpenClaw — parity)
 
-- [ ] T006 [P] [US1] Instrument `OpenClawClient.send_transcript()` in `voice_satellite/gateway/openclaw_client.py`
+- [x] T006 [P] [US1] Instrument `OpenClawClient.send_transcript()` in `voice_satellite/gateway/openclaw_client.py`
   - Same pattern as T005: optional `session` kwarg, timer starts before POST/stream, `record()` on first non-empty token
   - Import `LatencyTracker` from `voice_satellite.telemetry`
 
 ### US1: TTS first-chunk stage
 
-- [ ] T007 [US1] Instrument `GenieTTSClient.synthesize()` in `voice_satellite/tts/genie_client.py`
+- [x] T007 [US1] Instrument `GenieTTSClient.synthesize()` in `voice_satellite/tts/genie_client.py`
   - At the top of the method body (after sanitisation guards, before the HTTP request): create `tracker = LatencyTracker("tts_first_chunk", session)` and call `tracker.start()`
   - Accept optional `session: str = ""` keyword argument in `synthesize()`
   - After the first `yield bytes(...)` inside the `async for chunk` loop: call `tracker.record()` (one-shot flag)
@@ -63,7 +63,7 @@
 
 ### US1: sentence_buffer + end_to_end stages (server.py)
 
-- [ ] T008 [US1] Wire session ID, sentence_buffer timer, and end_to_end timer in `voice_satellite/server.py`
+- [x] T008 [US1] Wire session ID, sentence_buffer timer, and end_to_end timer in `voice_satellite/server.py`
   - Generate `_session_id = uuid.uuid4().hex[:8]` when the WebSocket connection is accepted (after `await websocket.accept()`)
   - In `handle_audio()`: immediately after `session.state = SessionState.TRANSCRIBING`, start `e2e_tracker = LatencyTracker("end_to_end", _session_id)` and `e2e_tracker.start()`
   - Pass `session=_session_id` to `stt_client.transcribe()`, `gateway_client.send_transcript()`, and `tts_client.synthesize()` calls
@@ -76,8 +76,8 @@
 
 ## Phase 4 — Polish & Validation
 
-- [ ] T009 Run full test suite: `PYTHONPATH=. python -m pytest tests/` — all tests must pass
-- [ ] T010 Verify log format manually or via integration assertion: confirm five distinct `[LATENCY]` stage names appear in output when satellite handles a test utterance
+- [x] T009 Run full test suite: `PYTHONPATH=. python -m pytest tests/` — all tests must pass
+- [x] T010 Verify log format manually or via integration assertion: confirm five distinct `[LATENCY]` stage names appear in output when satellite handles a test utterance
 
 ---
 

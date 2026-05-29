@@ -510,6 +510,68 @@ class TestServer(unittest.TestCase):
             self.assertEqual(real_session.history[0], {"role": "user", "content": "hello there"})
             self.assertEqual(real_session.history[1], {"role": "assistant", "content": "Response word one two [Interrupted by user]"})
 
+    def test_latency_logs_emitted_in_pipeline(self):
+        """
+        Verify that all 5 pipeline stages emit a [LATENCY] log line during a standard run.
+        """
+        import os
+        import logging
+        from voice_satellite.telemetry import LatencyTracker
+        os.environ.pop("LATENCY_LOGGING", None)
+
+        async def mock_send_transcript(text, session=""):
+            tracker = LatencyTracker("llm_first_token", session)
+            tracker.start()
+            tracker.record()
+            yield "Hello, how can I help you today?"
+        app.state.openclaw_client.send_transcript = MagicMock(side_effect=mock_send_transcript)
+
+        with self.assertLogs(logger="voice_satellite.telemetry", level=logging.INFO) as log_capture:
+            with self.client.websocket_connect("/ws") as ws:
+                mock_stt = AsyncMock()
+                async def mock_transcribe(pcm_bytes, session=""):
+                    tracker = LatencyTracker("stt", session)
+                    tracker.start()
+                    tracker.record()
+                    return "hello there"
+                mock_stt.transcribe.side_effect = mock_transcribe
+                app.state.stt = mock_stt
+
+                mock_tts = MagicMock()
+                mock_tts.degraded_mode = False
+                mock_tts.stop = AsyncMock()
+
+                async def mock_synth(text, session="", **kwargs):
+                    tracker = LatencyTracker("tts_first_chunk", session)
+                    tracker.start()
+                    tracker.record()
+                    yield b"chunk"
+                mock_tts.synthesize.side_effect = mock_synth
+                app.state.tts = mock_tts
+
+                ws.receive_json()  # passive_listening
+
+                ws.send_json({"type": "wakeword"})
+                while True:
+                    msg = ws.receive_json()
+                    if msg.get("type") == "status" and msg.get("state") == "active_listening":
+                        break
+
+                ws.send_bytes(b"user_audio")
+
+                # Wait until turn completes back to active listening
+                while True:
+                    msg = ws.receive_json()
+                    if msg.get("type") == "status" and msg.get("state") == "active_listening":
+                        break
+
+        # Check logs for the 5 stages
+        stages = ["stt", "llm_first_token", "tts_first_chunk", "sentence_buffer", "end_to_end"]
+        log_messages = [log.getMessage() for log in log_capture.records]
+        for stage in stages:
+            found = any(f"stage={stage}" in msg and "[LATENCY]" in msg for msg in log_messages)
+            self.assertTrue(found, f"Expected log line for stage={stage} but none was found in: {log_messages}")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -104,5 +104,32 @@ class TestHermesClient(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(kwargs["headers"]["Authorization"], "Bearer secret_token")
         self.assertEqual(kwargs["headers"]["X-Hermes-Session-Id"], client.session_id)
 
+    @patch("voice_satellite.gateway.hermes_client.httpx.AsyncClient")
+    @patch("voice_satellite.gateway.hermes_client.LatencyTracker")
+    async def test_send_transcript_latency(self, mock_tracker_cls, mock_async_client_cls):
+        sse_lines = [
+            'data: {"choices": [{"delta": {"content": "Hello"}}]}',
+            'data: [DONE]'
+        ]
+        
+        mock_client = MagicMock()
+        mock_response = MockResponse(sse_lines)
+        mock_client.stream.return_value = MockStreamContext(mock_response)
+        mock_async_client_cls.return_value = mock_client
+
+        mock_tracker = MagicMock()
+        mock_tracker_cls.return_value = mock_tracker
+
+        client = HermesClient(base_url="http://localhost:8642/v1")
+        
+        tokens = []
+        async for token in client.send_transcript("Hi", session="sess456"):
+            tokens.append(token)
+
+        mock_tracker_cls.assert_called_once_with("llm_first_token", "sess456")
+        mock_tracker.start.assert_called_once()
+        mock_tracker.record.assert_called_once()
+
+
 if __name__ == "__main__":
     unittest.main()

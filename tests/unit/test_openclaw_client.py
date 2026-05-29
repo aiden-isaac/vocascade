@@ -3,6 +3,7 @@ import json
 import os
 import tempfile
 import unittest
+from unittest.mock import MagicMock, patch
 from pathlib import Path
 from voice_satellite.gateway import OpenClawClient
 
@@ -267,6 +268,70 @@ class TestOpenClawClient(unittest.IsolatedAsyncioTestCase):
         await client.connect()
         # Should NOT raise even though the gateway returned an error
         await client.sessions_abort(session_key="agent:main:voice", run_id="stale-run")
+
+    @patch("voice_satellite.gateway.openclaw_client.LatencyTracker")
+    async def test_send_transcript_latency(self, mock_tracker_cls):
+        websocket = FakeWebSocket([
+            _make_challenge(),
+            _make_hello_ok("connect-id"),
+            {
+                "type": "res",
+                "id": "create-id",
+                "ok": True,
+                "payload": {},
+            },
+            {
+                "type": "res",
+                "id": "chat-test",
+                "ok": True,
+                "payload": {"runId": "chat-test"},
+            },
+            {
+                "type": "event",
+                "event": "chat",
+                "payload": {
+                    "runId": "chat-test",
+                    "sessionKey": "agent:main:default",
+                    "state": "delta",
+                    "message": {"content": [{"type": "text", "text": "hi "}]},
+                },
+            },
+            {
+                "type": "event",
+                "event": "chat",
+                "payload": {
+                    "runId": "chat-test",
+                    "sessionKey": "agent:main:default",
+                    "state": "final",
+                    "message": {"content": [{"type": "text", "text": "hi there"}]},
+                },
+            },
+        ])
+        
+        client = OpenClawClient(
+            gateway_url="ws://localhost:18789",
+            gateway_token="test-token",
+            device_key_path=self.device_key_path,
+            connect_impl=lambda url: fake_connect(websocket, url)
+        )
+        client._make_id = lambda prefix: {
+            "req": "connect-id",
+            "create-session": "create-id",
+            "voice": "chat-test",
+        }.get(prefix, f"{prefix}-id")
+
+        mock_tracker = MagicMock()
+        mock_tracker_cls.return_value = mock_tracker
+
+        await client.connect()
+        
+        tokens = []
+        async for token in client.send_transcript("hello?", session="sess789"):
+            tokens.append(token)
+            
+        mock_tracker_cls.assert_called_once_with("llm_first_token", "sess789")
+        mock_tracker.start.assert_called_once()
+        mock_tracker.record.assert_called_once()
 
 
 if __name__ == "__main__":

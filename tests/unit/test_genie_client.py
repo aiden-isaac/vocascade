@@ -144,5 +144,38 @@ class TestGenieTTSClient(unittest.IsolatedAsyncioTestCase):
         mock_session.close.assert_called_once()
         self.assertIsNone(client._session)
 
+    @patch("voice_satellite.tts.genie_client.aiohttp.ClientSession")
+    @patch("voice_satellite.tts.genie_client.LatencyTracker")
+    async def test_synthesize_latency(self, mock_tracker_cls, mock_session_cls):
+        mock_response = AsyncMock()
+        mock_response.status = 200
+        async def mock_iter_chunked(n):
+            yield b"audio_ch"
+        mock_response.content.iter_chunked = mock_iter_chunked
+
+        mock_session = MagicMock()
+        mock_session.closed = False
+        mock_session_cls.return_value = mock_session
+        mock_session.post.return_value.__aenter__.return_value = mock_response
+
+        client = GenieTTSClient(
+            tts_url="http://localhost:8000",
+            character_name="default"
+        )
+        client.initialized = True
+
+        mock_tracker = MagicMock()
+        mock_tracker_cls.return_value = mock_tracker
+
+        chunks = []
+        async for chunk in client.synthesize("Hello world", session="sess999"):
+            chunks.append(chunk)
+
+        self.assertEqual(chunks, [b"audio_ch"])
+        mock_tracker_cls.assert_called_once_with("tts_first_chunk", "sess999")
+        mock_tracker.start.assert_called_once()
+        mock_tracker.record.assert_called_once()
+
+
 if __name__ == "__main__":
     unittest.main()

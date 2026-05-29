@@ -40,5 +40,18 @@ class TestWhisperSTT(unittest.IsolatedAsyncioTestCase):
         result_none = await self.stt.transcribe(None)
         self.assertEqual(result_none, "")
 
+    @patch("voice_satellite.stt.whisper_stt.LatencyTracker")
+    async def test_whisper_stt_transcribe_latency(self, mock_tracker_cls):
+        mock_tracker = MagicMock()
+        mock_tracker_cls.return_value = mock_tracker
+        
+        pcm = np.zeros(16000, dtype=np.int16).tobytes()
+        await self.stt.transcribe(pcm, session="sess123")
+        
+        mock_tracker_cls.assert_called_once_with("stt", "sess123")
+        mock_tracker.start.assert_called_once()
+        mock_tracker.record.assert_called_once()
+
+
 if __name__ == "__main__":
     unittest.main()
