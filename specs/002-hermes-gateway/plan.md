@@ -97,3 +97,14 @@ tests/
 - Confirm that multiple sentences flow smoothly without pause (parallel prefetch).
 - Interrupt mid-sentence and verify context memory on the next turn.
 
+## References & Reference Implementations
+
+This design is inspired by the streaming pipeline and interruption mechanics of the following repositories:
+
+- **Backend Repository**: [Open-LLM-VTuber/Open-LLM-VTuber](https://github.com/Open-LLM-VTuber/Open-LLM-VTuber)
+  - **Server & Streaming Coordinator**: [src/open_llm_vtuber/server.py](https://github.com/Open-LLM-VTuber/Open-LLM-VTuber/blob/main/src/open_llm_vtuber/server.py) (Coordinates LLM and TTS tasks asynchronously).
+  - **TTS Integrations & Chunking**: [src/open_llm_vtuber/tts/](https://github.com/Open-LLM-VTuber/Open-LLM-VTuber/tree/main/src/open_llm_vtuber/tts) (Shows chunk/sentence generation modules).
+  - **Agent State & Memory Management**: [src/open_llm_vtuber/agent/](https://github.com/Open-LLM-VTuber/Open-LLM-VTuber/tree/main/src/open_llm_vtuber/agent) (Handles conversational turns and history updates).
+- **Web Frontend Repository**: [Open-LLM-VTuber/Open-LLM-VTuber-Web](https://github.com/Open-LLM-VTuber/Open-LLM-VTuber-Web)
+  - **Audio Playback Queue & Client VAD**: [src/](https://github.com/Open-LLM-VTuber/Open-LLM-VTuber-Web/tree/main/src) (Client-side handling of WebSocket audio stream chunks and barge-in triggers).
+
