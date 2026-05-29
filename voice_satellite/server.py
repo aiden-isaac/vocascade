@@ -25,7 +25,7 @@ from fastapi.staticfiles import StaticFiles
 from voice_satellite.config import load_config
 from voice_satellite.stt.whisper_stt import WhisperSTT
 from voice_satellite.tts.genie_client import GenieTTSClient
-from voice_satellite.tts.sentence_splitter import split_sentences
+from voice_satellite.tts.sentence_splitter import split_sentences, SentenceChunk
 from voice_satellite.audio.filler_engine import FillerEngine
 from voice_satellite.gateway.base import GatewayClient
 from voice_satellite.gateway.openclaw_client import OpenClawClient
@@ -206,15 +206,19 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                             "sample_rate": 32000
                         })
 
-            async def speak_text_to_tts(text: str, *, _e2e_tracker: LatencyTracker | None = None) -> None:
-                chunks = split_sentences(text)
-                if not chunks:
+            async def speak_text_to_tts(chunk_or_text: SentenceChunk | str, *, _e2e_tracker: LatencyTracker | None = None) -> None:
+                if isinstance(chunk_or_text, str):
+                    chunk = SentenceChunk(text=chunk_or_text, tagged=False)
+                else:
+                    chunk = chunk_or_text
+
+                if not chunk.text.strip():
                     return
 
-                session.append_current_response(text)
+                session.append_current_response(chunk.text)
 
                 async with ws_lock:
-                    await websocket.send_json({"type": "assistant_response", "text": text})
+                    await websocket.send_json({"type": "assistant_response", "text": chunk.text})
 
                 tts_client = getattr(app.state, "tts", None)
                 if tts_client and getattr(tts_client, "degraded_mode", False) is True and getattr(tts_client, "onnx_model_dir", None):
@@ -232,8 +236,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                         await websocket.send_json({"type": "audio_end"})
                     return
 
-                first_chunk = chunks[0]
-                first_iter = tts_client.synthesize(first_chunk.text, session=_session_id)
+                first_iter = tts_client.synthesize(chunk.text, session=_session_id)
 
                 async def get_next_item(it):
                     try:
@@ -272,7 +275,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                 current_word_offset = 0
                 effects_config = get_character_effects_config(config.tts_character_name)
                 if first_audio:
-                    if first_chunk.tagged:
+                    if chunk.tagged:
                         first_audio = apply_effect_chain(first_audio, effects_config)
                     if _e2e_tracker is not None:
                         _e2e_tracker.record()
@@ -287,7 +290,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
 
                 async for audio_chunk in first_iter:
                     if audio_chunk:
-                        if first_chunk.tagged:
+                        if chunk.tagged:
                             audio_chunk = apply_effect_chain(audio_chunk, effects_config)
                         async with ws_lock:
                             await websocket.send_json({
@@ -296,22 +299,6 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                                 "word_offset": current_word_offset,
                                 "sample_rate": 32000
                             })
-
-                current_word_offset += len(first_chunk.text.split())
-
-                for chunk in chunks[1:]:
-                    async for audio_chunk in tts_client.synthesize(chunk.text, session=_session_id):
-                        if audio_chunk:
-                            if chunk.tagged:
-                                audio_chunk = apply_effect_chain(audio_chunk, effects_config)
-                            async with ws_lock:
-                                await websocket.send_json({
-                                    "type": "audio",
-                                    "data": base64.b64encode(audio_chunk).decode("ascii"),
-                                    "word_offset": current_word_offset,
-                                    "sample_rate": 32000
-                                })
-                    current_word_offset += len(chunk.text.split())
 
                 async with ws_lock:
                     await websocket.send_json({"type": "audio_end"})
@@ -393,7 +380,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                             for s in sentences[:-1]:
                                 sentence_buffer_start.record(sentence_index=sentence_index)
                                 sentence_index += 1
-                                await speak_text_to_tts(s.text, _e2e_tracker=e2e_tracker)
+                                await speak_text_to_tts(s, _e2e_tracker=e2e_tracker)
                                 # After first audio is sent, e2e_tracker is consumed
                                 e2e_tracker = None  # type: ignore[assignment]
                                 # Start timer for next sentence's buffer wait
@@ -405,7 +392,10 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                     # Flush any remaining text after the stream ends
                     if sentence_buffer.strip():
                         sentence_buffer_start.record(sentence_index=sentence_index)
-                        await speak_text_to_tts(sentence_buffer, _e2e_tracker=e2e_tracker)
+                        final_chunks = split_sentences(sentence_buffer, is_final=True)
+                        for fc in final_chunks:
+                            await speak_text_to_tts(fc, _e2e_tracker=e2e_tracker)
+                            e2e_tracker = None
 
                     session.state = SessionState.ACTIVE_LISTENING
 

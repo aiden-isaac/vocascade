@@ -125,7 +125,7 @@ class GenieTTSClient:
         payload = {
             "character_name": self.character_name,
             "text": text,
-            "split_sentence": True
+            "split_sentence": False
         }
 
         tts_tracker = LatencyTracker("tts_first_chunk", session)
