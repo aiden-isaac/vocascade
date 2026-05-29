@@ -80,6 +80,7 @@ class ConversationSession:
         self._words_played_before_interrupt: int = 0
         self.last_transcript: str = ""
         self.audio_buffer: bytes = b""
+        self.history: list[dict[str, str]] = []
 
     @property
     def state(self) -> SessionState:
