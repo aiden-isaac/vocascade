@@ -36,10 +36,10 @@
 - [x] **T015** [US4]: Refactor `voice_satellite/tts/genie_client.py` to use a persistent `aiohttp.ClientSession` reused across requests, closing it gracefully on server shutdown.
 - [x] **T016** [US4]: Update `voice_satellite/tts/sentence_splitter.py` to support clause-level splitting on `,`, `;`, `:`, `—` when the accumulated segment exceeds 8 words.
 - [x] **T017** [US4]: Remove redundant double-splitting logic inside `voice_satellite/server.py`'s `speak_text_to_tts` and disable Genie payload `split_sentence` flag.
-- [ ] **T018** [P] [US4]: Implement `TTSTaskManager` in `voice_satellite/tts/manager.py` to run parallel TTS generation tasks and buffer/stream results over WebSocket in sequential order.
-- [ ] **T019** [US4]: Integrate `TTSTaskManager` and the non-blocking token producer/consumer `asyncio.Queue` loop inside `voice_satellite/server.py`.
+- [x] **T018** [P] [US4]: Implement `TTSTaskManager` in `voice_satellite/tts/manager.py` to run parallel TTS generation tasks and buffer/stream results over WebSocket in sequential order.
+- [x] **T019** [US4]: Integrate `TTSTaskManager` and the non-blocking token producer/consumer `asyncio.Queue` loop inside `voice_satellite/server.py`.
 - [x] **T020** [P] [US4]: Create `tests/unit/test_sentence_splitter.py` verifying clause-level splitting rules.
-- [ ] **T021** [P] [US4]: Create `tests/unit/test_tts_manager.py` verifying parallel synthesis task ordering and buffer delivery.
+- [x] **T021** [P] [US4]: Create `tests/unit/test_tts_manager.py` verifying parallel synthesis task ordering and buffer delivery.
 
 ## Phase 6: Contextual Barge-in & Interruption Memory (US5)
 **Goal**: Retain session memory on barge-in/interruption by avoiding session rotation and calculating the partial text spoken.
