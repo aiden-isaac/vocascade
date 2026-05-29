@@ -51,9 +51,7 @@ class TestHermesClient(unittest.IsolatedAsyncioTestCase):
         await client.connect()
         first_session_id = client.session_id
         await client.sessions_abort()
-        self.assertNotEqual(first_session_id, client.session_id)
-        # Verify valid UUID
-        uuid.UUID(client.session_id)
+        self.assertEqual(first_session_id, client.session_id)
 
     @patch("voice_satellite.gateway.hermes_client.httpx.AsyncClient")
     async def test_send_transcript_success(self, mock_async_client_cls):
