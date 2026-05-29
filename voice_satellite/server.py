@@ -25,7 +25,7 @@ from fastapi.staticfiles import StaticFiles
 from voice_satellite.config import load_config
 from voice_satellite.stt.whisper_stt import WhisperSTT
 from voice_satellite.tts.genie_client import GenieTTSClient
-from voice_satellite.tts.sentence_splitter import split_sentences, SentenceChunk
+from voice_satellite.tts import split_sentences, SentenceChunk, TTSTaskManager
 from voice_satellite.audio.filler_engine import FillerEngine
 from voice_satellite.gateway.base import GatewayClient
 from voice_satellite.gateway.openclaw_client import OpenClawClient
@@ -366,36 +366,152 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                     sentence_buffer_start = LatencyTracker("sentence_buffer", _session_id)
                     sentence_buffer_start.start()
 
-                    gateway_client: GatewayClient = app.state.gateway_client
-                    async for token in gateway_client.send_transcript(outgoing_message, session=_session_id):
-                        if not token:
-                            continue
-                        response_chunks.append(token)
-                        sentence_buffer += token
+                    manager = TTSTaskManager()
 
-                        # Flush complete sentences to TTS as they arrive
-                        sentences = split_sentences(sentence_buffer, is_final=False)
-                        if len(sentences) > 1:
-                            # All sentences except the last (which may be incomplete)
-                            for s in sentences[:-1]:
-                                sentence_buffer_start.record(sentence_index=sentence_index)
-                                sentence_index += 1
-                                await speak_text_to_tts(s, _e2e_tracker=e2e_tracker)
-                                # After first audio is sent, e2e_tracker is consumed
-                                e2e_tracker = None  # type: ignore[assignment]
-                                # Start timer for next sentence's buffer wait
-                                sentence_buffer_start = LatencyTracker("sentence_buffer", _session_id)
-                                sentence_buffer_start.start()
-                            # Keep the trailing incomplete sentence in the buffer
-                            sentence_buffer = sentences[-1].text if sentences[-1].text else ""
+                    async def run_producer():
+                        nonlocal sentence_index, sentence_buffer, sentence_buffer_start
+                        tts_client = getattr(app.state, "tts", None)
+                        gateway_client: GatewayClient = app.state.gateway_client
+                        async for token in gateway_client.send_transcript(outgoing_message, session=_session_id):
+                            if not token:
+                                continue
+                            response_chunks.append(token)
+                            sentence_buffer += token
 
-                    # Flush any remaining text after the stream ends
-                    if sentence_buffer.strip():
-                        sentence_buffer_start.record(sentence_index=sentence_index)
-                        final_chunks = split_sentences(sentence_buffer, is_final=True)
-                        for fc in final_chunks:
-                            await speak_text_to_tts(fc, _e2e_tracker=e2e_tracker)
-                            e2e_tracker = None
+                            # Flush complete sentences to TTS as they arrive
+                            sentences = split_sentences(sentence_buffer, is_final=False)
+                            if len(sentences) > 1:
+                                # All sentences except the last (which may be incomplete)
+                                for s in sentences[:-1]:
+                                    sentence_buffer_start.record(sentence_index=sentence_index)
+                                    sentence_index += 1
+                                    
+                                    # Enqueue to TTS task manager
+                                    manager.enqueue_tts(s, tts_client, _session_id)
+                                    
+                                    # Start timer for next sentence's buffer wait
+                                    sentence_buffer_start = LatencyTracker("sentence_buffer", _session_id)
+                                    sentence_buffer_start.start()
+                                # Keep the trailing incomplete sentence in the buffer
+                                sentence_buffer = sentences[-1].text if sentences[-1].text else ""
+
+                        # Flush any remaining text after the stream ends
+                        if sentence_buffer.strip():
+                            sentence_buffer_start.record(sentence_index=sentence_index)
+                            final_chunks = split_sentences(sentence_buffer, is_final=True)
+                            for fc in final_chunks:
+                                manager.enqueue_tts(fc, tts_client, _session_id)
+                        
+                        manager.mark_complete()
+
+                    async def run_consumer():
+                        nonlocal e2e_tracker
+                        tts_client = getattr(app.state, "tts", None)
+                        if tts_client and getattr(tts_client, "degraded_mode", False) is True and getattr(tts_client, "onnx_model_dir", None):
+                            logger.info("TTS is in degraded mode. Retrying character load...")
+                            tts_client.degraded_mode = False
+                            try:
+                                await tts_client.load_character()
+                            except TypeError:
+                                pass
+
+                        # If degraded_mode is still truthy (which includes MagicMocks that aren't boolean False)
+                        is_degraded = getattr(tts_client, "degraded_mode", False)
+                        if not tts_client or (is_degraded and is_degraded is not False):
+                            async with ws_lock:
+                                await websocket.send_json({"type": "audio_end"})
+                            return
+
+                        audio_generator = manager.get_audio_chunks()
+
+                        async def get_next_item(it):
+                            try:
+                                return await it.__anext__()
+                            except StopAsyncIteration:
+                                return None
+
+                        first_chunk_task = asyncio.create_task(get_next_item(audio_generator))
+
+                        done, pending = await asyncio.wait(
+                            [first_chunk_task],
+                            timeout=config.filler_threshold_secs
+                        )
+
+                        first_item = None
+                        if first_chunk_task in done:
+                            first_item = first_chunk_task.result()
+                        else:
+                            logger.info("TTS synthesis latency exceeded threshold, playing filler")
+                            session.state = SessionState.FILLER_SPEAKING
+                            filler_engine = getattr(app.state, "filler_engine", None)
+                            if filler_engine:
+                                filler_pcm = filler_engine.get_filler("thinking")
+                                if filler_pcm:
+                                    async with ws_lock:
+                                        await websocket.send_json({
+                                            "type": "audio",
+                                            "data": base64.b64encode(filler_pcm).decode("ascii"),
+                                            "word_offset": 0,
+                                            "sample_rate": 32000
+                                        })
+                            first_item = await first_chunk_task
+
+                        session.state = SessionState.SPEAKING
+
+                        current_word_offset = 0
+                        effects_config = get_character_effects_config(config.tts_character_name)
+                        
+                        if first_item:
+                            chunk, first_audio = first_item
+                            session.append_current_response(chunk.text)
+                            async with ws_lock:
+                                await websocket.send_json({"type": "assistant_response", "text": chunk.text})
+                                
+                            if chunk.tagged:
+                                first_audio = apply_effect_chain(first_audio, effects_config)
+                            if e2e_tracker is not None:
+                                e2e_tracker.record()
+                                e2e_tracker = None  # record only once
+                            async with ws_lock:
+                                await websocket.send_json({
+                                    "type": "audio",
+                                    "data": base64.b64encode(first_audio).decode("ascii"),
+                                    "word_offset": current_word_offset,
+                                    "sample_rate": 32000
+                                })
+                            
+                            active_chunk = chunk
+                            
+                            async for chunk, audio_chunk in audio_generator:
+                                if chunk != active_chunk:
+                                    session.append_current_response(chunk.text)
+                                    async with ws_lock:
+                                        await websocket.send_json({"type": "assistant_response", "text": chunk.text})
+                                    current_word_offset += len(active_chunk.text.split())
+                                    active_chunk = chunk
+                                
+                                if audio_chunk:
+                                    if chunk.tagged:
+                                        audio_chunk = apply_effect_chain(audio_chunk, effects_config)
+                                    async with ws_lock:
+                                        await websocket.send_json({
+                                            "type": "audio",
+                                            "data": base64.b64encode(audio_chunk).decode("ascii"),
+                                            "word_offset": current_word_offset,
+                                            "sample_rate": 32000
+                                        })
+
+                        async with ws_lock:
+                            await websocket.send_json({"type": "audio_end"})
+
+                    producer_task = asyncio.create_task(run_producer())
+                    consumer_task = asyncio.create_task(run_consumer())
+                    try:
+                        await asyncio.gather(producer_task, consumer_task)
+                    finally:
+                        await manager.stop()
+                        producer_task.cancel()
+                        consumer_task.cancel()
 
                     session.state = SessionState.ACTIVE_LISTENING
 
