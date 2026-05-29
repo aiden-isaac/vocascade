@@ -43,7 +43,7 @@
 
 ## Phase 6: Contextual Barge-in & Interruption Memory (US5)
 **Goal**: Retain session memory on barge-in/interruption by avoiding session rotation and calculating the partial text spoken.
-- [ ] **T022** [US5]: Refactor barge-in handling in `voice_satellite/server.py` to preserve the `X-Hermes-Session-Id` and avoid session ID rotation.
+- [x] **T022** [US5]: Refactor barge-in handling in `voice_satellite/server.py` to preserve the `X-Hermes-Session-Id` and avoid session ID rotation.
 - [ ] **T023** [US5]: Track the exact cumulative word offset of the audio played back, and compute the partial text spoken before interruption in `voice_satellite/server.py`.
 - [ ] **T024** [US5]: Store the partial interrupted response in the session history under assistant role, appended with `[Interrupted by user]`, inside `voice_satellite/server.py`.
 - [ ] **T025** [US5]: Perform manual verification of barge-in contextual retention.
