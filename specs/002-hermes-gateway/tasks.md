@@ -33,7 +33,7 @@
 
 ## Phase 5: Pipeline & TTS Optimizations (US4)
 **Goal**: Implement parallel ordered TTS queuing, persistent HTTP client sessions, clause-level splitting, and eliminate double-splitting.
-- [ ] **T015** [US4]: Refactor `voice_satellite/tts/genie_client.py` to use a persistent `aiohttp.ClientSession` reused across requests, closing it gracefully on server shutdown.
+- [x] **T015** [US4]: Refactor `voice_satellite/tts/genie_client.py` to use a persistent `aiohttp.ClientSession` reused across requests, closing it gracefully on server shutdown.
 - [ ] **T016** [US4]: Update `voice_satellite/tts/sentence_splitter.py` to support clause-level splitting on `,`, `;`, `:`, `—` when the accumulated segment exceeds 8 words.
 - [ ] **T017** [US4]: Remove redundant double-splitting logic inside `voice_satellite/server.py`'s `speak_text_to_tts` and disable Genie payload `split_sentence` flag.
 - [ ] **T018** [P] [US4]: Implement `TTSTaskManager` in `voice_satellite/tts/manager.py` to run parallel TTS generation tasks and buffer/stream results over WebSocket in sequential order.

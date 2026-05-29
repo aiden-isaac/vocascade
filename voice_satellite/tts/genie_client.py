@@ -35,6 +35,20 @@ class GenieTTSClient:
         self.language = language
         self.degraded_mode = degraded_mode
         self.initialized = False
+        self._session: aiohttp.ClientSession | None = None
+
+    def _get_session(self) -> aiohttp.ClientSession:
+        if self._session is None or self._session.closed:
+            self._session = aiohttp.ClientSession()
+        return self._session
+
+    async def close(self) -> None:
+        """
+        Closes the persistent aiohttp client session.
+        """
+        if self._session and not self._session.closed:
+            await self._session.close()
+            self._session = None
 
     async def load_character(self) -> None:
         """
@@ -46,36 +60,36 @@ class GenieTTSClient:
             return
 
         try:
-            async with aiohttp.ClientSession() as session:
-                # 1. Post to /load_character
-                payload_load = {
-                    "character_name": self.character_name,
-                    "onnx_model_dir": self.onnx_model_dir,
-                    "language": self.language
-                }
-                async with session.post(f"{self.tts_url}/load_character", json=payload_load, timeout=10) as resp:
-                    if resp.status != 200:
-                        body = await resp.text()
-                        logger.error(f"Failed to load character: {body}. Entering degraded mode.")
-                        self.degraded_mode = True
-                        return
+            session = self._get_session()
+            # 1. Post to /load_character
+            payload_load = {
+                "character_name": self.character_name,
+                "onnx_model_dir": self.onnx_model_dir,
+                "language": self.language
+            }
+            async with session.post(f"{self.tts_url}/load_character", json=payload_load, timeout=10) as resp:
+                if resp.status != 200:
+                    body = await resp.text()
+                    logger.error(f"Failed to load character: {body}. Entering degraded mode.")
+                    self.degraded_mode = True
+                    return
 
-                # 2. Post to /set_reference_audio
-                payload_ref = {
-                    "character_name": self.character_name,
-                    "audio_path": self.reference_audio,
-                    "audio_text": self.reference_text,
-                    "language": self.language
-                }
-                async with session.post(f"{self.tts_url}/set_reference_audio", json=payload_ref, timeout=10) as resp:
-                    if resp.status != 200:
-                        body = await resp.text()
-                        logger.error(f"Failed to set reference audio: {body}. Entering degraded mode.")
-                        self.degraded_mode = True
-                        return
+            # 2. Post to /set_reference_audio
+            payload_ref = {
+                "character_name": self.character_name,
+                "audio_path": self.reference_audio,
+                "audio_text": self.reference_text,
+                "language": self.language
+            }
+            async with session.post(f"{self.tts_url}/set_reference_audio", json=payload_ref, timeout=10) as resp:
+                if resp.status != 200:
+                    body = await resp.text()
+                    logger.error(f"Failed to set reference audio: {body}. Entering degraded mode.")
+                    self.degraded_mode = True
+                    return
 
-                self.initialized = True
-                logger.info(f"Initialized Genie TTS character '{self.character_name}'")
+            self.initialized = True
+            logger.info(f"Initialized Genie TTS character '{self.character_name}'")
         except Exception as e:
             logger.warning(f"Genie TTS server unreachable during character load: {e}. Degrading gracefully.")
             self.degraded_mode = True
@@ -119,30 +133,30 @@ class GenieTTSClient:
         _first_chunk_recorded = False
 
         try:
-            async with aiohttp.ClientSession() as session:
-                async with session.post(f"{self.tts_url}/tts", json=payload) as response:
-                    if response.status != 200:
-                        body = await response.text()
-                        logger.error(f"Genie /tts failed with status {response.status}: {body}")
-                        return
+            http_session = self._get_session()
+            async with http_session.post(f"{self.tts_url}/tts", json=payload) as response:
+                if response.status != 200:
+                    body = await response.text()
+                    logger.error(f"Genie /tts failed with status {response.status}: {body}")
+                    return
 
-                    buffer = bytearray()
-                    async for chunk in response.content.iter_chunked(4096):
-                        if not chunk:
-                            continue
-                        buffer.extend(chunk)
-                        
-                        send_len = len(buffer) - (len(buffer) % 2)
-                        if send_len > 0:
-                            if not _first_chunk_recorded:
-                                tts_tracker.record()
-                                _first_chunk_recorded = True
-                            yield bytes(buffer[:send_len])
-                            del buffer[:send_len]
-
-                    if len(buffer) >= 2:
-                        send_len = len(buffer) - (len(buffer) % 2)
+                buffer = bytearray()
+                async for chunk in response.content.iter_chunked(4096):
+                    if not chunk:
+                        continue
+                    buffer.extend(chunk)
+                    
+                    send_len = len(buffer) - (len(buffer) % 2)
+                    if send_len > 0:
+                        if not _first_chunk_recorded:
+                            tts_tracker.record()
+                            _first_chunk_recorded = True
                         yield bytes(buffer[:send_len])
+                        del buffer[:send_len]
+
+                if len(buffer) >= 2:
+                    send_len = len(buffer) - (len(buffer) % 2)
+                    yield bytes(buffer[:send_len])
 
         except asyncio.CancelledError:
             logger.info("GenieTTSClient synthesis task cancelled (barge-in)")
@@ -168,10 +182,10 @@ class GenieTTSClient:
         if self.degraded_mode:
             return
         try:
-            async with aiohttp.ClientSession() as session:
-                async with session.post(f"{self.tts_url}/stop", timeout=5) as resp:
-                    if resp.status != 200:
-                        body = await resp.text()
-                        logger.error(f"Genie /stop failed with status {resp.status}: {body}")
+            session = self._get_session()
+            async with session.post(f"{self.tts_url}/stop", timeout=5) as resp:
+                if resp.status != 200:
+                    body = await resp.text()
+                    logger.error(f"Genie /stop failed with status {resp.status}: {body}")
         except Exception as e:
             logger.error(f"Failed to stop Genie TTS: {e}")

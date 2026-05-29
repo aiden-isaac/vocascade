@@ -8,7 +8,8 @@ class TestGenieTTSClient(unittest.IsolatedAsyncioTestCase):
     async def test_load_character_success(self, mock_session_cls):
         # Setup session mock
         mock_session = MagicMock()
-        mock_session_cls.return_value.__aenter__.return_value = mock_session
+        mock_session.closed = False
+        mock_session_cls.return_value = mock_session
         
         # Setup post mock
         mock_response = AsyncMock()
@@ -34,7 +35,8 @@ class TestGenieTTSClient(unittest.IsolatedAsyncioTestCase):
     async def test_load_character_failure(self, mock_session_cls):
         # Setup session mock
         mock_session = MagicMock()
-        mock_session_cls.return_value.__aenter__.return_value = mock_session
+        mock_session.closed = False
+        mock_session_cls.return_value = mock_session
         
         # Setup post mock returning 500
         mock_response = AsyncMock()
@@ -59,7 +61,8 @@ class TestGenieTTSClient(unittest.IsolatedAsyncioTestCase):
     async def test_synthesize_success(self, mock_session_cls):
         # Setup session mock
         mock_session = MagicMock()
-        mock_session_cls.return_value.__aenter__.return_value = mock_session
+        mock_session.closed = False
+        mock_session_cls.return_value = mock_session
         
         # Setup post mock for /tts
         mock_response = AsyncMock()
@@ -105,7 +108,8 @@ class TestGenieTTSClient(unittest.IsolatedAsyncioTestCase):
     async def test_synthesize_unreachable_server(self, mock_session_cls):
         # Mock a connection error / exception
         mock_session = MagicMock()
-        mock_session_cls.return_value.__aenter__.return_value = mock_session
+        mock_session.closed = False
+        mock_session_cls.return_value = mock_session
         mock_session.post.side_effect = Exception("Connection refused")
 
         client = GenieTTSClient(
@@ -124,6 +128,21 @@ class TestGenieTTSClient(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(chunks, [])
         self.assertTrue(client.degraded_mode)
         self.assertFalse(client.initialized)
+
+    @patch("voice_satellite.tts.genie_client.aiohttp.ClientSession")
+    async def test_close_session(self, mock_session_cls):
+        mock_session = AsyncMock()
+        mock_session.closed = False
+        mock_session_cls.return_value = mock_session
+
+        client = GenieTTSClient(
+            tts_url="http://localhost:8000",
+            character_name="default"
+        )
+        client._get_session()
+        await client.close()
+        mock_session.close.assert_called_once()
+        self.assertIsNone(client._session)
 
 if __name__ == "__main__":
     unittest.main()
