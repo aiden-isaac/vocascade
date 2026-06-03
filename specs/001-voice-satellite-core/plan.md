@@ -134,7 +134,8 @@ flowchart TB
         WS_S["WebSocket Handler<br/>(server.py)"]
         SESSION["ConversationSession<br/>(state_machine.py)"]
         STT["Whisper STT<br/>(thread pool)"]
-        OC_CL["OpenClaw Client<br/>(openclaw_client.py)"]
+        LLM["Local LLM<br/>(Qwen)"]
+        OC_CL["Hermes Client<br/>(hermes_client.py)"]
         FILLER["FillerEngine<br/>(filler_engine.py)"]
         subgraph TTS_P["TTS Pipeline"]
             SPLIT["Sentence Splitter"]
@@ -143,17 +144,19 @@ flowchart TB
         end
         WS_S --> SESSION
         SESSION -->|"PCM bytes"| STT
-        STT -->|"transcript"| OC_CL
-        OC_CL -->|"text stream"| SPLIT
+        STT -->|"transcript"| LLM
+        LLM -.->|"async tool call"| OC_CL
+        LLM -->|"direct text stream"| SPLIT
+        OC_CL -.->|"inject response"| SPLIT
         FILLER -->|"filler PCM"| WS_S
         SPLIT --> GENIE --> FX -->|"PCM + word_offset"| WS_S
     end
     subgraph External["External Services"]
-        OC["OpenClaw Gateway<br/>(WebSocket)"]
+        OC["Hermes Agent Gateway<br/>(HTTP/SSE)"]
         TTS_SRV["Genie TTS Server"]
     end
     WS_C <-->|"full-duplex WebSocket"| WS_S
-    OC_CL <-->|"persistent WebSocket"| OC
+    OC_CL -.->|"HTTP POST"| OC
     GENIE <--> TTS_SRV
 ```
 ---

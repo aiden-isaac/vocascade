@@ -241,34 +241,23 @@ the correct voice without ever manually editing `.env` or writing Python.
   assistant audio playback, the client MUST immediately stop all queued
   audio, report the playback position, and the backend MUST cancel the
   in-flight TTS pipeline.
-- **FR-011**: On barge-in, the backend MUST implement a two-part
-  interruption-context strategy:
-  1. Immediately cancel the active OpenClaw run via `sessions.abort` on the
-     persistent gateway connection, and record the partial assistant text heard
-     (reconstructed from the reported word offset).
-  2. On the next user turn: if the partial text is fewer than 10 words, no
-     context note is injected (the gateway session history already reflects the
-     truncated turn). If 10 or more words were heard, the backend MUST prepend
-     a one-shot context note (not persisted to history) to the outgoing message:
-     `[System Note: The last assistant response was interrupted by the user
-     after saying: "{partial_response} [interrupted]"]
-{user_message}`.
+- **FR-011**: On barge-in, the backend MUST implement a downstream context tracking strategy:
+  1. A `TeardownInterceptor` MUST buffer the active assistant text response.
+  2. Upon receiving an interruption signal (e.g., `UserStartedSpeakingFrame`), the interceptor MUST immediately commit the buffered partial text to the `TranscriptManager` appended with `... [interrupted]`.
+  3. This ensures the Local LLM retains awareness of what the user actually heard before interrupting, preventing redundant or looping responses.
 - **FR-012**: The system MUST support pre-rendered filler audio that plays
   automatically when backend response latency exceeds a configurable
   threshold (default 2 seconds), categorized by purpose (thinking,
   working, acknowledging, sign-off).
-- **FR-013**: The system MUST connect to the OpenClaw gateway via WebSocket,
-  authenticating with a configurable bearer token and optional device
-  identity (Ed25519 key pair). The gateway client MUST negotiate protocol
-  version using a configurable min/max range (e.g., minProtocol: 3,
-  maxProtocol: 4) rather than hard-pinning to a single version, to
-  support forward compatibility with gateway upgrades.
-- **FR-014**: The system MUST support both one-shot and persistent
-  (session-based) agent interactions through the OpenClaw gateway using a
-  single persistent WebSocket connection established at startup and reused
-  across turns to eliminate handshake/negotiation latency. All user
-  transcripts MUST route directly to the gateway, and response tokens MUST
-  stream back in real-time.
+- **FR-013**: The system MUST connect to the Hermes Agent gateway using a
+  configurable URL and bearer token. The Voice Adapter MUST use a Local LLM
+  as its primary conversational router to evaluate all incoming user transcripts.
+- **FR-014**: The Local LLM MUST natively handle conversational queries. When
+  complex tasks or integrations are required, the Local LLM MUST invoke the
+  Hermes Agent asynchronously via a tool call (e.g., `query_hermes_agent`).
+  This tool dispatch MUST NOT block the Local LLM, allowing it to instantly
+  generate a conversational acknowledgment while a background task handles the
+  Hermes HTTP response and injects the result into the downstream TTS pipeline.
 - **FR-015**: The system MUST support configurable TTS voice characters via
   ONNX model files, reference audio, and reference text — all specified
   through configuration, never hardcoded.
@@ -281,10 +270,11 @@ the correct voice without ever manually editing `.env` or writing Python.
 - **FR-018**: The system MUST sanitize TTS input: skip inputs with no
   alphanumeric content, ensure trailing punctuation, and handle
   casing requirements for specific voice characters.
-- **FR-019**: The system MUST implement a configurable silence timeout
+- **FR-019**: The Local LLM MUST have access to a `terminate_session` tool. When the user says goodbye or indicates they want to end the conversation, the Local LLM MUST invoke this tool, which emits a status frame to transition the satellite back to a passive wakeword-awaiting state.
+- **FR-020**: The system MUST implement a configurable silence timeout
   (default 30 s, range 10–120 s) that returns the satellite from active
   to passive mode after a period of inactivity.
-- **FR-020**: All configuration (service URLs, model paths, tokens, audio
+- **FR-021**: All configuration (service URLs, model paths, tokens, audio
   device settings, thresholds) MUST be loaded from a central `.env` file,
   with a documented `.env.example` template.
 - **FR-021**: The system MUST fail fast with clear error messages when

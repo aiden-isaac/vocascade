@@ -706,10 +706,9 @@ async function startListening() {
           return;
         }
 
-        const pcm = floatTo16BitPCM(audio);
-        log("Speech ended — " + pcm.byteLength + " PCM bytes");
+        log("Speech ended — " + audio.length + " samples");
         if (ws && ws.readyState === WebSocket.OPEN) {
-          ws.send(pcm);
+          ws.send(floatTo16BitPCM(audio));
         } else {
           setStatus("WebSocket unavailable", "warn");
         }

@@ -19,6 +19,11 @@ class AdapterConfig:
     audio_in_sample_rate: int   # 16000
     audio_out_sample_rate: int  # 32000
 
+    # Local LLM
+    llm_base_url: str
+    llm_api_key: str | None
+    llm_model: str
+
     # Hermes gateway
     hermes_base_url: str
     hermes_api_key: str | None
@@ -96,6 +101,10 @@ def load_config() -> AdapterConfig:
         port=int(os.getenv("PORT", "8000")),
         audio_in_sample_rate=int(os.getenv("AUDIO_IN_SAMPLE_RATE", "16000")),
         audio_out_sample_rate=int(os.getenv("AUDIO_OUT_SAMPLE_RATE", "32000")),
+
+        llm_base_url=os.getenv("LLM_BASE_URL", "https://llm.frizzt.com/v1"),
+        llm_api_key=os.getenv("LLM_API_KEY"),
+        llm_model=os.getenv("LLM_MODEL", "qwen-moe-coder-fast"),
 
         hermes_base_url=os.getenv("HERMES_BASE_URL", "http://localhost:8642/v1"),
         hermes_api_key=os.getenv("HERMES_API_KEY"),

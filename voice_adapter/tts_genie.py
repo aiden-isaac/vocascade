@@ -31,6 +31,7 @@ class GenieTTSService(TTSService):
             push_text_frames=True,
             **kwargs
         )
+        self.genie_sample_rate = sample_rate
         self._client = GenieTTSClient(
             tts_url=tts_url,
             character_name=character_name,
@@ -42,7 +43,7 @@ class GenieTTSService(TTSService):
         )
         self._character_loaded = False
 
-    async def start(self) -> None:
+    async def start(self, frame: Frame | None = None) -> None:
         """Initializes the Genie TTS character registration."""
         if not self._character_loaded:
             logger.info("Initializing Genie TTS character...")
@@ -75,7 +76,7 @@ class GenieTTSService(TTSService):
                 if len(chunk) > 0:
                     yield TTSAudioRawFrame(
                         audio=chunk,
-                        sample_rate=self.sample_rate,
+                        sample_rate=self.genie_sample_rate,
                         num_channels=1,
                         context_id=context_id
                     )

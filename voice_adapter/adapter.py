@@ -10,11 +10,17 @@ import logging
 from contextlib import asynccontextmanager
 from typing import List, Optional
 
+from voice_satellite.gateway.hermes_client import HermesClient
+from pipecat.services.llm_service import FunctionCallParams
+
 from pathlib import Path
 from fastapi import FastAPI, WebSocket
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.websockets import WebSocketDisconnect
+
+import json
+import base64
 
 from pipecat.audio.vad.silero import SileroVADAnalyzer
 from pipecat.frames.frames import (
@@ -26,6 +32,15 @@ from pipecat.frames.frames import (
     StartFrame,
     SystemFrame,
     TranscriptionFrame,
+    TextFrame,
+    CancelFrame,
+    InterruptionFrame,
+    OutputTransportMessageUrgentFrame,
+    VADUserStartedSpeakingFrame,
+    VADUserStoppedSpeakingFrame,
+    LLMFullResponseEndFrame,
+    BotStoppedSpeakingFrame,
+    UserStartedSpeakingFrame,
 )
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.runner import PipelineRunner
@@ -61,12 +76,24 @@ def generate_hermes_task_id() -> str:
     return f"task_{timestamp}_{_task_counter:02d}"
 
 
+class ClientMessageFrame(SystemFrame):
+    def __init__(self, message: dict):
+        super().__init__()
+        self.message = message
+
 class RawFrameSerializer(FrameSerializer):
-    """Serializer converting raw PCM audio bytes to/from Pipecat raw audio frames."""
+    """Serializer converting raw PCM audio bytes to/from Pipecat raw audio frames, and handling JSON for control/status."""
 
     async def serialize(self, frame: Frame) -> str | bytes | None:
         if isinstance(frame, OutputAudioRawFrame):
-            return frame.audio
+            b64_audio = base64.b64encode(frame.audio).decode("utf-8")
+            return json.dumps({
+                "type": "audio",
+                "data": b64_audio,
+                "sample_rate": getattr(frame, "sample_rate", 32000)
+            })
+        elif isinstance(frame, OutputTransportMessageUrgentFrame):
+            return json.dumps(frame.message)
         return None
 
     async def deserialize(self, data: str | bytes) -> Frame | None:
@@ -76,15 +103,39 @@ class RawFrameSerializer(FrameSerializer):
                 sample_rate=16000,
                 num_channels=1
             )
+        if isinstance(data, str):
+            try:
+                msg = json.loads(data)
+                logger.info(f"Deserialized client message: {msg}")
+                return ClientMessageFrame(message=msg)
+            except Exception as e:
+                logger.error(f"Error parsing client JSON: {e}")
         return None
 
 
+class EdgeVADProcessor(FrameProcessor):
+    """
+    Since the Edge Client (web UI) already performs VAD and sends complete speech
+    segments as distinct chunks, we bypass Silero and simply inject the required
+    Pipecat VAD frames around the audio to trigger the downstream STT service.
+    """
+    async def process_frame(self, frame: Frame, direction: FrameDirection):
+        await super().process_frame(frame, direction)
+
+        if isinstance(frame, InputAudioRawFrame):
+            await self.push_frame(VADUserStartedSpeakingFrame(), direction)
+            await self.push_frame(frame, direction)
+            await self.push_frame(VADUserStoppedSpeakingFrame(), direction)
+            return
+
+        await self.push_frame(frame, direction)
+
+
 class SileroVADService:
-    """Shim class satisfying SileroVADService requirements by wrapping Pipecat's VADProcessor."""
+    """Shim class satisfying SileroVADService requirements using EdgeVADProcessor."""
     def __init__(self, sample_rate: int = 16000):
         self.sample_rate = sample_rate
-        self.analyzer = SileroVADAnalyzer(sample_rate=sample_rate)
-        self.processor = VADProcessor(vad_analyzer=self.analyzer)
+        self.processor = EdgeVADProcessor()
 
 
 class AdapterProcessor(FrameProcessor):
@@ -99,12 +150,27 @@ class AdapterProcessor(FrameProcessor):
         super().__init__()
         self.transcript_manager = transcript_manager
         self.config = config
-        self.system_message = "You are a helpful voice assistant. Keep your responses concise and brief."
+        self.system_message = "You are a helpful voice assistant. Keep your responses concise and brief. If the user says goodbye, thank you, or indicates they want to end the conversation, you MUST invoke the terminate_session tool."
 
     async def process_frame(self, frame: Frame, direction: FrameDirection):
         await super().process_frame(frame, direction)
+        
+        logger.info(f"AdapterProcessor received: {type(frame).__name__}")
 
-        if isinstance(frame, StartFrame):
+        if isinstance(frame, ClientMessageFrame):
+            msg_type = frame.message.get("type")
+            logger.info(f"Processing ClientMessageFrame: {msg_type}")
+            if msg_type == "wakeword":
+                logger.info("Wakeword received, pushing status active_listening")
+                msg = OutputTransportMessageUrgentFrame({"type": "status", "state": "active_listening"})
+                await self.push_frame(msg, direction)
+                return
+            elif msg_type == "interrupt":
+                await self.push_frame(InterruptionFrame(), direction)
+                return
+            return
+
+        elif isinstance(frame, StartFrame):
             # Update TranscriptManager with the system prompt directly
             has_system = any(turn.role == "system" for turn in self.transcript_manager.get_window())
             if not has_system:
@@ -134,6 +200,12 @@ class AdapterProcessor(FrameProcessor):
             return
 
         elif isinstance(frame, TranscriptionFrame):
+            msg = OutputTransportMessageUrgentFrame({"type": "status", "state": "assistant_streaming"})
+            await self.push_frame(msg, direction)
+            
+            transcript_msg = OutputTransportMessageUrgentFrame({"type": "transcript", "text": frame.text})
+            await self.push_frame(transcript_msg, direction)
+
             # 1. Append user transcription to TranscriptManager
             user_turn = TranscriptTurn(
                 role="user",
@@ -158,7 +230,66 @@ class AdapterProcessor(FrameProcessor):
             await self.push_frame(context_frame, direction)
             return
 
+        elif isinstance(frame, TextFrame):
+            msg = OutputTransportMessageUrgentFrame({"type": "assistant_response", "text": frame.text})
+            await self.push_frame(msg, direction)
+            await self.push_frame(frame, direction)
+            return
+
         # Propagate all other frames
+        await self.push_frame(frame, direction)
+
+    async def inject_text(self, text: str):
+        """Asynchronously injects text frames downstream (used by background tools)."""
+        logger.info(f"Injecting text from background task: {text[:50]}...")
+        msg = OutputTransportMessageUrgentFrame({"type": "assistant_response", "text": text})
+        await self.push_frame(msg, FrameDirection.DOWNSTREAM)
+        await self.push_frame(TextFrame(text), FrameDirection.DOWNSTREAM)
+
+
+class TeardownInterceptor(FrameProcessor):
+    """
+    Downstream interceptor that tracks the LLM's text output and handles interruptions.
+    """
+    def __init__(self, transcript_mgr: TranscriptManager):
+        super().__init__()
+        self.transcript_mgr = transcript_mgr
+        self._full_response_buffer = ""
+
+    async def process_frame(self, frame: Frame, direction: FrameDirection):
+        if isinstance(frame, TextFrame):
+            text = frame.text
+            if "[TERMINATE]" in text:
+                text = text.replace("[TERMINATE]", "")
+            
+            clean_text = text.strip()
+            if clean_text:
+                self._full_response_buffer += clean_text + " "
+            
+            await self.push_frame(frame, direction)
+            return
+
+        elif isinstance(frame, UserStartedSpeakingFrame) or isinstance(frame, InterruptionFrame) or isinstance(frame, VADUserStartedSpeakingFrame):
+            if self._full_response_buffer.strip():
+                self.transcript_mgr.append(TranscriptTurn(
+                    role="assistant",
+                    content=self._full_response_buffer.strip() + " ... [interrupted]"
+                ))
+                self._full_response_buffer = ""
+            await self.push_frame(frame, direction)
+            return
+
+        elif isinstance(frame, LLMFullResponseEndFrame) or isinstance(frame, BotStoppedSpeakingFrame):
+            if self._full_response_buffer.strip():
+                self.transcript_mgr.append(TranscriptTurn(
+                    role="assistant",
+                    content=self._full_response_buffer.strip()
+                ))
+                self._full_response_buffer = ""
+            await self.push_frame(frame, direction)
+            return
+
+        await super().process_frame(frame, direction)
         await self.push_frame(frame, direction)
 
 
@@ -168,6 +299,7 @@ def build_pipeline(
     stt_service: WhisperSTTService,
     adapter_processor: AdapterProcessor,
     llm_service: OpenAILLMService,
+    teardown_interceptor: TeardownInterceptor,
     tts_service: GenieTTSService,
 ) -> Pipeline:
     """Assembles and returns the core Pipecat pipeline."""
@@ -177,6 +309,7 @@ def build_pipeline(
         stt_service,
         adapter_processor,
         llm_service,
+        teardown_interceptor,
         tts_service,
         transport.output(),
     ])
@@ -191,6 +324,7 @@ async def lifespan(app_: FastAPI):
     # Initialize Whisper STT Service
     logger.info("Initializing Whisper STT service...")
     app_.state.stt_service = WhisperSTTService(
+        device="cpu",
         settings=WhisperSTTSettings(
             model=config.whisper_model,
             language=Language(config.whisper_language)
@@ -275,16 +409,93 @@ async def websocket_endpoint(websocket: WebSocket):
 
         vad_service = SileroVADService(sample_rate=config.audio_in_sample_rate)
 
-        llm = OpenAILLMService(
-            api_key=config.hermes_api_key or "not-needed",
+        # Initialize Hermes client for background tool tasks
+        hermes_client = HermesClient(
             base_url=config.hermes_base_url,
+            api_key=config.hermes_api_key
+        )
+
+        llm = OpenAILLMService(
+            api_key=config.llm_api_key or "not-needed",
+            base_url=config.llm_base_url,
             settings=OpenAILLMService.Settings(
-                model=config.hermes_model,
+                model=config.llm_model,
             ),
         )
 
         transcript_manager = TranscriptManager()
         adapter_processor = AdapterProcessor(transcript_manager=transcript_manager, config=config)
+        teardown_interceptor = TeardownInterceptor(transcript_mgr=transcript_manager)
+
+        # Define the terminate_session tool schema
+        terminate_tool_schema = {
+            "type": "function",
+            "function": {
+                "name": "terminate_session",
+                "description": "Invoke this tool to gracefully end the conversation session when the user says goodbye or indicates they are done.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {}
+                }
+            }
+        }
+        
+        async def handle_terminate_session(params: FunctionCallParams):
+            logger.info("Local LLM decided to terminate the session.")
+            msg = OutputTransportMessageUrgentFrame({"type": "status", "state": "passive_listening"})
+            await adapter_processor.push_frame(msg, FrameDirection.DOWNSTREAM)
+            return {"status": "session_terminated"}
+            
+        llm.register_function("terminate_session", handle_terminate_session)
+
+        # Define the Hermes tool schema
+        hermes_tool_schema = {
+            "type": "function",
+            "function": {
+                "name": "query_hermes_agent",
+                "description": "Invoke the Hermes agent to perform complex tasks, run integrations, or fetch external information that you cannot handle locally.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "prompt": {
+                            "type": "string",
+                            "description": "The exact user request or context to send to Hermes."
+                        }
+                    },
+                    "required": ["prompt"]
+                }
+            }
+        }
+
+        async def handle_query_hermes(params: FunctionCallParams):
+            prompt = params.args.get("prompt", "")
+            logger.info(f"Triggering background Hermes query with prompt: {prompt}")
+            
+            async def consume_hermes(text: str):
+                try:
+                    logger.info("Connecting to Hermes...")
+                    async for chunk in hermes_client.send_transcript(text):
+                        await adapter_processor.inject_text(chunk)
+                except Exception as e:
+                    logger.error(f"Background Hermes task failed: {e}")
+                    await adapter_processor.inject_text(" Sorry, I wasn't able to reach Hermes.")
+            
+            # Spawn background task
+            asyncio.create_task(consume_hermes(prompt))
+            
+            # Return instantly to unblock Qwen
+            return {"status": "task_dispatched_to_background"}
+
+        llm.register_function("query_hermes_agent", handle_query_hermes)
+
+        # Re-patch the adapter processor LLMContext injection logic
+        # (This avoids needing to overwrite the whole method, we just dynamically patch the LLMContext wrapper in the processor)
+        original_process_frame = adapter_processor.process_frame
+        async def hooked_process_frame(frame, direction):
+            if isinstance(frame, LLMContextFrame):
+                frame.context.set_tools([hermes_tool_schema, terminate_tool_schema])
+            await original_process_frame(frame, direction)
+        adapter_processor.process_frame = hooked_process_frame
 
         # Build pipeline
         pipeline = build_pipeline(
@@ -293,6 +504,7 @@ async def websocket_endpoint(websocket: WebSocket):
             stt_service=stt_service,
             adapter_processor=adapter_processor,
             llm_service=llm,
+            teardown_interceptor=teardown_interceptor,
             tts_service=tts_service
         )
 
