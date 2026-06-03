@@ -30,3 +30,4 @@ scratch/
 scripts/test_voice_profile.py
 scripts/voice_test_output/
 *.wav
+/test_*.py
