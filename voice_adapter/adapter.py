@@ -10,7 +10,10 @@ import logging
 from contextlib import asynccontextmanager
 from typing import List, Optional
 
+from pathlib import Path
 from fastapi import FastAPI, WebSocket
+from fastapi.responses import HTMLResponse
+from fastapi.staticfiles import StaticFiles
 from starlette.websockets import WebSocketDisconnect
 
 from pipecat.audio.vad.silero import SileroVADAnalyzer
@@ -35,6 +38,7 @@ from pipecat.serializers.base_serializer import FrameSerializer
 from pipecat.services.openai.llm import OpenAILLMService
 from pipecat.services.whisper.stt import WhisperSTTService, WhisperSTTSettings
 from pipecat.transcriptions.language import Language
+from pipecat.transports.websocket.fastapi import FastAPIWebsocketTransport, FastAPIWebsocketParams
 
 from voice_adapter.config import AdapterConfig, load_config
 from voice_adapter.transcript_manager import TranscriptManager, TranscriptTurn
@@ -221,6 +225,18 @@ async def lifespan(app_: FastAPI):
 
 
 app = FastAPI(lifespan=lifespan)
+
+STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
+app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+
+
+@app.get("/")
+async def index() -> HTMLResponse:
+    """Serves the index.html page or a fallback message if it doesn't exist."""
+    index_file = STATIC_DIR / "index.html"
+    if index_file.exists():
+        return HTMLResponse(index_file.read_text(encoding="utf-8"))
+    return HTMLResponse("<h1>Voice Satellite Core Client</h1>")
 
 
 @app.websocket("/ws")
