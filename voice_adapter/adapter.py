@@ -32,7 +32,6 @@ from pipecat.pipeline.runner import PipelineRunner
 from pipecat.pipeline.task import PipelineTask
 from pipecat.processors.audio.vad_processor import VADProcessor
 from pipecat.processors.aggregators.llm_context import LLMContext
-from pipecat.processors.aggregators.llm_response import LLMFullResponseAggregator
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 from pipecat.serializers.base_serializer import FrameSerializer
 from pipecat.services.openai.llm import OpenAILLMService
@@ -169,7 +168,6 @@ def build_pipeline(
     stt_service: WhisperSTTService,
     adapter_processor: AdapterProcessor,
     llm_service: OpenAILLMService,
-    response_aggregator: LLMFullResponseAggregator,
     tts_service: GenieTTSService,
 ) -> Pipeline:
     """Assembles and returns the core Pipecat pipeline."""
@@ -179,7 +177,6 @@ def build_pipeline(
         stt_service,
         adapter_processor,
         llm_service,
-        response_aggregator,
         tts_service,
         transport.output(),
     ])
@@ -281,18 +278,13 @@ async def websocket_endpoint(websocket: WebSocket):
         llm = OpenAILLMService(
             api_key=config.hermes_api_key or "not-needed",
             base_url=config.hermes_base_url,
-            model=config.hermes_model
+            settings=OpenAILLMService.Settings(
+                model=config.hermes_model,
+            ),
         )
 
         transcript_manager = TranscriptManager()
         adapter_processor = AdapterProcessor(transcript_manager=transcript_manager, config=config)
-
-        response_aggregator = LLMFullResponseAggregator()
-
-        @response_aggregator.event_handler("on_completion")
-        async def on_llm_completion(aggregator, completion: str, completed: bool):
-            if completed and completion:
-                transcript_manager.append(TranscriptTurn(role="assistant", content=completion))
 
         # Build pipeline
         pipeline = build_pipeline(
@@ -301,7 +293,6 @@ async def websocket_endpoint(websocket: WebSocket):
             stt_service=stt_service,
             adapter_processor=adapter_processor,
             llm_service=llm,
-            response_aggregator=response_aggregator,
             tts_service=tts_service
         )
 
@@ -313,7 +304,7 @@ async def websocket_endpoint(websocket: WebSocket):
             await task.cancel()
 
         runner = PipelineRunner()
-        runner.add_workers(task)
+        await runner.add_workers(task)
 
         try:
             await runner.run()
