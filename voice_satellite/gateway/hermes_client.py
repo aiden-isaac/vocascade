@@ -17,9 +17,23 @@ class HermesClient(GatewayClient):
     """
     Client for Hermes Agent gateway using HTTP SSE.
     """
-    def __init__(self, base_url: str, api_key: str | None = None) -> None:
-        self.base_url = base_url
+    def __init__(
+        self,
+        base_url: str,
+        api_key: str | None = None,
+        session_key: str | None = None,
+    ) -> None:
+        # Contract (005): the base URL carries /v1, e.g. http://jarlaxle:8642/v1
+        self.base_url = base_url.rstrip("/")
+        if not self.base_url.endswith("/v1"):
+            logger.warning(
+                "HERMES_BASE_URL %r does not end with /v1 — appending it "
+                "(the Hermes api_server serves chat/completions under /v1)",
+                base_url,
+            )
+            self.base_url = f"{self.base_url}/v1"
         self.api_key = api_key
+        self.session_key = session_key
         self.session_id: str | None = None
         self.client: httpx.AsyncClient | None = None
 
@@ -51,12 +65,15 @@ class HermesClient(GatewayClient):
         # Keep static analyzers happy
         assert self.client is not None
 
-        url = f"{self.base_url.rstrip('/')}/chat/completions"
+        url = f"{self.base_url}/chat/completions"
         headers = {
             "Content-Type": "application/json",
         }
         if self.session_id:
             headers["X-Hermes-Session-Id"] = self.session_id
+        if self.session_key:
+            # Stable long-term-memory scope; requires API-key auth server-side.
+            headers["X-Hermes-Session-Key"] = self.session_key
         if self.api_key:
             headers["Authorization"] = f"Bearer {self.api_key}"
 

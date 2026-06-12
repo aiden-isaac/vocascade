@@ -548,7 +548,8 @@ async def websocket_endpoint(websocket: WebSocket):
         # Initialize Hermes client for background tool tasks
         hermes_client = HermesClient(
             base_url=config.hermes_base_url,
-            api_key=config.hermes_api_key
+            api_key=config.hermes_api_key,
+            session_key=config.hermes_session_key,
         )
 
         llm = OpenAILLMService(
