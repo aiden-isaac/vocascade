@@ -7,6 +7,7 @@ import os
 import sys
 import logging
 from dataclasses import dataclass
+from pathlib import Path
 from dotenv import load_dotenv
 
 logger = logging.getLogger("voice_adapter.config")
@@ -41,6 +42,9 @@ class AdapterConfig:
     # STT
     whisper_model: str
     whisper_language: str
+
+    # Pre-rendered acknowledgement / filler audio
+    filler_dir: Path
 
     # Pre-fetch cache
     hermes_memory_path: str     # ~/.hermes/memory
@@ -120,6 +124,8 @@ def load_config() -> AdapterConfig:
 
         whisper_model=os.getenv("WHISPER_MODEL", "tiny.en"),
         whisper_language=os.getenv("WHISPER_LANGUAGE", "en"),
+
+        filler_dir=Path(os.getenv("FILLER_DIR", "static/fillers")),
 
         hermes_memory_path=os.getenv("HERMES_MEMORY_PATH", default_memory_path),
         honcho_api_url=os.getenv("HONCHO_API_URL", "http://artemis:8000"),

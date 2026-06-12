@@ -215,6 +215,63 @@
 
 ---
 
+## Phase 9.5: User Story 8 — Graceful Conversation Termination (Priority: P2)
+
+**Goal**: Let the assistant speak a farewell, then reliably return the client to
+passive/wakeword listening — even when the local model is inconsistent.
+
+**Independent Test**: Connect client, say "that will be all", verify bot speaks a
+farewell and the client receives `passive_listening` (returns to wakeword mode).
+
+**Design note (revised 2026-06-04)**: The original tool-call approach
+(`terminate_session`) and a single sentinel proved unreliable — a small, fast
+local model emits the sentinel nondeterministically, so the session sometimes
+never returned to wakeword mode. Termination now fires on **either** of two
+independent signals, checked when the bot finishes speaking
+(`BotStoppedSpeakingFrame`):
+  1. **Model sentinel** — `ENDSESSION` present anywhere in the buffered reply
+     (matched case/space-insensitively, tolerant of streamed token splits).
+  2. **Deterministic phrase backstop** — `AdapterProcessor` matches a farewell
+     phrase ("that will be all", "goodbye", …) on the *user* transcript and arms
+     `TeardownInterceptor.arm_termination()`.
+An interruption mid-farewell disarms termination (the user re-engaged).
+
+### Tests for User Story 8
+
+- [x] T059 [P] [US8] Unit tests in `tests/unit/test_adapter.py` for `_is_farewell`, `_contains_sentinel`, and `_strip_sentinel` (positives, negatives, no false-positive on "end … session").
+
+### Implementation for User Story 8
+
+- [x] T060 [US8] `AdapterProcessor` system message instructs the model to append `ENDSESSION` on its own line for clear farewells only.
+- [x] T061 [US8] Removed the `terminate_session` tool; `AdapterProcessor` arms `TeardownInterceptor.arm_termination()` via deterministic farewell-phrase detection on the user transcript.
+- [x] T062 [US8] `TeardownInterceptor.process_frame` strips the sentinel from TTS, commits the reply to history, and on `BotStoppedSpeakingFrame` pushes `passive_listening` when either signal is present. (Also now calls `super().process_frame()` per Pipecat's `FrameProcessor` contract.)
+
+---
+
+## Phase 9.6: User Story 9 — Preloaded Acknowledgement ("Ack") Audio (Priority: P2)
+
+**Goal**: Zero-latency spoken acknowledgement from pre-rendered PCM clips —
+a "Yes?" the instant the wakeword fires. Clips are generated offline from a
+config of phrases.
+
+**Design note (revised 2026-06-12)**: `acknowledge` (wakeword) is the ONLY
+filler category in use. "Working"/"thinking" style clips were dropped — a clip
+played at Hermes dispatch races the local model's own spoken handoff
+("Let me check..."), creating overlapping/competing audio. The model's verbal
+handoff IS the dispatch acknowledgement.
+
+**Independent Test**: With `static/fillers/` populated, say the wakeword → hear an
+ack clip immediately (before STT/LLM).
+
+### Implementation for User Story 9
+
+- [x] T063 [US9] `scripts/generate_fillers.py` + `static/fillers.json` render a per-category phrase list to `static/fillers/<category>/<slug>.pcm` via Genie TTS. (Future: Hermes can regenerate these from its own phrase set.)
+- [x] T064 [US9] Implement `FillerEngine` in `voice_adapter/filler_engine.py` — load PCM clips into RAM at startup, serve random clip per category with `thinking` fallback.
+- [x] T065 [US9] Add `filler_dir` to `AdapterConfig`; load `FillerEngine` in the adapter lifespan.
+- [x] T066 [US9] Wire instant playback in `AdapterProcessor`: `acknowledge` clip on wakeword (`OutputAudioRawFrame` at the output sample rate). A `working` clip on Hermes dispatch was tried and removed — see design note above.
+
+---
+
 ## Phase 10: Polish & Cross-Cutting Concerns
 
 **Purpose**: Documentation, cleanup, integration testing, frontend update
@@ -300,7 +357,7 @@ Phase 1 (Setup) → Phase 2 (Foundational)
 
 ## Summary
 
-- **Total tasks**: 62
+- **Total tasks**: 66
 - **Phase 1 (Setup)**: 5 tasks
 - **Phase 2 (Foundational)**: 6 tasks
 - **Phase 2.5 (US0 Satellite Client)**: 4 tasks
@@ -311,8 +368,10 @@ Phase 1 (Setup) → Phase 2 (Foundational)
 - **Phase 7 (US5 Transcript Graph)**: 4 tasks
 - **Phase 8 (US6 Pre-Fetch Cache)**: 6 tasks
 - **Phase 9 (US7 Offline Handler)**: 7 tasks
+- **Phase 9.5 (US8 Graceful Termination)**: 4 tasks
+- **Phase 9.6 (US9 Preloaded Ack Audio)**: 4 tasks
 - **Phase 10 (Polish)**: 8 tasks
-- **Parallel opportunities**: 15 tasks marked [P]
+- **Parallel opportunities**: 16 tasks marked [P]
 - **Suggested MVP scope**: Phase 1 + Phase 2 + Phase 3 (19 tasks)
 
 ## Notes
@@ -323,3 +382,48 @@ Phase 1 (Setup) → Phase 2 (Foundational)
 - Commit after each task or logical group
 - Stop at any checkpoint to validate story independently
 - Existing `voice_satellite/` tests must continue passing — they validate reused components
+
+---
+
+## Reality Check & Roadmap (updated 2026-06-04)
+
+Several tasks below were marked `[x]` ahead of their actual implementation. Current
+**verified** state of `voice_adapter/`:
+
+**Working today (simple, local-only voice assistant):**
+- US1 pipeline (transport → VAD shim → Whisper STT → AdapterProcessor → Qwen LLM →
+  TeardownInterceptor → Genie TTS → output), single-session WS endpoint, static UI.
+- US8 graceful termination (dual-signal — see Phase 9.5).
+- US9 preloaded ack audio (see Phase 9.6).
+- Hermes tool is now correctly advertised to the model and dispatches a background
+  task; the result is spoken when it arrives (`inject_text`). Note: this depends on
+  the local model supporting OpenAI tool-calling.
+
+**Stubbed / not yet real (despite `[x]` marks above):**
+- `voice_adapter/pre_fetch_cache.py` — `PreFetchCache` is a no-op stub (`is_warm`
+  always True, empty `ContextSnapshot`). Watchdog + Honcho polling NOT implemented.
+- `voice_adapter/pipecat_bridge.py` — **does not exist**. SSE task-completion bridge
+  (US3) is not implemented; background results are currently injected directly from
+  the in-process Hermes call rather than via a persistent SSE channel.
+- `voice_adapter/offline_handler.py` — **does not exist** (US7 not implemented).
+
+### The "hard part" — Hermes context + proactive task tracking (next milestone)
+
+Goal: the fast/stateless local adapter understands the user using context from the
+Hermes agent, and tracks long-running Hermes tool work like Jarvis ("Okay, I'm on
+it" → keep conversing → later, proactively: "the server finished that task").
+
+1. **Context hydration (US6, make real)**: implement `PreFetchCache` for real —
+   watchdog on `~/.hermes/memory/` + Honcho polling — and have `AdapterProcessor`
+   prepend `get_context()` to the system prompt so Qwen has user/profile/recent-memory
+   context without a round-trip. Gate first utterance on `is_warm` (10s timeout).
+2. **Task lifecycle (US3 + US5)**: when `query_hermes_agent` dispatches, create a
+   `HermesTask` (PENDING→EXECUTING) in `TranscriptManager` keyed by `hermes_task_id`;
+   tag context turns with `[TASK:<id> STATE:executing]` via
+   `get_context_for_prompt()` so the model can answer "is that done yet?" correctly.
+3. **Proactive completion (US3)**: build `PipecatBridge` — a persistent SSE listener
+   on `hermes_sse_url` that matches completion events to tracked task IDs, flips state
+   to COMPLETED, and injects the spoken result (buffering while the user is talking).
+   Discard results for tasks marked CANCELLED.
+4. **Cancellation guard (US5)**: honor `TranscriptManager.can_cancel()` — refuse to
+   cancel a task already EXECUTING and tell the user it'll be reported when done.

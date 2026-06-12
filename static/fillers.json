@@ -1,27 +1,7 @@
 {
-  "thinking": [
-    "Hmm.",
-    "Let me think.",
-    "One moment."
-  ],
-  "working": [
-    "Just a second.",
-    "Running diagnostics.",
-    "Analyzing."
-  ],
-  "slow_task": [
-    "This might take a moment.",
-    "Working on that now.",
-    "Still processing."
-  ],
   "acknowledge": [
     "Yes?",
     "I'm listening.",
     "Go ahead."
-  ],
-  "signoff": [
-    "Goodbye.",
-    "Talk to you later.",
-    "Farewell."
   ]
 }

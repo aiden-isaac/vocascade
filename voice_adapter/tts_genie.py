@@ -4,6 +4,7 @@ Adapters the custom GenieTTSClient to Pipecat's TTSService interface.
 """
 
 import logging
+import re
 from typing import AsyncGenerator
 from pipecat.services.tts_service import TTSService
 from pipecat.frames.frames import Frame, TTSAudioRawFrame, ErrorFrame
@@ -59,6 +60,13 @@ class GenieTTSService(TTSService):
         Synthesize text to speech using Genie TTS server.
         Yields TTSAudioRawFrame chunks.
         """
+        # Authoritative strip of the termination sentinel before it can be spoken.
+        # Tolerant of casing and an optional space ("ENDSESSION", "end session", ...).
+        text = re.sub(r"(?i)end\s*session", "", text).strip()
+        if not text:
+            yield None
+            return
+
         logger.debug(f"GenieTTSService synthesizing: '{text}'")
         try:
             # First initialization if not already done

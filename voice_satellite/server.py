@@ -255,19 +255,6 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                 if first_chunk_task in done:
                     first_audio = first_chunk_task.result()
                 else:
-                    logger.info("TTS synthesis latency exceeded threshold, playing filler")
-                    session.state = SessionState.FILLER_SPEAKING
-                    filler_engine = getattr(app.state, "filler_engine", None)
-                    if filler_engine:
-                        filler_pcm = filler_engine.get_filler("thinking")
-                        if filler_pcm:
-                            async with ws_lock:
-                                await websocket.send_json({
-                                    "type": "audio",
-                                    "data": base64.b64encode(filler_pcm).decode("ascii"),
-                                    "word_offset": 0,
-                                    "sample_rate": 32000
-                                })
                     first_audio = await first_chunk_task
 
                 session.state = SessionState.SPEAKING
@@ -442,19 +429,6 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                         if first_chunk_task in done:
                             first_item = first_chunk_task.result()
                         else:
-                            logger.info("TTS synthesis latency exceeded threshold, playing filler")
-                            session.state = SessionState.FILLER_SPEAKING
-                            filler_engine = getattr(app.state, "filler_engine", None)
-                            if filler_engine:
-                                filler_pcm = filler_engine.get_filler("thinking")
-                                if filler_pcm:
-                                    async with ws_lock:
-                                        await websocket.send_json({
-                                            "type": "audio",
-                                            "data": base64.b64encode(filler_pcm).decode("ascii"),
-                                            "word_offset": 0,
-                                            "sample_rate": 32000
-                                        })
                             first_item = await first_chunk_task
 
                         session.state = SessionState.SPEAKING
@@ -480,7 +454,6 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                                     "word_offset": current_word_offset,
                                     "sample_rate": 32000
                                 })
-                            
                             active_chunk = chunk
                             
                             async for chunk, audio_chunk in audio_generator:

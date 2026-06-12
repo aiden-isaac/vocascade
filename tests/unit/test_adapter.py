@@ -11,7 +11,13 @@ from pipecat.pipeline.runner import PipelineRunner
 from pipecat.processors.frame_processor import FrameProcessor
 from voice_adapter.config import load_config
 from voice_adapter.transcript_manager import TranscriptManager, TranscriptTurn
-from voice_adapter.adapter import AdapterProcessor, generate_hermes_task_id
+from voice_adapter.adapter import (
+    AdapterProcessor,
+    generate_hermes_task_id,
+    _is_farewell,
+    _contains_sentinel,
+    _strip_sentinel,
+)
 
 
 class FrameCollector(FrameProcessor):
@@ -110,3 +116,46 @@ async def test_adapter_processor_transcription_frame():
     assert context.messages[0]["role"] == "system"
     assert context.messages[1]["role"] == "user"
     assert context.messages[1]["content"] == "hello"
+
+
+# ── Session termination detection helpers ────────────────────────────────────
+
+@pytest.mark.parametrize("text", [
+    "Okay, that will be all, thanks!",
+    "Goodbye.",
+    "talk to you later",
+    "I'm done for now",
+    "Alright, that's everything.",
+])
+def test_is_farewell_positive(text):
+    assert _is_farewell(text) is True
+
+
+@pytest.mark.parametrize("text", [
+    "what is the weather today",
+    "tell me a joke",
+    "can you set a timer",
+    "",
+])
+def test_is_farewell_negative(text):
+    assert _is_farewell(text) is False
+
+
+@pytest.mark.parametrize("text", [
+    "Bye!\nENDSESSION",
+    "Take care! END SESSION",
+    "see ya endsession",
+])
+def test_contains_sentinel_positive(text):
+    assert _contains_sentinel(text) is True
+
+
+def test_contains_sentinel_no_false_positive():
+    # "end ... session" with other words between must not trigger.
+    assert _contains_sentinel("let's end this yoga session early") is False
+
+
+def test_strip_sentinel_removes_all_variants():
+    assert _strip_sentinel("Goodbye ENDSESSION").strip() == "Goodbye"
+    assert _strip_sentinel("Goodbye\nEND SESSION").strip() == "Goodbye"
+    assert "session" not in _strip_sentinel("done end session").lower()

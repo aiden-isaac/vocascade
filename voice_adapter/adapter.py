@@ -7,6 +7,7 @@ the SileroVADService shim, and the AdapterProcessor.
 import asyncio
 import datetime
 import logging
+import re
 from contextlib import asynccontextmanager
 from typing import List, Optional
 
@@ -55,6 +56,7 @@ from pipecat.transcriptions.language import Language
 from pipecat.transports.websocket.fastapi import FastAPIWebsocketTransport, FastAPIWebsocketParams
 
 from voice_adapter.config import AdapterConfig, load_config
+from voice_adapter.filler_engine import FillerEngine
 from voice_adapter.transcript_manager import TranscriptManager, TranscriptTurn
 from voice_adapter.tts_genie import GenieTTSService
 
@@ -74,6 +76,66 @@ def generate_hermes_task_id() -> str:
     now = datetime.datetime.now()
     timestamp = now.strftime("%Y%m%d_%H%M%S")
     return f"task_{timestamp}_{_task_counter:02d}"
+
+
+# ── Session termination detection ────────────────────────────────────────────
+# Termination uses TWO independent signals so it does not depend on a small,
+# fast local model reliably emitting a sentinel:
+#   1. The model appends the ENDSESSION sentinel to its farewell reply.
+#   2. A deterministic phrase match on the user's transcript (the backstop).
+# Either one returning True ends the session after the bot finishes speaking.
+
+_TERMINATE_SENTINEL = "ENDSESSION"
+
+# Deterministic farewell phrases matched against the normalized user transcript.
+# Kept to unambiguous "wrap up" phrasings to avoid ending the session by accident.
+_FAREWELL_PHRASES = (
+    "that will be all",
+    "that'll be all",
+    "that is all",
+    "thats all",
+    "that's all",
+    "thats everything",
+    "that's everything",
+    "thats it for now",
+    "that's it for now",
+    "nothing else",
+    "we are done",
+    "we're done",
+    "were done",
+    "i am done",
+    "i'm done",
+    "im done",
+    "goodbye",
+    "good bye",
+    "see you later",
+    "talk to you later",
+    "good night",
+    "goodnight",
+)
+
+
+def _normalize(text: str) -> str:
+    """Lowercase and strip punctuation, collapsing to bare words for matching."""
+    return re.sub(r"[^a-z0-9 ]", "", text.lower()).strip()
+
+
+def _contains_sentinel(text: str) -> bool:
+    """True if the (possibly streamed/spaced) ENDSESSION sentinel is present."""
+    return "endsession" in re.sub(r"[^a-z]", "", text.lower())
+
+
+def _strip_sentinel(text: str) -> str:
+    """Remove the termination sentinel so it is never stored or spoken."""
+    return re.sub(r"(?i)end\s*session", "", text)
+
+
+def _is_farewell(text: str) -> bool:
+    """Deterministic backstop: True if the user clearly signalled wrap-up."""
+    norm = _normalize(text)
+    if not norm:
+        return False
+    return any(phrase in norm for phrase in _FAREWELL_PHRASES)
 
 
 class ClientMessageFrame(SystemFrame):
@@ -146,11 +208,44 @@ class AdapterProcessor(FrameProcessor):
     to route them directly to the Qwen LLM via OpenAILLMService.
     """
 
-    def __init__(self, transcript_manager: TranscriptManager, config: AdapterConfig):
+    def __init__(
+        self,
+        transcript_manager: TranscriptManager,
+        config: AdapterConfig,
+        tools: Optional[List[dict]] = None,
+        filler_engine: Optional[FillerEngine] = None,
+    ):
         super().__init__()
         self.transcript_manager = transcript_manager
         self.config = config
-        self.system_message = "You are a helpful voice assistant. Keep your responses concise and brief. If the user says goodbye, thank you, or indicates they want to end the conversation, you MUST invoke the terminate_session tool."
+        self.tools = tools or []
+        self.filler_engine = filler_engine
+        # Set once the TeardownInterceptor exists; lets the deterministic
+        # farewell backstop arm a session teardown for the current reply.
+        self.teardown: Optional["TeardownInterceptor"] = None
+        self.system_message = (
+            "You are a helpful voice assistant. Keep your responses concise and brief. "
+            "Only if the user explicitly says goodbye, farewell, thank you that will be all, "
+            "or a clear and direct farewell phrase, append the single word ENDSESSION on a new line "
+            "at the very end of your response, with no other text after it. "
+            "Do NOT append ENDSESSION for greetings, questions, or any non-farewell message."
+        )
+
+    async def _play_filler(self, category: str, direction: FrameDirection) -> None:
+        """Push a pre-rendered acknowledgement clip for instant (zero-latency) playback."""
+        if not self.filler_engine:
+            return
+        pcm = self.filler_engine.get_filler(category)
+        if not pcm:
+            return
+        await self.push_frame(
+            OutputAudioRawFrame(
+                audio=pcm,
+                sample_rate=self.config.audio_out_sample_rate,
+                num_channels=1,
+            ),
+            direction,
+        )
 
     async def process_frame(self, frame: Frame, direction: FrameDirection):
         await super().process_frame(frame, direction)
@@ -164,6 +259,8 @@ class AdapterProcessor(FrameProcessor):
                 logger.info("Wakeword received, pushing status active_listening")
                 msg = OutputTransportMessageUrgentFrame({"type": "status", "state": "active_listening"})
                 await self.push_frame(msg, direction)
+                # Instant audible acknowledgement ("Yes?", "I'm listening.")
+                await self._play_filler("acknowledge", direction)
                 return
             elif msg_type == "interrupt":
                 await self.push_frame(InterruptionFrame(), direction)
@@ -213,6 +310,12 @@ class AdapterProcessor(FrameProcessor):
             )
             self.transcript_manager.append(user_turn)
 
+            # Deterministic farewell backstop: arm a session teardown so we return
+            # to passive/wakeword mode even if the model forgets the ENDSESSION sentinel.
+            if self.teardown is not None and _is_farewell(frame.text):
+                logger.info("Deterministic farewell phrase detected — arming session teardown.")
+                self.teardown.arm_termination()
+
             # 2. Reconstruct the full message list from the sliding window
             turns = self.transcript_manager.get_window()
             messages = []
@@ -222,8 +325,11 @@ class AdapterProcessor(FrameProcessor):
                     "content": turn.content
                 })
 
-            # Create the LLMContext and wrap it in an LLMContextFrame
+            # Create the LLMContext (advertising any tools to the model) and
+            # wrap it in an LLMContextFrame.
             context = LLMContext(messages=messages)
+            if self.tools:
+                context.set_tools(self.tools)
             context_frame = LLMContextFrame(context=context)
 
             # 3. Push LLMContextFrame downstream
@@ -231,7 +337,8 @@ class AdapterProcessor(FrameProcessor):
             return
 
         elif isinstance(frame, TextFrame):
-            msg = OutputTransportMessageUrgentFrame({"type": "assistant_response", "text": frame.text})
+            clean = _strip_sentinel(frame.text).strip()
+            msg = OutputTransportMessageUrgentFrame({"type": "assistant_response", "text": clean})
             await self.push_frame(msg, direction)
             await self.push_frame(frame, direction)
             return
@@ -249,47 +356,73 @@ class AdapterProcessor(FrameProcessor):
 
 class TeardownInterceptor(FrameProcessor):
     """
-    Downstream interceptor that tracks the LLM's text output and handles interruptions.
+    Sits just downstream of the LLM. Buffers the assistant's reply (so it can be
+    committed to history), strips the ENDSESSION sentinel before it reaches TTS,
+    and — once the bot finishes speaking a farewell — returns the client to
+    passive/wakeword listening.
+
+    Termination fires when EITHER signal is present:
+      * the model emitted the ENDSESSION sentinel in this reply, or
+      * the deterministic farewell backstop armed it (see AdapterProcessor).
     """
     def __init__(self, transcript_mgr: TranscriptManager):
         super().__init__()
         self.transcript_mgr = transcript_mgr
         self._full_response_buffer = ""
+        # Armed by the deterministic farewell phrase match on the user transcript.
+        self._termination_armed = False
+
+    def arm_termination(self) -> None:
+        """Deterministic backstop: end the session after the current reply is spoken."""
+        self._termination_armed = True
+
+    async def _go_passive(self) -> None:
+        logger.info("Session termination — returning client to passive (wakeword) listening.")
+        msg = OutputTransportMessageUrgentFrame({"type": "status", "state": "passive_listening"})
+        await self.push_frame(msg, FrameDirection.DOWNSTREAM)
 
     async def process_frame(self, frame: Frame, direction: FrameDirection):
-        if isinstance(frame, TextFrame):
-            text = frame.text
-            if "[TERMINATE]" in text:
-                text = text.replace("[TERMINATE]", "")
-            
-            clean_text = text.strip()
-            if clean_text:
-                self._full_response_buffer += clean_text + " "
-            
-            await self.push_frame(frame, direction)
-            return
-
-        elif isinstance(frame, UserStartedSpeakingFrame) or isinstance(frame, InterruptionFrame) or isinstance(frame, VADUserStartedSpeakingFrame):
-            if self._full_response_buffer.strip():
-                self.transcript_mgr.append(TranscriptTurn(
-                    role="assistant",
-                    content=self._full_response_buffer.strip() + " ... [interrupted]"
-                ))
-                self._full_response_buffer = ""
-            await self.push_frame(frame, direction)
-            return
-
-        elif isinstance(frame, LLMFullResponseEndFrame) or isinstance(frame, BotStoppedSpeakingFrame):
-            if self._full_response_buffer.strip():
-                self.transcript_mgr.append(TranscriptTurn(
-                    role="assistant",
-                    content=self._full_response_buffer.strip()
-                ))
-                self._full_response_buffer = ""
-            await self.push_frame(frame, direction)
-            return
-
         await super().process_frame(frame, direction)
+
+        if isinstance(frame, TextFrame):
+            self._full_response_buffer += frame.text
+            # Best-effort strip here; GenieTTSService.run_tts does the authoritative
+            # removal after sentence aggregation reassembles split tokens.
+            clean_text = _strip_sentinel(frame.text)
+            if clean_text.strip():
+                await self.push_frame(TextFrame(clean_text), direction)
+            return
+
+        if isinstance(frame, (UserStartedSpeakingFrame, InterruptionFrame, VADUserStartedSpeakingFrame)):
+            buffered = self._full_response_buffer
+            if buffered.strip():
+                self.transcript_mgr.append(TranscriptTurn(
+                    role="assistant",
+                    content=_strip_sentinel(buffered).strip() + " ... [interrupted]",
+                    was_interrupted=True,
+                ))
+            self._full_response_buffer = ""
+            # The user re-engaged mid-reply — cancel any pending teardown so a
+            # farewell that gets interrupted keeps the conversation alive.
+            self._termination_armed = False
+            await self.push_frame(frame, direction)
+            return
+
+        if isinstance(frame, BotStoppedSpeakingFrame):
+            buffered = self._full_response_buffer
+            should_terminate = self._termination_armed or _contains_sentinel(buffered)
+            if buffered.strip():
+                self.transcript_mgr.append(TranscriptTurn(
+                    role="assistant",
+                    content=_strip_sentinel(buffered).strip(),
+                ))
+            self._full_response_buffer = ""
+            self._termination_armed = False
+            await self.push_frame(frame, direction)
+            if should_terminate:
+                await self._go_passive()
+            return
+
         await self.push_frame(frame, direction)
 
 
@@ -320,6 +453,9 @@ async def lifespan(app_: FastAPI):
     # Load config
     config = load_config()
     app_.state.config = config
+
+    # Load pre-rendered acknowledgement / filler audio into RAM
+    app_.state.filler_engine = FillerEngine(config.filler_dir)
 
     # Initialize Whisper STT Service
     logger.info("Initializing Whisper STT service...")
@@ -423,32 +559,9 @@ async def websocket_endpoint(websocket: WebSocket):
             ),
         )
 
-        transcript_manager = TranscriptManager()
-        adapter_processor = AdapterProcessor(transcript_manager=transcript_manager, config=config)
-        teardown_interceptor = TeardownInterceptor(transcript_mgr=transcript_manager)
+        filler_engine = getattr(app.state, "filler_engine", None)
 
-        # Define the terminate_session tool schema
-        terminate_tool_schema = {
-            "type": "function",
-            "function": {
-                "name": "terminate_session",
-                "description": "Invoke this tool to gracefully end the conversation session when the user says goodbye or indicates they are done.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {}
-                }
-            }
-        }
-        
-        async def handle_terminate_session(params: FunctionCallParams):
-            logger.info("Local LLM decided to terminate the session.")
-            msg = OutputTransportMessageUrgentFrame({"type": "status", "state": "passive_listening"})
-            await adapter_processor.push_frame(msg, FrameDirection.DOWNSTREAM)
-            return {"status": "session_terminated"}
-            
-        llm.register_function("terminate_session", handle_terminate_session)
-
-        # Define the Hermes tool schema
+        # Define the Hermes tool schema (advertised to the model via the LLMContext)
         hermes_tool_schema = {
             "type": "function",
             "function": {
@@ -467,10 +580,25 @@ async def websocket_endpoint(websocket: WebSocket):
             }
         }
 
+        transcript_manager = TranscriptManager()
+        adapter_processor = AdapterProcessor(
+            transcript_manager=transcript_manager,
+            config=config,
+            tools=[hermes_tool_schema],
+            filler_engine=filler_engine,
+        )
+        teardown_interceptor = TeardownInterceptor(transcript_mgr=transcript_manager)
+        # Let the deterministic farewell backstop arm a teardown for the current reply.
+        adapter_processor.teardown = teardown_interceptor
+
         async def handle_query_hermes(params: FunctionCallParams):
             prompt = params.args.get("prompt", "")
             logger.info(f"Triggering background Hermes query with prompt: {prompt}")
-            
+
+            # No dispatch filler clip by design — the model's own spoken
+            # handoff ("Let me check...") is the acknowledgement; the user can
+            # keep talking and the result is spoken when ready.
+
             async def consume_hermes(text: str):
                 try:
                     logger.info("Connecting to Hermes...")
@@ -479,23 +607,14 @@ async def websocket_endpoint(websocket: WebSocket):
                 except Exception as e:
                     logger.error(f"Background Hermes task failed: {e}")
                     await adapter_processor.inject_text(" Sorry, I wasn't able to reach Hermes.")
-            
+
             # Spawn background task
             asyncio.create_task(consume_hermes(prompt))
-            
+
             # Return instantly to unblock Qwen
             return {"status": "task_dispatched_to_background"}
 
         llm.register_function("query_hermes_agent", handle_query_hermes)
-
-        # Re-patch the adapter processor LLMContext injection logic
-        # (This avoids needing to overwrite the whole method, we just dynamically patch the LLMContext wrapper in the processor)
-        original_process_frame = adapter_processor.process_frame
-        async def hooked_process_frame(frame, direction):
-            if isinstance(frame, LLMContextFrame):
-                frame.context.set_tools([hermes_tool_schema, terminate_tool_schema])
-            await original_process_frame(frame, direction)
-        adapter_processor.process_frame = hooked_process_frame
 
         # Build pipeline
         pipeline = build_pipeline(
@@ -523,4 +642,5 @@ async def websocket_endpoint(websocket: WebSocket):
         except Exception as e:
             logger.error(f"Error running pipeline task: {e}", exc_info=True)
         finally:
+            await hermes_client.close()
             logger.info("WebSocket session terminated")
