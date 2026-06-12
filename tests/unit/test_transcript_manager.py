@@ -87,12 +87,36 @@ class TestTranscriptManager(unittest.TestCase):
             hermes_state=HermesTaskState.EXECUTING
         ))
         
-        # Pending task can be cancelled
+        # Pending task can always be cancelled
         self.assertTrue(self.tm.can_cancel("task_1"))
-        # Executing task cannot be cancelled
-        self.assertFalse(self.tm.can_cancel("task_2"))
+        # Executing task is cancellable iff the server supports run stop
+        # (final rule per 005 T102: Hermes /v1/runs/{id}/stop verified live)
+        self.assertTrue(self.tm.can_cancel("task_2"))
+        self.assertFalse(self.tm.can_cancel("task_2", server_can_stop=False))
         # Non-existent task cannot be cancelled
         self.assertFalse(self.tm.can_cancel("non_existent"))
+        # Terminal tasks can never be cancelled
+        self.tm.update_state("task_2", HermesTaskState.FAILED)
+        self.assertFalse(self.tm.can_cancel("task_2"))
+
+    def test_extended_task_fields(self):
+        task = HermesTask(
+            task_id="task_x",
+            created_at=time.time(),
+            state=HermesTaskState.PENDING,
+            request_text="check my email",
+            session_id="sess-1",
+        )
+        self.assertIsNone(task.run_id)
+        self.assertFalse(task.delivered)
+        self.assertEqual(task.updated_at, task.created_at)
+        self.assertFalse(task.is_terminal())
+        # 004-era aliases stay wired to the new field names
+        self.assertEqual(task.transcript, "check my email")
+        task.response = "you have 3 new messages"
+        self.assertEqual(task.result_text, "you have 3 new messages")
+        task.state = HermesTaskState.FAILED
+        self.assertTrue(task.is_terminal())
 
     def test_sliding_window_preserves_executing_tasks(self):
         # Add an executing task turn first

@@ -42,19 +42,19 @@ remaining ⚠️.
 
 ## Phase 1: Foundational (Blocking)
 
-- [ ] T104 Extend `voice_adapter/transcript_manager.py`: add `FAILED` to
+- [x] T104 Extend `voice_adapter/transcript_manager.py`: add `FAILED` to
       `HermesTaskState`; add `run_id`, `request_text`, `result_text`,
       `session_id`, `delivered` to `HermesTask`; keep `can_cancel()` semantics
       (False once `executing` and Hermes reports non-cancellable — final rule
       per T102 findings).
-- [ ] T105 [P] Config rework in `voice_adapter/config.py` + `.env.example`:
+- [x] T105 [P] Config rework in `voice_adapter/config.py` + `.env.example`:
       add `hermes_session_key`, `hermes_context_source`,
       `hermes_context_poll_interval`, `context_token_budget`,
       `result_speech_budget`, `task_journal_path`; default `honcho_api_url` to
       empty/disabled; **remove** `hermes_sse_url` and `hermes_memory_path`;
       update `tests/unit/test_config_adapter.py`.
-- [ ] T106 [P] Add `asyncssh` to `requirements.txt`.
-- [ ] T107 [P] Fix `voice_satellite/gateway/hermes_client.py` URL/headers:
+- [x] T106 [P] Add `asyncssh` to `requirements.txt`.
+- [x] T107 [P] Fix `voice_satellite/gateway/hermes_client.py` URL/headers:
       base URL carries `/v1`; send `X-Hermes-Session-Key` alongside
       `X-Hermes-Session-Id`; keep streaming parse as the fallback path.
 

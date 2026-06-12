@@ -103,6 +103,40 @@ class TestHermesClient(unittest.IsolatedAsyncioTestCase):
         args, kwargs = mock_client.stream.call_args
         self.assertEqual(kwargs["headers"]["Authorization"], "Bearer secret_token")
         self.assertEqual(kwargs["headers"]["X-Hermes-Session-Id"], client.session_id)
+        # No session key configured => header must be absent
+        self.assertNotIn("X-Hermes-Session-Key", kwargs["headers"])
+
+    @patch("voice_satellite.gateway.hermes_client.httpx.AsyncClient")
+    async def test_send_transcript_session_key_header(self, mock_async_client_cls):
+        sse_lines = [
+            'data: {"choices": [{"delta": {"content": "Hello"}}]}',
+            'data: [DONE]'
+        ]
+
+        mock_client = MagicMock()
+        mock_response = MockResponse(sse_lines)
+        mock_client.stream.return_value = MockStreamContext(mock_response)
+        mock_async_client_cls.return_value = mock_client
+
+        client = HermesClient(
+            base_url="http://localhost:8642/v1",
+            api_key="secret_token",
+            session_key="voice-satellite",
+        )
+
+        async for _ in client.send_transcript("Hi"):
+            pass
+
+        args, kwargs = mock_client.stream.call_args
+        self.assertEqual(kwargs["headers"]["X-Hermes-Session-Key"], "voice-satellite")
+        self.assertEqual(args[1], "http://localhost:8642/v1/chat/completions")
+
+    def test_base_url_gets_v1_appended(self):
+        # Contract: base URL carries /v1; a bare host:port gets it appended
+        client = HermesClient(base_url="http://localhost:8642")
+        self.assertEqual(client.base_url, "http://localhost:8642/v1")
+        client = HermesClient(base_url="http://localhost:8642/v1/")
+        self.assertEqual(client.base_url, "http://localhost:8642/v1")
 
     @patch("voice_satellite.gateway.hermes_client.httpx.AsyncClient")
     @patch("voice_satellite.gateway.hermes_client.LatencyTracker")

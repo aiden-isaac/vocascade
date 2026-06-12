@@ -10,3 +10,4 @@ aiohttp
 cryptography
 pipecat-ai[websocket]
 watchdog
+asyncssh

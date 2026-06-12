@@ -25,11 +25,16 @@ class AdapterConfig:
     llm_api_key: str | None
     llm_model: str
 
-    # Hermes gateway
+    # Hermes agent backend (005)
     hermes_base_url: str
     hermes_api_key: str | None
     hermes_model: str
-    hermes_sse_url: str         # SSE endpoint for task completions
+    hermes_session_key: str             # stable X-Hermes-Session-Key memory scope
+    hermes_context_source: str          # file://… | ssh://… | none
+    hermes_context_poll_interval: int   # seconds, ssh source
+    context_token_budget: int           # tokens (~4 chars/token) for prompt block
+    result_speech_budget: int           # chars before result condensation
+    task_journal_path: str              # persisted task journal
 
     # Genie TTS
     tts_url: str
@@ -46,9 +51,8 @@ class AdapterConfig:
     # Pre-rendered acknowledgement / filler audio
     filler_dir: Path
 
-    # Pre-fetch cache
-    hermes_memory_path: str     # ~/.hermes/memory
-    honcho_api_url: str         # Honcho on artemis
+    # Pre-fetch cache enrichment (optional; empty url = disabled)
+    honcho_api_url: str
     honcho_poll_interval: int   # 20-30 seconds
 
     # Offline handler
@@ -97,8 +101,8 @@ def load_config() -> AdapterConfig:
         )
 
     # Resolve default paths
-    default_memory_path = os.path.expanduser("~/.hermes/memory")
     default_offline_queue = os.path.expanduser("~/.hermes/offline_queue.json")
+    default_journal_path = os.path.expanduser("~/.voice_adapter/tasks.json")
 
     return AdapterConfig(
         host=os.getenv("HOST", "0.0.0.0"),
@@ -112,8 +116,13 @@ def load_config() -> AdapterConfig:
 
         hermes_base_url=os.getenv("HERMES_BASE_URL", "http://localhost:8642/v1"),
         hermes_api_key=os.getenv("HERMES_API_KEY"),
-        hermes_model=os.getenv("HERMES_MODEL", "qwen2.5-coder:7b-instruct-q8_0"),
-        hermes_sse_url=os.getenv("HERMES_SSE_URL", "http://localhost:8642/v1/tasks/sse"),
+        hermes_model=os.getenv("HERMES_MODEL", "hermes-agent"),
+        hermes_session_key=os.getenv("HERMES_SESSION_KEY", "voice-satellite"),
+        hermes_context_source=os.getenv("HERMES_CONTEXT_SOURCE", "none"),
+        hermes_context_poll_interval=int(os.getenv("HERMES_CONTEXT_POLL_INTERVAL", "30")),
+        context_token_budget=int(os.getenv("CONTEXT_TOKEN_BUDGET", "1200")),
+        result_speech_budget=int(os.getenv("RESULT_SPEECH_BUDGET", "600")),
+        task_journal_path=os.getenv("TASK_JOURNAL_PATH", default_journal_path),
 
         tts_url=os.getenv("GENIE_TTS_URL", "http://127.0.0.1:8000"),
         tts_character_name=os.getenv("GENIE_CHARACTER_NAME", "default"),
@@ -127,8 +136,7 @@ def load_config() -> AdapterConfig:
 
         filler_dir=Path(os.getenv("FILLER_DIR", "static/fillers")),
 
-        hermes_memory_path=os.getenv("HERMES_MEMORY_PATH", default_memory_path),
-        honcho_api_url=os.getenv("HONCHO_API_URL", "http://artemis:8000"),
+        honcho_api_url=os.getenv("HONCHO_API_URL", ""),
         honcho_poll_interval=int(os.getenv("HONCHO_POLL_INTERVAL", "25")),
 
         litellm_health_url=os.getenv("LITELLM_HEALTH_URL", "http://localhost:4000/health"),
