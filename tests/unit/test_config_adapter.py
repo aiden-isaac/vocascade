@@ -14,7 +14,12 @@ class TestAdapterConfig(unittest.TestCase):
             "HERMES_BASE_URL": "http://hermes-gateway:8642/v1",
             "HERMES_API_KEY": "secret-key",
             "HERMES_MODEL": "test-qwen",
-            "HERMES_SSE_URL": "http://hermes-gateway:8642/v1/tasks/sse",
+            "HERMES_SESSION_KEY": "test-session-key",
+            "HERMES_CONTEXT_SOURCE": "ssh://aiden@jarlaxle/home/aiden/.hermes",
+            "HERMES_CONTEXT_POLL_INTERVAL": "45",
+            "CONTEXT_TOKEN_BUDGET": "900",
+            "RESULT_SPEECH_BUDGET": "500",
+            "TASK_JOURNAL_PATH": "/path/to/tasks.json",
             "GENIE_TTS_URL": "http://genie-tts:8000",
             "GENIE_CHARACTER_NAME": "test-character",
             "GENIE_ONNX_MODEL_DIR": "/models/genie",
@@ -23,7 +28,6 @@ class TestAdapterConfig(unittest.TestCase):
             "GENIE_LANGUAGE": "es",
             "WHISPER_MODEL": "base.en",
             "WHISPER_LANGUAGE": "en",
-            "HERMES_MEMORY_PATH": "/path/to/memory",
             "HONCHO_API_URL": "http://honcho:8000",
             "HONCHO_POLL_INTERVAL": "30",
             "LITELLM_HEALTH_URL": "http://litellm/health",
@@ -32,7 +36,7 @@ class TestAdapterConfig(unittest.TestCase):
             "OFFLINE_END_HOUR": "6",
             "VOICE_SATELLITE_SKIP_GENIE_INIT": "True"
         }
-        
+
         with patch.dict(os.environ, env_vars):
             config = load_config()
             self.assertEqual(config.host, "127.0.0.1")
@@ -42,7 +46,12 @@ class TestAdapterConfig(unittest.TestCase):
             self.assertEqual(config.hermes_base_url, "http://hermes-gateway:8642/v1")
             self.assertEqual(config.hermes_api_key, "secret-key")
             self.assertEqual(config.hermes_model, "test-qwen")
-            self.assertEqual(config.hermes_sse_url, "http://hermes-gateway:8642/v1/tasks/sse")
+            self.assertEqual(config.hermes_session_key, "test-session-key")
+            self.assertEqual(config.hermes_context_source, "ssh://aiden@jarlaxle/home/aiden/.hermes")
+            self.assertEqual(config.hermes_context_poll_interval, 45)
+            self.assertEqual(config.context_token_budget, 900)
+            self.assertEqual(config.result_speech_budget, 500)
+            self.assertEqual(config.task_journal_path, "/path/to/tasks.json")
             self.assertEqual(config.tts_url, "http://genie-tts:8000")
             self.assertEqual(config.tts_character_name, "test-character")
             self.assertEqual(config.tts_onnx_model_dir, "/models/genie")
@@ -51,7 +60,6 @@ class TestAdapterConfig(unittest.TestCase):
             self.assertEqual(config.tts_language, "es")
             self.assertEqual(config.whisper_model, "base.en")
             self.assertEqual(config.whisper_language, "en")
-            self.assertEqual(config.hermes_memory_path, "/path/to/memory")
             self.assertEqual(config.honcho_api_url, "http://honcho:8000")
             self.assertEqual(config.honcho_poll_interval, 30)
             self.assertEqual(config.litellm_health_url, "http://litellm/health")
@@ -59,6 +67,26 @@ class TestAdapterConfig(unittest.TestCase):
             self.assertEqual(config.offline_start_hour, 2)
             self.assertEqual(config.offline_end_hour, 6)
             self.assertTrue(config.skip_genie_init)
+
+    def test_005_defaults(self):
+        # Clean environment + no .env so the documented defaults apply
+        with patch.dict(os.environ, {}, clear=True):
+            with patch("voice_adapter.config.load_dotenv"):
+                config = load_config()
+                self.assertEqual(config.hermes_session_key, "voice-satellite")
+                self.assertEqual(config.hermes_context_source, "none")
+                self.assertEqual(config.hermes_context_poll_interval, 30)
+                self.assertEqual(config.context_token_budget, 1200)
+                self.assertEqual(config.result_speech_budget, 600)
+                self.assertEqual(
+                    config.task_journal_path,
+                    os.path.expanduser("~/.voice_adapter/tasks.json"),
+                )
+                # Honcho is strictly opt-in now: empty url = disabled
+                self.assertEqual(config.honcho_api_url, "")
+                # Removed 004-era fields must be gone entirely
+                self.assertFalse(hasattr(config, "hermes_sse_url"))
+                self.assertFalse(hasattr(config, "hermes_memory_path"))
 
     def test_missing_genie_config_warnings(self):
         # Remove genie-specific values to trigger warning
