@@ -199,16 +199,20 @@ insurance; no database.
 | Local file watch | `watchdog` (existing dep) | Already specified in 004 for `PreFetchCache` |
 | Journal | stdlib `json` + `os.replace` | Atomic enough for a single-writer journal |
 
-## 7. Open Questions (tracked, non-blocking)
+## 7. Open Questions — RESOLVED in Phase 0 (T101/T102, 2026-06-12)
 
-- **OQ-1**: Exact run-event names/payload schema — `.plans` doc shows the shape
-  but upstream may rename; pinned by the Phase-0 contract test (T101) against the
-  live server, recorded in `contracts/hermes-api.md`.
-- **OQ-2**: Whether `/v1/runs` accepts the `X-Hermes-Session-Key` header the same
-  way chat completions does (expected: yes, shared gateway session manager) —
-  verified in T101.
-- **OQ-3**: Result payload size limits for runs — if results can be large, the
-  speech-condensation path (FR-012) is mandatory rather than nice-to-have.
+All three pinned against the live jarlaxle server; details in
+`contracts/hermes-api.md` §"Resolved open questions".
+
+- **OQ-1** ✅ Event vocabulary confirmed: `run.started`, `message.delta`,
+  `reasoning.available`, `tool.started/completed/failed`, `approval.request`,
+  `approval.responded`, `run.completed`, `run.failed`, `run.cancelled`. Note
+  the single-subscriber queue semantics: reconnect after disconnect ⇒ 404 ⇒
+  reconcile via `GET /v1/runs/{id}`.
+- **OQ-2** ✅ Yes — `/v1/runs` parses `X-Hermes-Session-Key` via the shared
+  header parser (echoed back; requires API-key auth).
+- **OQ-3** ✅ No server-side result cap below the 10 MB body limit ⇒ FR-012
+  speech condensation is mandatory.
 
 ## Sources
 

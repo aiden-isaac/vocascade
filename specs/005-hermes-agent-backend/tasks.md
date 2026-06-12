@@ -23,15 +23,15 @@ colliding with 004.
 **Purpose**: Resolve every ⚠️ in `contracts/hermes-api.md` against a live
 server before building on assumptions.
 
-- [ ] T101 Stand up a dev Hermes Agent (topology A or B per quickstart §1–2);
+- [x] T101 Stand up a dev Hermes Agent (topology A or B per quickstart §1–2);
       write `tests/contract/test_hermes_api.py` (skipped unless
       `HERMES_BASE_URL` reachable) asserting: `/health` 200, capabilities
       parse, `POST /v1/runs` → 202+`run_id`, events stream yields a terminal
       event, `GET /v1/runs/{id}` agrees, `/stop` works, 401 without bearer.
-- [ ] T102 Update `contracts/hermes-api.md` with observed payloads (run-request
+- [x] T102 Update `contracts/hermes-api.md` with observed payloads (run-request
       fields, status vocabulary, event names, approval body) — resolve OQ-1,
       OQ-2, OQ-3 from research.md.
-- [ ] T103 [P] Write `scripts/check_hermes.py` — operator-facing probe used by
+- [x] T103 [P] Write `scripts/check_hermes.py` — operator-facing probe used by
       quickstart §2 (health, capabilities, auth check, one trivial round-trip
       run; loud warning when the server is unauthenticated).
 
