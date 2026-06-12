@@ -23,6 +23,8 @@ from starlette.websockets import WebSocketDisconnect
 import json
 import base64
 
+from pipecat.adapters.schemas.function_schema import FunctionSchema
+from pipecat.adapters.schemas.tools_schema import ToolsSchema
 from pipecat.audio.vad.silero import SileroVADAnalyzer
 from pipecat.frames.frames import (
     Frame,
@@ -216,14 +218,14 @@ class AdapterProcessor(FrameProcessor):
         self,
         transcript_manager: TranscriptManager,
         config: AdapterConfig,
-        tools: Optional[List[dict]] = None,
+        tools: Optional[ToolsSchema] = None,
         filler_engine: Optional[FillerEngine] = None,
         delivery: Optional[DeliveryCoordinator] = None,
     ):
         super().__init__()
         self.transcript_manager = transcript_manager
         self.config = config
-        self.tools = tools or []
+        self.tools = tools
         self.filler_engine = filler_engine
         self.delivery = delivery
         # Set once the TeardownInterceptor exists; lets the deterministic
@@ -354,7 +356,7 @@ class AdapterProcessor(FrameProcessor):
             # Create the LLMContext (advertising any tools to the model) and
             # wrap it in an LLMContextFrame.
             context = LLMContext(messages=messages)
-            if self.tools:
+            if self.tools is not None:
                 context.set_tools(self.tools)
             context_frame = LLMContextFrame(context=context)
 
@@ -528,7 +530,7 @@ async def lifespan(app_: FastAPI):
         sample_rate=config.audio_out_sample_rate
     )
     if not config.skip_genie_init and not degraded:
-        await app_.state.tts_service.start()
+        await app_.state.tts_service.preload()
 
     # Hermes agent backend (005): one run client + broker + delivery
     # coordinator for the app's lifetime — tasks outlive voice sessions.
@@ -566,7 +568,7 @@ async def lifespan(app_: FastAPI):
     if hasattr(app_.state, "run_client"):
         await app_.state.run_client.aclose()
     if hasattr(app_.state, "tts_service"):
-        await app_.state.tts_service.stop()
+        await app_.state.tts_service.close()
 
 
 app = FastAPI(lifespan=lifespan)
@@ -639,30 +641,30 @@ async def websocket_endpoint(websocket: WebSocket):
 
         filler_engine = getattr(app.state, "filler_engine", None)
 
-        # Define the Hermes tool schema (advertised to the model via the LLMContext)
-        hermes_tool_schema = {
-            "type": "function",
-            "function": {
-                "name": "query_hermes_agent",
-                "description": "Invoke the Hermes agent to perform complex tasks, run integrations, or fetch external information that you cannot handle locally.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "prompt": {
-                            "type": "string",
-                            "description": "The exact user request or context to send to Hermes."
-                        }
-                    },
-                    "required": ["prompt"]
+        # Define the Hermes tool schema (advertised to the model via the
+        # LLMContext; pipecat 1.3 requires ToolsSchema, not raw dicts)
+        hermes_tool_schema = FunctionSchema(
+            name="query_hermes_agent",
+            description=(
+                "Invoke the Hermes agent to perform complex tasks, run "
+                "integrations, or fetch external information that you cannot "
+                "handle locally."
+            ),
+            properties={
+                "prompt": {
+                    "type": "string",
+                    "description": "The exact user request or context to send to Hermes.",
                 }
-            }
-        }
+            },
+            required=["prompt"],
+        )
+        tools_schema = ToolsSchema(standard_tools=[hermes_tool_schema])
 
         transcript_manager = TranscriptManager()
         adapter_processor = AdapterProcessor(
             transcript_manager=transcript_manager,
             config=config,
-            tools=[hermes_tool_schema],
+            tools=tools_schema,
             filler_engine=filler_engine,
             delivery=delivery,
         )
