@@ -66,30 +66,30 @@ remaining ⚠️.
 
 ### Tests
 
-- [ ] T108 [P] [US1] Unit tests `tests/unit/test_hermes_run_client.py` —
+- [x] T108 [P] [US1] Unit tests `tests/unit/test_hermes_run_client.py` —
       mocked httpx: 202 dispatch, SSE event parse (incl. `UNKNOWN` kinds and
       keepalives), backoff/reconnect, `get_run` reconciliation, capabilities
       probe failure ⇒ fallback flag, auth/session headers present.
-- [ ] T109 [P] [US1] Unit tests `tests/unit/test_task_broker.py` — dispatch
+- [x] T109 [P] [US1] Unit tests `tests/unit/test_task_broker.py` — dispatch
       creates `pending`→`executing`; completion → result handed to delivery;
       idempotent state machine (duplicate/out-of-order/terminal events);
       dispatch failure → `failed` + failure notice; fallback mode synthesizes
       one completion from a buffered chat stream.
-- [ ] T110 [P] [US1] Unit tests `tests/unit/test_delivery.py` (MVP subset) —
+- [x] T110 [P] [US1] Unit tests `tests/unit/test_delivery.py` (MVP subset) —
       idle gate (defer while user/bot speaking), FIFO order, preamble derived
       from `request_text`.
 
 ### Implementation
 
-- [ ] T111 [US1] Implement `voice_adapter/hermes_run_client.py` per plan §1
+- [x] T111 [US1] Implement `voice_adapter/hermes_run_client.py` per plan §1
       (probe, start_run, stream_events w/ backoff, get_run, stop_run,
       resolve_approval, chat_fallback delegating to `HermesClient`).
-- [ ] T112 [US1] Implement `voice_adapter/task_broker.py` (registry + per-run
+- [x] T112 [US1] Implement `voice_adapter/task_broker.py` (registry + per-run
       consumer tasks + fallback mode; no journal yet — that's US6).
-- [ ] T113 [US1] Implement `voice_adapter/delivery.py` MVP: queue, idle
+- [x] T113 [US1] Implement `voice_adapter/delivery.py` MVP: queue, idle
       detection fed by pipeline frames, injection via
       `AdapterProcessor.inject_text`, preambles.
-- [ ] T114 [US1] Rewire `voice_adapter/adapter.py`: `handle_query_hermes` →
+- [x] T114 [US1] Rewire `voice_adapter/adapter.py`: `handle_query_hermes` →
       `TaskBroker.dispatch()` (delete inline `consume_hermes`); wire
       broker/coordinator into lifespan + frame notifications from
       `AdapterProcessor`/`TeardownInterceptor`; spoken error on dispatch

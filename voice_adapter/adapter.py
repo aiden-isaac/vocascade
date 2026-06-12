@@ -8,10 +8,10 @@ import asyncio
 import datetime
 import logging
 import re
+import uuid
 from contextlib import asynccontextmanager
 from typing import List, Optional
 
-from voice_satellite.gateway.hermes_client import HermesClient
 from pipecat.services.llm_service import FunctionCallParams
 
 from pathlib import Path
@@ -40,6 +40,7 @@ from pipecat.frames.frames import (
     VADUserStartedSpeakingFrame,
     VADUserStoppedSpeakingFrame,
     LLMFullResponseEndFrame,
+    BotStartedSpeakingFrame,
     BotStoppedSpeakingFrame,
     UserStartedSpeakingFrame,
 )
@@ -56,8 +57,11 @@ from pipecat.transcriptions.language import Language
 from pipecat.transports.websocket.fastapi import FastAPIWebsocketTransport, FastAPIWebsocketParams
 
 from voice_adapter.config import AdapterConfig, load_config
+from voice_adapter.delivery import DeliveryCoordinator
 from voice_adapter.filler_engine import FillerEngine
-from voice_adapter.transcript_manager import TranscriptManager, TranscriptTurn
+from voice_adapter.hermes_run_client import HermesRunClient
+from voice_adapter.task_broker import TaskBroker
+from voice_adapter.transcript_manager import HermesTaskState, TranscriptManager, TranscriptTurn
 from voice_adapter.tts_genie import GenieTTSService
 
 logger = logging.getLogger("voice_adapter.adapter")
@@ -214,12 +218,14 @@ class AdapterProcessor(FrameProcessor):
         config: AdapterConfig,
         tools: Optional[List[dict]] = None,
         filler_engine: Optional[FillerEngine] = None,
+        delivery: Optional[DeliveryCoordinator] = None,
     ):
         super().__init__()
         self.transcript_manager = transcript_manager
         self.config = config
         self.tools = tools or []
         self.filler_engine = filler_engine
+        self.delivery = delivery
         # Set once the TeardownInterceptor exists; lets the deterministic
         # farewell backstop arm a session teardown for the current reply.
         self.teardown: Optional["TeardownInterceptor"] = None
@@ -261,6 +267,10 @@ class AdapterProcessor(FrameProcessor):
                 await self.push_frame(msg, direction)
                 # Instant audible acknowledgement ("Yes?", "I'm listening.")
                 await self._play_filler("acknowledge", direction)
+                # The session is live: proactive deliveries may flow (and any
+                # backlog held from a previous session drains, idle-gated).
+                if self.delivery is not None:
+                    self.delivery.bind_session(self.inject_text)
                 return
             elif msg_type == "interrupt":
                 await self.push_frame(InterruptionFrame(), direction)
@@ -296,7 +306,23 @@ class AdapterProcessor(FrameProcessor):
             await self.push_frame(frame, direction)
             return
 
+        elif isinstance(frame, (VADUserStartedSpeakingFrame, UserStartedSpeakingFrame)):
+            if self.delivery is not None:
+                self.delivery.notify_user_started_speaking()
+            await self.push_frame(frame, direction)
+            return
+
+        elif isinstance(frame, VADUserStoppedSpeakingFrame):
+            if self.delivery is not None:
+                self.delivery.notify_user_stopped_speaking()
+            await self.push_frame(frame, direction)
+            return
+
         elif isinstance(frame, TranscriptionFrame):
+            # A reply is now genuinely pending; hold proactive deliveries
+            # until the bot finishes speaking it.
+            if self.delivery is not None:
+                self.delivery.notify_response_pending()
             msg = OutputTransportMessageUrgentFrame({"type": "status", "state": "assistant_streaming"})
             await self.push_frame(msg, direction)
             
@@ -365,9 +391,14 @@ class TeardownInterceptor(FrameProcessor):
       * the model emitted the ENDSESSION sentinel in this reply, or
       * the deterministic farewell backstop armed it (see AdapterProcessor).
     """
-    def __init__(self, transcript_mgr: TranscriptManager):
+    def __init__(
+        self,
+        transcript_mgr: TranscriptManager,
+        delivery: Optional[DeliveryCoordinator] = None,
+    ):
         super().__init__()
         self.transcript_mgr = transcript_mgr
+        self.delivery = delivery
         self._full_response_buffer = ""
         # Armed by the deterministic farewell phrase match on the user transcript.
         self._termination_armed = False
@@ -378,6 +409,9 @@ class TeardownInterceptor(FrameProcessor):
 
     async def _go_passive(self) -> None:
         logger.info("Session termination — returning client to passive (wakeword) listening.")
+        # Undelivered proactive results are retained for the next session.
+        if self.delivery is not None:
+            self.delivery.unbind_session()
         msg = OutputTransportMessageUrgentFrame({"type": "status", "state": "passive_listening"})
         await self.push_frame(msg, FrameDirection.DOWNSTREAM)
 
@@ -393,7 +427,17 @@ class TeardownInterceptor(FrameProcessor):
                 await self.push_frame(TextFrame(clean_text), direction)
             return
 
+        if isinstance(frame, BotStartedSpeakingFrame):
+            if self.delivery is not None:
+                self.delivery.notify_bot_started_speaking()
+            await self.push_frame(frame, direction)
+            return
+
         if isinstance(frame, (UserStartedSpeakingFrame, InterruptionFrame, VADUserStartedSpeakingFrame)):
+            # Barge-in: a delivery in flight is stopped and NOT re-queued; the
+            # partial text is committed below with the [interrupted] marker.
+            if self.delivery is not None:
+                self.delivery.notify_user_started_speaking()
             buffered = self._full_response_buffer
             if buffered.strip():
                 self.transcript_mgr.append(TranscriptTurn(
@@ -421,6 +465,9 @@ class TeardownInterceptor(FrameProcessor):
             await self.push_frame(frame, direction)
             if should_terminate:
                 await self._go_passive()
+            elif self.delivery is not None:
+                # Channel just went quiet — queued proactive results may flow.
+                self.delivery.notify_bot_stopped_speaking()
             return
 
         await self.push_frame(frame, direction)
@@ -483,10 +530,41 @@ async def lifespan(app_: FastAPI):
     if not config.skip_genie_init and not degraded:
         await app_.state.tts_service.start()
 
+    # Hermes agent backend (005): one run client + broker + delivery
+    # coordinator for the app's lifetime — tasks outlive voice sessions.
+    run_client = HermesRunClient(
+        base_url=config.hermes_base_url,
+        api_key=config.hermes_api_key,
+        session_key=config.hermes_session_key,
+        model=config.hermes_model,
+    )
+    delivery = DeliveryCoordinator(speech_budget=config.result_speech_budget)
+    app_.state.run_client = run_client
+    app_.state.delivery = delivery
+    app_.state.task_broker = TaskBroker(run_client, delivery)
+
+    caps = await run_client.probe_capabilities()
+    if caps.supports_runs:
+        logger.info(
+            "Hermes runs API available (model=%s, auth_required=%s)",
+            caps.model_name, caps.auth_required,
+        )
+    elif caps.supports_chat:
+        logger.warning("Hermes runs API unavailable — chat-completions fallback mode")
+    else:
+        logger.warning(
+            "Hermes unreachable at %s — dispatches will fail until it returns",
+            config.hermes_base_url,
+        )
+
     yield
 
     # Cleanup resources
     logger.info("Cleaning up services...")
+    if hasattr(app_.state, "task_broker"):
+        await app_.state.task_broker.shutdown()
+    if hasattr(app_.state, "run_client"):
+        await app_.state.run_client.aclose()
     if hasattr(app_.state, "tts_service"):
         await app_.state.tts_service.stop()
 
@@ -545,12 +623,11 @@ async def websocket_endpoint(websocket: WebSocket):
 
         vad_service = SileroVADService(sample_rate=config.audio_in_sample_rate)
 
-        # Initialize Hermes client for background tool tasks
-        hermes_client = HermesClient(
-            base_url=config.hermes_base_url,
-            api_key=config.hermes_api_key,
-            session_key=config.hermes_session_key,
-        )
+        # App-level Hermes backend (created in lifespan; tasks outlive sessions)
+        task_broker: TaskBroker = app.state.task_broker
+        delivery: DeliveryCoordinator = app.state.delivery
+        # Per-voice-session conversational continuity id (X-Hermes-Session-Id)
+        voice_session_id = str(uuid.uuid4())
 
         llm = OpenAILLMService(
             api_key=config.llm_api_key or "not-needed",
@@ -587,33 +664,33 @@ async def websocket_endpoint(websocket: WebSocket):
             config=config,
             tools=[hermes_tool_schema],
             filler_engine=filler_engine,
+            delivery=delivery,
         )
-        teardown_interceptor = TeardownInterceptor(transcript_mgr=transcript_manager)
+        teardown_interceptor = TeardownInterceptor(
+            transcript_mgr=transcript_manager,
+            delivery=delivery,
+        )
         # Let the deterministic farewell backstop arm a teardown for the current reply.
         adapter_processor.teardown = teardown_interceptor
 
+        # Task state tags flow to this session's transcript manager.
+        task_broker.bind_transcript_manager(transcript_manager)
+        # Proactive speech flows through this session's pipeline once the
+        # wakeword arrives (AdapterProcessor binds the inject sink then).
+
         async def handle_query_hermes(params: FunctionCallParams):
             prompt = params.args.get("prompt", "")
-            logger.info(f"Triggering background Hermes query with prompt: {prompt}")
+            logger.info(f"Dispatching Hermes run for prompt: {prompt}")
 
             # No dispatch filler clip by design — the model's own spoken
             # handoff ("Let me check...") is the acknowledgement; the user can
-            # keep talking and the result is spoken when ready.
-
-            async def consume_hermes(text: str):
-                try:
-                    logger.info("Connecting to Hermes...")
-                    async for chunk in hermes_client.send_transcript(text):
-                        await adapter_processor.inject_text(chunk)
-                except Exception as e:
-                    logger.error(f"Background Hermes task failed: {e}")
-                    await adapter_processor.inject_text(" Sorry, I wasn't able to reach Hermes.")
-
-            # Spawn background task
-            asyncio.create_task(consume_hermes(prompt))
-
-            # Return instantly to unblock Qwen
-            return {"status": "task_dispatched_to_background"}
+            # keep talking and the result is spoken when ready. dispatch()
+            # never raises: a failed dispatch returns a `failed` task with a
+            # spoken failure notice already queued.
+            task = await task_broker.dispatch(prompt, session_id=voice_session_id)
+            if task.state == HermesTaskState.FAILED:
+                return {"status": "dispatch_failed", "task_id": task.task_id}
+            return {"status": "task_dispatched_to_background", "task_id": task.task_id}
 
         llm.register_function("query_hermes_agent", handle_query_hermes)
 
@@ -643,5 +720,7 @@ async def websocket_endpoint(websocket: WebSocket):
         except Exception as e:
             logger.error(f"Error running pipeline task: {e}", exc_info=True)
         finally:
-            await hermes_client.close()
+            # Undelivered results are retained in the app-level coordinator.
+            delivery.unbind_session()
+            task_broker.bind_transcript_manager(None)
             logger.info("WebSocket session terminated")
