@@ -9,6 +9,8 @@ from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.task import PipelineTask
 from pipecat.pipeline.runner import PipelineRunner
 from pipecat.processors.frame_processor import FrameProcessor
+from pipecat.adapters.schemas.function_schema import FunctionSchema
+from pipecat.adapters.schemas.tools_schema import ToolsSchema
 from voice_adapter.config import load_config
 from voice_adapter.transcript_manager import TranscriptManager, TranscriptTurn
 from voice_adapter.adapter import (
@@ -95,19 +97,27 @@ async def test_adapter_processor_llm_messages_append_frame():
 async def test_adapter_processor_transcription_frame():
     config = load_config()
     manager = TranscriptManager()
-    processor = AdapterProcessor(transcript_manager=manager, config=config)
+    # Advertise a tool, exactly like the live websocket session does: pipecat
+    # 1.3 rejects raw dict tool lists, so this guards the ToolsSchema path.
+    tools = ToolsSchema(standard_tools=[FunctionSchema(
+        name="query_hermes_agent",
+        description="test tool",
+        properties={"prompt": {"type": "string"}},
+        required=["prompt"],
+    )])
+    processor = AdapterProcessor(transcript_manager=manager, config=config, tools=tools)
     collector = FrameCollector()
-    
+
     pipeline = Pipeline([processor, collector])
     task = PipelineTask(pipeline, enable_rtvi=False)
-    
+
     await task.queue_frame(TranscriptionFrame(text="hello", user_id="1", timestamp="123"))
     await task.queue_frame(EndFrame())
-    
+
     runner = PipelineRunner()
     await runner.add_workers(task)
     await runner.run()
-    
+
     contexts = [f for f in collector.pushed_frames if isinstance(f, LLMContextFrame)]
     assert len(contexts) == 1
     context = contexts[0].context
@@ -116,6 +126,7 @@ async def test_adapter_processor_transcription_frame():
     assert context.messages[0]["role"] == "system"
     assert context.messages[1]["role"] == "user"
     assert context.messages[1]["content"] == "hello"
+    assert context.tools is not None
 
 
 # ── Session termination detection helpers ────────────────────────────────────
