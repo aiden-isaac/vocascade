@@ -146,6 +146,26 @@ class TestFifoOrder(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(delivered, [item])
 
 
+class TestInterruption(unittest.IsolatedAsyncioTestCase):
+    async def test_interruption_kills_in_flight_without_latching_gate(self):
+        dc = DeliveryCoordinator()
+        sink = Sink(dc)
+        dc.bind_session(sink.inject)
+        item = result(task_id="t1", text="long result")
+        dc.enqueue(item)
+        await asyncio.sleep(0.01)
+        self.assertEqual(item.state, DeliveryState.SPEAKING)
+        # Client "interrupt" without any VAD framing: item dies, no re-queue,
+        # and the gate must NOT latch user_speaking…
+        dc.notify_interruption()
+        self.assertEqual(item.state, DeliveryState.INTERRUPTED)
+        # …so a later result still flows once the channel is quiet.
+        dc.enqueue(result(task_id="t2", text="next result"))
+        await asyncio.sleep(0.01)
+        self.assertEqual(len(sink.spoken), 2)
+        self.assertIn("next result", sink.spoken[1])
+
+
 class TestSessionBoundary(unittest.IsolatedAsyncioTestCase):
     async def test_queued_items_retained_across_unbind(self):
         dc = DeliveryCoordinator()

@@ -121,6 +121,13 @@ class DeliveryCoordinator:
             # commits "[interrupted]"; the item is NOT re-queued.
             self._finish_speaking(interrupted=True)
 
+    def notify_interruption(self) -> None:
+        """Explicit client interrupt (barge-in signal without VAD framing):
+        kill an in-flight delivery but don't latch the user-speaking flag —
+        the actual speech, if any, arrives with its own VAD start/stop."""
+        if self._speaking_item is not None:
+            self._finish_speaking(interrupted=True)
+
     def notify_user_stopped_speaking(self) -> None:
         # VAD-stop alone doesn't mean a reply is coming (silence and noise
         # also produce stop frames); the response-pending gate is raised by
@@ -157,10 +164,17 @@ class DeliveryCoordinator:
             and self._speaking_item is None
         )
 
+    def gate_state(self) -> str:
+        return (
+            f"session={self._session_active} user_speaking={self._user_speaking} "
+            f"bot_speaking={self._bot_speaking} awaiting_response={self._awaiting_response} "
+            f"in_flight={self._speaking_item is not None}"
+        )
+
     def enqueue(self, result: ProactiveResult) -> None:
         logger.info(
-            "Delivery queued: %s for %s (%d queued)",
-            result.kind.value, result.task_id, len(self.queue) + 1,
+            "Delivery queued: %s for %s (%d queued) — gate: %s",
+            result.kind.value, result.task_id, len(self.queue) + 1, self.gate_state(),
         )
         self.queue.append(result)
         self._maybe_deliver()
