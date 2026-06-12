@@ -44,7 +44,9 @@ from pipecat.frames.frames import (
     LLMFullResponseEndFrame,
     BotStartedSpeakingFrame,
     BotStoppedSpeakingFrame,
+    FunctionCallResultFrame,
     UserStartedSpeakingFrame,
+    UserStoppedSpeakingFrame,
 )
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.runner import PipelineRunner
@@ -233,6 +235,14 @@ class AdapterProcessor(FrameProcessor):
         self.teardown: Optional["TeardownInterceptor"] = None
         self.system_message = (
             "You are a helpful voice assistant. Keep your responses concise and brief. "
+            "You cannot see the user's calendar, tasks, email, files, or smart home, and you "
+            "have no web access — for ANY request needing real personal data or external "
+            "actions (schedule, tasks, reminders, email, documents, research, code, devices), "
+            "you MUST call the query_hermes_agent tool with the user's request instead of "
+            "guessing or making up an answer. After the tool confirms dispatch, tell the user "
+            "in one short sentence that you're on it and will speak up when the result is in "
+            "(e.g. \"I'm checking with the agent — I'll let you know.\"). The result arrives "
+            "later and is announced automatically; never invent a result yourself. "
             "Only if the user explicitly says goodbye, farewell, thank you that will be all, "
             "or a clear and direct farewell phrase, append the single word ENDSESSION on a new line "
             "at the very end of your response, with no other text after it. "
@@ -275,6 +285,10 @@ class AdapterProcessor(FrameProcessor):
                     self.delivery.bind_session(self.inject_text)
                 return
             elif msg_type == "interrupt":
+                # Client-side barge-in signal: kill any in-flight proactive
+                # delivery (no re-queue); actual speech follows with VAD frames.
+                if self.delivery is not None:
+                    self.delivery.notify_interruption()
                 await self.push_frame(InterruptionFrame(), direction)
                 return
             return
@@ -314,7 +328,7 @@ class AdapterProcessor(FrameProcessor):
             await self.push_frame(frame, direction)
             return
 
-        elif isinstance(frame, VADUserStoppedSpeakingFrame):
+        elif isinstance(frame, (VADUserStoppedSpeakingFrame, UserStoppedSpeakingFrame)):
             if self.delivery is not None:
                 self.delivery.notify_user_stopped_speaking()
             await self.push_frame(frame, direction)
@@ -364,6 +378,16 @@ class AdapterProcessor(FrameProcessor):
             await self.push_frame(context_frame, direction)
             return
 
+        elif isinstance(frame, FunctionCallResultFrame):
+            # No context-aggregator pair in this pipeline, so nothing re-runs
+            # the LLM after a tool result — without this the turn dead-ends
+            # silently. Rebuild the context with the tool exchange appended
+            # and force a text reply (the model's spoken handoff IS the
+            # dispatch acknowledgement).
+            await self.push_frame(frame, direction)
+            await self._speak_tool_result(frame)
+            return
+
         elif isinstance(frame, TextFrame):
             clean = _strip_sentinel(frame.text).strip()
             msg = OutputTransportMessageUrgentFrame({"type": "assistant_response", "text": clean})
@@ -373,6 +397,36 @@ class AdapterProcessor(FrameProcessor):
 
         # Propagate all other frames
         await self.push_frame(frame, direction)
+
+    async def _speak_tool_result(self, frame: FunctionCallResultFrame) -> None:
+        """Re-run the LLM with the tool exchange appended so it verbalizes
+        the handoff ("Let me check on that..."). tool_choice="none" forces a
+        text reply — no tool-call loops."""
+        messages = [
+            {"role": turn.role, "content": turn.content}
+            for turn in self.transcript_manager.get_window()
+        ]
+        messages.append({
+            "role": "assistant",
+            "tool_calls": [{
+                "id": frame.tool_call_id,
+                "type": "function",
+                "function": {
+                    "name": frame.function_name,
+                    "arguments": json.dumps(frame.arguments or {}),
+                },
+            }],
+        })
+        messages.append({
+            "role": "tool",
+            "tool_call_id": frame.tool_call_id,
+            "content": json.dumps(frame.result),
+        })
+        context = LLMContext(messages=messages)
+        if self.tools is not None:
+            context.set_tools(self.tools)
+            context.set_tool_choice("none")
+        await self.push_frame(LLMContextFrame(context=context), FrameDirection.DOWNSTREAM)
 
     async def inject_text(self, text: str):
         """Asynchronously injects text frames downstream (used by background tools)."""
@@ -436,10 +490,9 @@ class TeardownInterceptor(FrameProcessor):
             return
 
         if isinstance(frame, (UserStartedSpeakingFrame, InterruptionFrame, VADUserStartedSpeakingFrame)):
-            # Barge-in: a delivery in flight is stopped and NOT re-queued; the
-            # partial text is committed below with the [interrupted] marker.
-            if self.delivery is not None:
-                self.delivery.notify_user_started_speaking()
+            # NOTE: user-speaking gate notifications are owned by
+            # AdapterProcessor (it sees the same frames first); notifying here
+            # too would set the flag twice with no symmetric clear.
             buffered = self._full_response_buffer
             if buffered.strip():
                 self.transcript_mgr.append(TranscriptTurn(
@@ -681,7 +734,7 @@ async def websocket_endpoint(websocket: WebSocket):
         # wakeword arrives (AdapterProcessor binds the inject sink then).
 
         async def handle_query_hermes(params: FunctionCallParams):
-            prompt = params.args.get("prompt", "")
+            prompt = params.arguments.get("prompt", "")
             logger.info(f"Dispatching Hermes run for prompt: {prompt}")
 
             # No dispatch filler clip by design — the model's own spoken
@@ -691,8 +744,10 @@ async def websocket_endpoint(websocket: WebSocket):
             # spoken failure notice already queued.
             task = await task_broker.dispatch(prompt, session_id=voice_session_id)
             if task.state == HermesTaskState.FAILED:
-                return {"status": "dispatch_failed", "task_id": task.task_id}
-            return {"status": "task_dispatched_to_background", "task_id": task.task_id}
+                result = {"status": "dispatch_failed", "task_id": task.task_id}
+            else:
+                result = {"status": "task_dispatched_to_background", "task_id": task.task_id}
+            await params.result_callback(result)
 
         llm.register_function("query_hermes_agent", handle_query_hermes)
 
