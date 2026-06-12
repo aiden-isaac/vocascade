@@ -12,15 +12,48 @@ class HermesTaskState(str, Enum):
     PENDING = "pending"
     EXECUTING = "executing"
     COMPLETED = "completed"
+    FAILED = "failed"
     CANCELLED = "cancelled"
+
+TERMINAL_STATES = frozenset(
+    {HermesTaskState.COMPLETED, HermesTaskState.FAILED, HermesTaskState.CANCELLED}
+)
 
 @dataclass
 class HermesTask:
     task_id: str
     created_at: float
     state: HermesTaskState
-    transcript: str
-    response: Optional[str] = None
+    request_text: str
+    run_id: Optional[str] = None       # server-issued; None until accepted / in chat-fallback
+    result_text: Optional[str] = None  # full result once terminal
+    session_id: str = ""               # X-Hermes-Session-Id of the dispatching voice session
+    delivered: bool = False            # result spoken (or spoken-interrupted)
+    updated_at: float = 0.0
+
+    def __post_init__(self):
+        if not self.updated_at:
+            self.updated_at = self.created_at
+
+    # 004-era aliases, kept so existing call sites/tests keep working.
+    @property
+    def transcript(self) -> str:
+        return self.request_text
+
+    @transcript.setter
+    def transcript(self, value: str) -> None:
+        self.request_text = value
+
+    @property
+    def response(self) -> Optional[str]:
+        return self.result_text
+
+    @response.setter
+    def response(self, value: Optional[str]) -> None:
+        self.result_text = value
+
+    def is_terminal(self) -> bool:
+        return self.state in TERMINAL_STATES
 
 @dataclass
 class TranscriptTurn:
@@ -53,10 +86,11 @@ class TranscriptManager:
                     task_id=turn.hermes_task_id,
                     created_at=turn.timestamp,
                     state=state,
-                    transcript=turn.content
+                    request_text=turn.content
                 )
             else:
                 self.tasks[turn.hermes_task_id].state = state
+                self.tasks[turn.hermes_task_id].updated_at = time.time()
 
         self._prune_window()
 
@@ -64,8 +98,9 @@ class TranscriptManager:
         """Updates the state of a Hermes task and its corresponding turn in history."""
         if task_id in self.tasks:
             self.tasks[task_id].state = new_state
+            self.tasks[task_id].updated_at = time.time()
             if response:
-                self.tasks[task_id].response = response
+                self.tasks[task_id].result_text = response
 
         # Also update the corresponding turn in the sliding window
         for turn in self.turns:
@@ -83,14 +118,22 @@ class TranscriptManager:
             if task.state in (HermesTaskState.PENDING, HermesTaskState.EXECUTING)
         ]
 
-    def can_cancel(self, task_id: str) -> bool:
+    def can_cancel(self, task_id: str, server_can_stop: bool = True) -> bool:
         """
-        Cancellation guard logic:
-        True if the task is pending, False if the task is already executing or done.
+        Cancellation guard logic (final rule per 005 T102 contract pinning):
+        pending tasks are always cancellable; executing tasks are cancellable
+        iff the server supports run stop (Hermes advertises features.run_stop
+        and POST /v1/runs/{id}/stop was verified live). Terminal tasks and
+        unknown ids are never cancellable.
         """
         if task_id not in self.tasks:
             return False
-        return self.tasks[task_id].state == HermesTaskState.PENDING
+        state = self.tasks[task_id].state
+        if state == HermesTaskState.PENDING:
+            return True
+        if state == HermesTaskState.EXECUTING:
+            return server_can_stop
+        return False
 
     def _prune_window(self) -> None:
         """
