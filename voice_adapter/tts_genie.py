@@ -7,7 +7,14 @@ import logging
 import re
 from typing import AsyncGenerator
 from pipecat.services.tts_service import TTSService
-from pipecat.frames.frames import Frame, TTSAudioRawFrame, ErrorFrame
+from pipecat.frames.frames import (
+    CancelFrame,
+    EndFrame,
+    ErrorFrame,
+    Frame,
+    StartFrame,
+    TTSAudioRawFrame,
+)
 from voice_satellite.tts.genie_client import GenieTTSClient
 
 logger = logging.getLogger("voice_adapter.tts_genie")
@@ -44,16 +51,31 @@ class GenieTTSService(TTSService):
         )
         self._character_loaded = False
 
-    async def start(self, frame: Frame | None = None) -> None:
-        """Initializes the Genie TTS character registration."""
+    async def preload(self) -> None:
+        """Register the Genie character ahead of pipeline start (app startup)."""
         if not self._character_loaded:
             logger.info("Initializing Genie TTS character...")
             await self._client.load_character()
             self._character_loaded = True
 
-    async def stop(self) -> None:
-        """Closes the client session."""
+    async def close(self) -> None:
+        """Close the HTTP client session (app shutdown)."""
         await self._client.close()
+
+    async def start(self, frame: StartFrame) -> None:
+        """Pipeline start. MUST call through to TTSService.start: it creates
+        the serialization/audio-context drain task — without it the service
+        swallows every queued frame (TTS audio and passthrough alike)."""
+        await super().start(frame)
+        await self.preload()
+
+    async def stop(self, frame: EndFrame) -> None:
+        """Pipeline stop (EndFrame). The HTTP session stays open for the next
+        pipeline; the app closes it via close() on shutdown."""
+        await super().stop(frame)
+
+    async def cancel(self, frame: CancelFrame) -> None:
+        await super().cancel(frame)
 
     async def run_tts(self, text: str, context_id: str) -> AsyncGenerator[Frame | None, None]:
         """
@@ -71,7 +93,7 @@ class GenieTTSService(TTSService):
         try:
             # First initialization if not already done
             if not self._character_loaded:
-                await self.start()
+                await self.preload()
 
             await self.start_tts_usage_metrics(text)
 
