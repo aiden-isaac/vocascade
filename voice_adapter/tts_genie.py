@@ -37,10 +37,14 @@ class GenieTTSService(TTSService):
         # This will make the parent class automatically emit TTSTextFrames for context sync.
         # Settings store mode wants every field initialized; Genie has a fixed
         # character/voice per server, so model/voice are None (unsupported).
+        # Genie's first chunk routinely takes 4-7s; the default 3s audio-context
+        # drain timeout would declare the context finished before any audio
+        # arrives and drop the whole utterance.
         super().__init__(
             sample_rate=sample_rate,
             push_text_frames=True,
             settings=TTSSettings(model=None, voice=None, language=language),
+            stop_frame_timeout_s=12.0,
             **kwargs
         )
         self.genie_sample_rate = sample_rate

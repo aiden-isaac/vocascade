@@ -42,6 +42,7 @@ from pipecat.frames.frames import (
     VADUserStartedSpeakingFrame,
     VADUserStoppedSpeakingFrame,
     LLMFullResponseEndFrame,
+    LLMFullResponseStartFrame,
     BotStartedSpeakingFrame,
     BotStoppedSpeakingFrame,
     FunctionCallResultFrame,
@@ -429,11 +430,21 @@ class AdapterProcessor(FrameProcessor):
         await self.push_frame(LLMContextFrame(context=context), FrameDirection.DOWNSTREAM)
 
     async def inject_text(self, text: str):
-        """Asynchronously injects text frames downstream (used by background tools)."""
+        """Asynchronously injects text frames downstream (used by background tools).
+
+        The text is wrapped in LLMFullResponseStart/End frames so the TTS
+        service treats it exactly like a model reply: the start frame opens a
+        turn context (enabling the recreate-on-timeout rescue for slow
+        first-chunk synthesis) and the end frame flushes the sentence
+        aggregator. A bare TextFrame gets an orphan audio context that is
+        silently dropped when synthesis takes longer than the drain timeout.
+        """
         logger.info(f"Injecting text from background task: {text[:50]}...")
         msg = OutputTransportMessageUrgentFrame({"type": "assistant_response", "text": text})
         await self.push_frame(msg, FrameDirection.DOWNSTREAM)
+        await self.push_frame(LLMFullResponseStartFrame(), FrameDirection.DOWNSTREAM)
         await self.push_frame(TextFrame(text), FrameDirection.DOWNSTREAM)
+        await self.push_frame(LLMFullResponseEndFrame(), FrameDirection.DOWNSTREAM)
 
 
 class TeardownInterceptor(FrameProcessor):
