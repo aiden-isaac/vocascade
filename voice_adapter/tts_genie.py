@@ -6,6 +6,7 @@ Adapters the custom GenieTTSClient to Pipecat's TTSService interface.
 import logging
 import re
 from typing import AsyncGenerator
+from pipecat.services.settings import TTSSettings
 from pipecat.services.tts_service import TTSService
 from pipecat.frames.frames import (
     CancelFrame,
@@ -34,9 +35,12 @@ class GenieTTSService(TTSService):
     ):
         # We set push_text_frames=True because Genie TTS doesn't provide word timestamps.
         # This will make the parent class automatically emit TTSTextFrames for context sync.
+        # Settings store mode wants every field initialized; Genie has a fixed
+        # character/voice per server, so model/voice are None (unsupported).
         super().__init__(
             sample_rate=sample_rate,
             push_text_frames=True,
+            settings=TTSSettings(model=None, voice=None, language=language),
             **kwargs
         )
         self.genie_sample_rate = sample_rate
