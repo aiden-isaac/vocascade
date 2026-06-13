@@ -25,9 +25,9 @@ description: "Task list for 006-custom-voice-pipeline-waterfall"
 
 **Purpose**: Resolve the three research gates and pin the SDK + Hermes contracts before any code depends on them.
 
-- [ ] T201 [US0] Re-affirm the Hermes contract in `specs/006-custom-voice-pipeline-waterfall/contracts/hermes-api.md` (unchanged from 005) and extend `tests/contract/test_hermes_api.py` to assert `GET /v1/runs/{id}/events` emits ≥1 `message.delta` with non-empty `delta` before `run.completed` (research OQ-1). Record fallback if absent.
-- [ ] T202 [P] [US2] Pin the skill SDK surface in `specs/006-custom-voice-pipeline-waterfall/contracts/skill-sdk.md` (decorator signature, `SkillContext` fields, `ConfidenceResult`, stage ABC) — freeze before user-skill code depends on it.
-- [ ] T203 [P] [US0] Resolve and record `research.md` decisions: authoritative VAD location (OQ-2), transport auth mode (OQ-3), `config.yaml`/`.env` boundary (OQ-4), classifier prompt-gen + clamping (OQ-5).
+- [x] T201 [US0] Re-affirm the Hermes contract in `specs/006-custom-voice-pipeline-waterfall/contracts/hermes-api.md` (unchanged from 005) and extend `tests/contract/test_hermes_api.py` to assert `GET /v1/runs/{id}/events` emits ≥1 `message.delta` with non-empty `delta` before `run.completed` (research OQ-1). Record fallback if absent.
+- [x] T202 [P] [US2] Pin the skill SDK surface in `specs/006-custom-voice-pipeline-waterfall/contracts/skill-sdk.md` (decorator signature, `SkillContext` fields, `ConfidenceResult`, stage ABC) — freeze before user-skill code depends on it.
+- [x] T203 [P] [US0] Resolve and record `research.md` decisions: authoritative VAD location (OQ-2), transport auth mode (OQ-3), `config.yaml`/`.env` boundary (OQ-4), classifier prompt-gen + clamping (OQ-5).
 
 **Checkpoint**: No open ⚠️ in contracts; OQ-1 verified live (or fallback recorded).
 
