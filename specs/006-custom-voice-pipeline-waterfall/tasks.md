@@ -37,10 +37,10 @@ description: "Task list for 006-custom-voice-pipeline-waterfall"
 
 **Purpose**: Collapse to one package and stand up config; this is the structural foundation for everything.
 
-- [ ] T204 [US0] **Mechanical repackage (pure move — no logic/Pipecat changes, tests green before & after, independently revertable)**: rename `voice_adapter/` → `vocascade/`; move `voice_satellite/{stt/whisper_stt.py→stt/whisper.py, tts/genie_client.py, tts/sentence_splitter.py, audio/effects.py, gateway/hermes_client.py}` into `vocascade/`; fix every import across the repo and `tests/`; delete `voice_satellite/`. Nothing else in this commit.
-- [ ] T205 [US0] Add `silero-vad` and `PyYAML`; remove `pipecat-ai[websocket]` — `requirements.txt` (and `pyproject.toml` if present).
-- [ ] T206 [P] [US0] Add a `config.yaml` loader + `config.yaml.example` (structure vs. `.env` secrets per OQ-4; fail-fast on missing/malformed) — `vocascade/config.py`.
-- [ ] T207 [P] [US0] Delete throwaway/Pipecat-coupled tests: `test_pipecat.py`, `test_pipeline.py`, `test_vad.py`, `test_ws.py`, `tests/unit/test_adapter.py`, `tests/unit/test_tts_genie.py`.
+- [x] T204 [US0] **Mechanical repackage (pure move — no logic/Pipecat changes, tests green before & after, independently revertable)**: rename `voice_adapter/` → `vocascade/`; move `voice_satellite/{stt/whisper_stt.py→stt/whisper.py, tts/genie_client.py, tts/sentence_splitter.py, audio/effects.py, gateway/hermes_client.py}` into `vocascade/`; fix every import across the repo and `tests/`; delete `voice_satellite/`. Nothing else in this commit.
+- [x] T205 [US0] Add `silero-vad` and `PyYAML`; remove `pipecat-ai[websocket]` — `requirements.txt` (and `pyproject.toml` if present).
+- [x] T206 [P] [US0] Add a `config.yaml` loader + `config.yaml.example` (structure vs. `.env` secrets per OQ-4; fail-fast on missing/malformed) — `vocascade/config.py`.
+- [x] T207 [P] [US0] Delete throwaway/Pipecat-coupled tests: `test_pipecat.py`, `test_pipeline.py`, `test_vad.py`, `test_ws.py`, `tests/unit/test_adapter.py`, `tests/unit/test_tts_genie.py`.
 
 **Checkpoint**: `grep -ri "voice_satellite" .` = 0, `voice_satellite/` gone, repo imports/tests green on the new package name.
 
@@ -50,7 +50,7 @@ description: "Task list for 006-custom-voice-pipeline-waterfall"
 
 **Purpose**: Port the Pipecat-coupled pieces to framework-free equivalents and lay the pipeline/router skeletons. No user story can complete until this is done.
 
-- [ ] T208 [US0] Port `RawFrameSerializer` (WS JSON/binary codec) off Pipecat frames into a standalone codec — `vocascade/transport/serializer.py`.
+- [x] T208 [US0] Port `RawFrameSerializer` (WS JSON/binary codec) off Pipecat frames into a standalone codec — `vocascade/transport/serializer.py`.
 - [ ] T209 [US0] Port the VAD shim into a framework-free stage; add optional server-side `silero-vad` per OQ-2 (edge VAD remains authoritative) — `vocascade/pipeline/vad.py`.
 - [ ] T210 [US0] Reshape `GenieTTSService` off the Pipecat `TTSService` base into a plain async TTS sink wrapping `vocascade/tts/genie_client.py`; **preserve slow-first-chunk tolerance** (4–7s, FR-005) — `vocascade/pipeline/tts.py`.
 - [ ] T211 [US1] `VoicePipeline` skeleton — the ~300-line asyncio core loop + the interrupt `asyncio.Event` shared by all stages — `vocascade/pipeline/pipeline.py`.
