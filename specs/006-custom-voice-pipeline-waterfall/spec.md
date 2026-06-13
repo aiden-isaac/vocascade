@@ -338,3 +338,12 @@ As a user, I want the agent's long-term memory to stay consistent even when some
 - `config.yaml` is an acceptable configuration mechanism per the project constitution (which permits a central config file), used alongside environment configuration for secrets.
 - The retained 005 modules (run client, task broker, delivery coordinator, transcript manager, filler engine, pre-fetch cache) are framework-agnostic and carried forward into `vocascade` largely as-is.
 - Test tasks are included for routing, session control, and the Hermes stage because correctness of routing and cancellation is central to this feature.
+
+## Deferred from 005 / Out of Scope
+
+005 (Hermes agent backend) merged Phases 0–2 (the MVP voice query + proactive result). Its later phases were written against the now-removed Pipecat adapter, so they are **superseded as written**. 006 keeps and extends 005's framework-agnostic foundation (runs API client, task broker, delivery coordinator, transcript manager) but does **not** re-specify the capabilities below. They remain valuable but are **not built and out of scope for 006** unless explicitly added — the implementing agent should fold any that still matter into a later 006 phase or a follow-up spec, now built on the `vocascade`/waterfall foundation rather than the old adapter:
+
+- **Remote context hydration** — reading the agent's `USER.md`/`MEMORY.md` into the prompt via `HERMES_CONTEXT_SOURCE` (`file://` watch or `ssh://` SFTP poll). Note: 006's US10 is the *opposite* direction (writing a session summary *to* the memory service), not hydration *from* it. `pre_fetch_cache.py` is retained in the layout but left unwired.
+- **Offline queue / handler** — `LITELLM_HEALTH_URL` health detection, the `OFFLINE_QUEUE_PATH` disk queue, and the night-window deferral.
+- **Task journal persistence** — a durable `TASK_JOURNAL_PATH` journal so tasks survive restarts (the module is retained but no 006 task wires it up).
+- **Voice approval flow** — the spoken yes/no resolution of agent approval requests. The delivery coordinator still *delivers* `APPROVAL_REQUEST` items and `resolve_approval()` exists in the run client, but the conversational resolve loop is not specified here.
