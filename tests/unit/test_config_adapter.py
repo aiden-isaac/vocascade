@@ -67,6 +67,11 @@ class TestAdapterConfig(unittest.TestCase):
             self.assertEqual(config.offline_start_hour, 2)
             self.assertEqual(config.offline_end_hour, 6)
             self.assertTrue(config.skip_genie_init)
+            
+            # Assert config.yaml values loaded
+            self.assertEqual(config.role, "both")
+            self.assertEqual(config.transport_auth_mode, "trust-network")
+            self.assertFalse(config.server_vad_enabled)
 
     def test_005_defaults(self):
         # Clean environment + no .env so the documented defaults apply
@@ -87,6 +92,10 @@ class TestAdapterConfig(unittest.TestCase):
                 # Removed 004-era fields must be gone entirely
                 self.assertFalse(hasattr(config, "hermes_sse_url"))
                 self.assertFalse(hasattr(config, "hermes_memory_path"))
+                self.assertEqual(config.role, "both")
+                self.assertEqual(config.transport_auth_mode, "trust-network")
+                self.assertFalse(config.server_vad_enabled)
+
 
     def test_missing_genie_config_warnings(self):
         # Remove genie-specific values to trigger warning

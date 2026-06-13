@@ -19,6 +19,9 @@ class AdapterConfig:
     # System role and authentication (from config.yaml)
     role: str                           # "both" | "edge" | "server"
     transport_auth_mode: str            # "trust-network" | "device-identity"
+    server_vad_enabled: bool            # True to run Silero VAD on server, False for Edge VAD shim
+
+
 
     # Waterfall routing (from config.yaml)
     waterfall_stages: list[str]
@@ -120,8 +123,9 @@ def load_config() -> AdapterConfig:
             raise ValueError(f"Configuration file '{config_path}' is missing required section: '{section}'")
 
     system = yaml_config["system"]
-    if not isinstance(system, dict) or "role" not in system or "transport_auth_mode" not in system:
-        raise ValueError(f"Configuration file '{config_path}': 'system' section must contain 'role' and 'transport_auth_mode'")
+    if not isinstance(system, dict) or "role" not in system or "transport_auth_mode" not in system or "server_vad_enabled" not in system:
+        raise ValueError(f"Configuration file '{config_path}': 'system' section must contain 'role', 'transport_auth_mode', and 'server_vad_enabled'")
+
 
     waterfall = yaml_config["waterfall"]
     if not isinstance(waterfall, dict) or "stages" not in waterfall or "thresholds" not in waterfall:
@@ -158,7 +162,9 @@ def load_config() -> AdapterConfig:
     return AdapterConfig(
         role=system["role"],
         transport_auth_mode=system["transport_auth_mode"],
+        server_vad_enabled=system["server_vad_enabled"],
         waterfall_stages=waterfall["stages"],
+
         waterfall_thresholds=waterfall["thresholds"],
         skills_config=skills,
 

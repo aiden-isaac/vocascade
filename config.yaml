@@ -1,6 +1,8 @@
 system:
   role: "both"                  # both | edge | server
   transport_auth_mode: "trust-network"  # trust-network | device-identity
+  server_vad_enabled: false
+
 
 waterfall:
   stages:
