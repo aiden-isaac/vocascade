@@ -67,3 +67,8 @@ This repo uses the **Speckit** workflow. Design artifacts live in `specs/<naming
 - `tasks.md` — actionable task breakdown
 
 When modifying existing features, read the corresponding spec/plan first. When creating new features, follow the speckit workflow (spec → plan → tasks → implement).
+
+<!-- SPECKIT START -->
+**Active feature**: [`006-custom-voice-pipeline-waterfall`](specs/006-custom-voice-pipeline-waterfall/plan.md) — remove the Pipecat framework in favor of a custom asyncio `VoicePipeline` + OVOS-style confidence waterfall, consolidated into a single `vocascade` package. Supersedes 004 (Pipecat) and extends 005 (Hermes runs API, now with streamed delivery).
+<!-- SPECKIT END -->
+
