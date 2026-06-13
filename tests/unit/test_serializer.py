@@ -1,7 +1,8 @@
 import unittest
 import base64
 import json
-from vocascade.transport.serializer import RawFrameSerializer, AudioFrame, ControlMessage
+from vocascade.transport.serializer import RawFrameSerializer
+from vocascade.pipeline.pipeline import AudioFrame, ControlMessageFrame
 
 class TestRawFrameSerializer(unittest.TestCase):
     def setUp(self):
@@ -22,7 +23,7 @@ class TestRawFrameSerializer(unittest.TestCase):
 
     def test_serialize_control(self):
         msg = {"type": "status", "state": "active_listening"}
-        frame = ControlMessage(message=msg)
+        frame = ControlMessageFrame(message=msg)
         serialized = self.serializer.serialize(frame)
         self.assertIsNotNone(serialized)
         
@@ -40,7 +41,7 @@ class TestRawFrameSerializer(unittest.TestCase):
     def test_deserialize_str_to_control(self):
         msg_str = '{"type": "wakeword"}'
         deserialized = self.serializer.deserialize(msg_str)
-        self.assertIsInstance(deserialized, ControlMessage)
+        self.assertIsInstance(deserialized, ControlMessageFrame)
         self.assertEqual(deserialized.message, {"type": "wakeword"})
 
     def test_deserialize_invalid_json(self):
@@ -49,3 +50,4 @@ class TestRawFrameSerializer(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+

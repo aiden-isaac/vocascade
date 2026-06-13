@@ -1,24 +1,14 @@
 """
 vocascade/transport/serializer.py — Standalone WebSocket JSON/binary codec.
-Converts raw PCM audio bytes to/from AudioFrame, and JSON strings to/from ControlMessage.
+Converts raw PCM audio bytes to/from AudioFrame, and JSON strings to/from ControlMessageFrame.
 """
 
 import json
 import base64
 import logging
-from dataclasses import dataclass
+from vocascade.pipeline.pipeline import AudioFrame, ControlMessageFrame
 
 logger = logging.getLogger("vocascade.transport.serializer")
-
-@dataclass
-class AudioFrame:
-    audio: bytes
-    sample_rate: int = 16000
-    num_channels: int = 1
-
-@dataclass
-class ControlMessage:
-    message: dict
 
 class RawFrameSerializer:
     """
@@ -38,11 +28,11 @@ class RawFrameSerializer:
                 "data": b64_audio,
                 "sample_rate": frame.sample_rate
             })
-        elif isinstance(frame, ControlMessage):
+        elif isinstance(frame, ControlMessageFrame):
             return json.dumps(frame.message)
         return None
 
-    def deserialize(self, data: str | bytes) -> AudioFrame | ControlMessage | None:
+    def deserialize(self, data: str | bytes) -> AudioFrame | ControlMessageFrame | None:
         """
         Deserialize incoming WebSocket data into a frame.
         """
@@ -55,7 +45,7 @@ class RawFrameSerializer:
         if isinstance(data, str):
             try:
                 msg = json.loads(data)
-                return ControlMessage(message=msg)
+                return ControlMessageFrame(message=msg)
             except Exception as e:
                 logger.error(f"Error parsing client JSON: {e}")
         return None
