@@ -103,3 +103,36 @@ class TestAdapterConfig(unittest.TestCase):
                 self.assertIsNone(config.tts_reference_text)
                 mock_warn.assert_called_once()
                 self.assertIn("TTS Configuration incomplete", mock_warn.call_args[0][0])
+
+    def test_missing_config_yaml(self):
+        with patch.dict(os.environ, {"VOCASCADE_CONFIG_PATH": "non_existent.yaml"}):
+            with self.assertRaises(FileNotFoundError):
+                load_config()
+
+    def test_malformed_config_yaml(self):
+        import tempfile
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
+            f.write("system:\n  role: both\n  transport_auth_mode: [unclosed list")
+            f_path = f.name
+        try:
+            with patch.dict(os.environ, {"VOCASCADE_CONFIG_PATH": f_path}):
+                with self.assertRaises(ValueError) as ctx:
+                    load_config()
+                self.assertIn("malformed", str(ctx.exception))
+        finally:
+            os.unlink(f_path)
+
+    def test_missing_required_keys_config_yaml(self):
+        import tempfile
+        # Missing system section
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
+            f.write("waterfall:\n  stages: []\n  thresholds: {}\nskills: {}")
+            f_path = f.name
+        try:
+            with patch.dict(os.environ, {"VOCASCADE_CONFIG_PATH": f_path}):
+                with self.assertRaises(ValueError) as ctx:
+                    load_config()
+                self.assertIn("missing required section: 'system'", str(ctx.exception))
+        finally:
+            os.unlink(f_path)
+

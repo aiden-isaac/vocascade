@@ -1,6 +1,7 @@
 """
-Centralized configuration loader for the Pipecat Voice Adapter.
-Loads settings from environment variables/dotenv and exposes a validated frozen dataclass.
+Centralized configuration loader for the vocascade voice stack.
+Loads settings from both config.yaml and environment variables/dotenv,
+exposing a validated frozen dataclass.
 """
 
 import os
@@ -8,13 +9,25 @@ import sys
 import logging
 from dataclasses import dataclass
 from pathlib import Path
+import yaml
 from dotenv import load_dotenv
 
 logger = logging.getLogger("vocascade.config")
 
 @dataclass(frozen=True)
 class AdapterConfig:
-    # Pipecat transport
+    # System role and authentication (from config.yaml)
+    role: str                           # "both" | "edge" | "server"
+    transport_auth_mode: str            # "trust-network" | "device-identity"
+
+    # Waterfall routing (from config.yaml)
+    waterfall_stages: list[str]
+    waterfall_thresholds: dict[str, float]
+
+    # Skills config (from config.yaml)
+    skills_config: dict[str, dict]
+
+    # Transport settings (from env/defaults)
     host: str
     port: int
     audio_in_sample_rate: int   # 16000
@@ -25,7 +38,7 @@ class AdapterConfig:
     llm_api_key: str | None
     llm_model: str
 
-    # Hermes agent backend (005)
+    # Hermes agent backend
     hermes_base_url: str
     hermes_api_key: str | None
     hermes_model: str
@@ -74,11 +87,49 @@ def _parse_bool(val: str | None) -> bool:
 
 def load_config() -> AdapterConfig:
     """
-    Loads configuration from environment variables (including .env file).
+    Loads configuration from config.yaml and environment variables (including .env file).
+    Fails fast if config.yaml is missing, malformed, or missing required structure.
     Warns and enables degraded TTS mode if voice-cloning configurations are missing.
     """
     # Load dotenv if available
     load_dotenv()
+
+    # Determine config file path
+    config_path = os.getenv("VOCASCADE_CONFIG_PATH", "config.yaml")
+    if not os.path.exists(config_path):
+        raise FileNotFoundError(
+            f"Configuration file '{config_path}' not found. "
+            "Please ensure config.yaml is present in the repository root or set VOCASCADE_CONFIG_PATH."
+        )
+
+    # Load and parse config.yaml
+    try:
+        with open(config_path, "r", encoding="utf-8") as f:
+            yaml_config = yaml.safe_load(f)
+    except yaml.YAMLError as e:
+        raise ValueError(f"Configuration file '{config_path}' is malformed: {e}")
+    except Exception as e:
+        raise ValueError(f"Error reading configuration file '{config_path}': {e}")
+
+    if not yaml_config:
+        raise ValueError(f"Configuration file '{config_path}' is empty.")
+
+    # Validate structure
+    for section in ("system", "waterfall", "skills"):
+        if section not in yaml_config:
+            raise ValueError(f"Configuration file '{config_path}' is missing required section: '{section}'")
+
+    system = yaml_config["system"]
+    if not isinstance(system, dict) or "role" not in system or "transport_auth_mode" not in system:
+        raise ValueError(f"Configuration file '{config_path}': 'system' section must contain 'role' and 'transport_auth_mode'")
+
+    waterfall = yaml_config["waterfall"]
+    if not isinstance(waterfall, dict) or "stages" not in waterfall or "thresholds" not in waterfall:
+        raise ValueError(f"Configuration file '{config_path}': 'waterfall' section must contain 'stages' and 'thresholds'")
+
+    skills = yaml_config["skills"]
+    if not isinstance(skills, dict):
+        raise ValueError(f"Configuration file '{config_path}': 'skills' section must be a dictionary")
 
     # Optional TTS keys — warn and degrade
     tts_onnx_model_dir = os.getenv("GENIE_ONNX_MODEL_DIR")
@@ -105,6 +156,12 @@ def load_config() -> AdapterConfig:
     default_journal_path = os.path.expanduser("~/.vocascade/tasks.json")
 
     return AdapterConfig(
+        role=system["role"],
+        transport_auth_mode=system["transport_auth_mode"],
+        waterfall_stages=waterfall["stages"],
+        waterfall_thresholds=waterfall["thresholds"],
+        skills_config=skills,
+
         host=os.getenv("HOST", "0.0.0.0"),
         port=int(os.getenv("PORT", "8000")),
         audio_in_sample_rate=int(os.getenv("AUDIO_IN_SAMPLE_RATE", "16000")),

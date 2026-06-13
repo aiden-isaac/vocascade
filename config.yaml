@@ -1,0 +1,29 @@
+system:
+  role: "both"                  # both | edge | server
+  transport_auth_mode: "trust-network"  # trust-network | device-identity
+
+waterfall:
+  stages:
+    - stop
+    - converse
+    - high
+    - medium
+    - smalltalk
+    - hermes
+  thresholds:
+    high: 0.95
+    medium: 0.65
+    low: 0.35
+
+skills:
+  datetime:
+    enabled: true
+    filler: "acknowledge"
+  timers:
+    enabled: true
+    filler: "acknowledge"
+  smalltalk:
+    enabled: true
+    filler: "thinking"
+  stop:
+    enabled: true
