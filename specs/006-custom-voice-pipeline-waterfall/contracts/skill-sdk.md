@@ -1,7 +1,6 @@
 # Contract: Skill SDK surface
 
-**Status**: Draft — pin alongside the registry implementation (US2 / task in
-Phase 0–4). This is the **stable surface that user skills depend on**: changing
+**Status**: Pinned — frozen before user-skill code depends on it. This is the **stable surface that user skills depend on**: changing
 it is a breaking change for `user_skills/`. Keep it small and additive.
 
 ## Registration
