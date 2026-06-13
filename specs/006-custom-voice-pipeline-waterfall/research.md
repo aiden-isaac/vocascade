@@ -1,10 +1,14 @@
 # Research: Custom Voice Pipeline & Confidence Waterfall
 
+**Status**: Verified and Locked (2026-06-13)
+
 Phase 0 decisions. The first three are **blocking gates** — they must be resolved (and OQ-1/OQ-3 verified against reality) before the dependent foundational tasks run. Each entry: Decision / Rationale / Alternatives considered.
 
 ## OQ-1 (GATE) — Does `/v1/runs` emit incremental `message.delta` events?
 
 **Decision**: Treat incremental `message.delta` streaming as the delivery mechanism, and **pin it with a contract test in Phase 0** (extend `tests/contract/test_hermes_api.py`) before building `waterfall/stages/hermes.py`. If the live server only emits a terminal `run.completed`, fall back to whole-result proactive delivery (still one path, just no token streaming) and record that here.
+
+**Result (2026-06-13)**: Verified. Live Hermes server (jarlaxle) emits incremental `message.delta` events with non-empty delta values before `run.completed`. Streamed token delivery is confirmed.
 
 **Rationale**: The whole always-async + streamed-delivery model (FR-050/FR-051) depends on the run event stream carrying incremental assistant output, not just lifecycle + terminal events. 005's pinned event vocabulary already lists `message.delta` as a progress event, so the expectation is well-founded — but it must be verified live, not assumed, because the responsiveness budget (SC-003) hinges on it.
 
