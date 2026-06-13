@@ -8,6 +8,7 @@ numpy
 scipy
 aiohttp
 cryptography
-pipecat-ai[websocket]
+silero-vad
+PyYAML
 watchdog
 asyncssh
