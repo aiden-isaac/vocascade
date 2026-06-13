@@ -158,6 +158,19 @@ class TestHermesApiContract(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(terminal["event"], "run.completed", f"events: {kinds}")
         self.assertIn("output", terminal)
         self.assertIn("usage", terminal)
+        
+        # Verify message.delta streaming contract (OQ-1 / T201)
+        delta_events = [e for e in events if e.get("event") == "message.delta"]
+        self.assertTrue(
+            len(delta_events) >= 1,
+            f"Expected at least one message.delta event, but got events: {kinds}"
+        )
+        non_empty_deltas = [de for de in delta_events if de.get("delta")]
+        self.assertTrue(
+            len(non_empty_deltas) >= 1,
+            "Expected at least one message.delta event with non-empty 'delta'"
+        )
+        
         for e in events:
             self.assertEqual(e["run_id"], run_id)
             self.assertIn("timestamp", e)
