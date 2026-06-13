@@ -4,7 +4,7 @@ All individual effects operate on numpy int16 arrays at TTS_SAMPLE_RATE.
 """
 
 import numpy as np
-from voice_satellite.audio.constants import TTS_SAMPLE_RATE
+from vocascade.audio.constants import TTS_SAMPLE_RATE
 
 def apply_pitch_shift(pcm: np.ndarray, semitones: float) -> np.ndarray:
     """

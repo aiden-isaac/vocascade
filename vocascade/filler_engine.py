@@ -1,5 +1,5 @@
 """
-voice_adapter/filler_engine.py — Pre-rendered acknowledgement audio loader.
+vocascade/filler_engine.py — Pre-rendered acknowledgement audio loader.
 
 "Ack" / filler clips are short PCM files synthesized offline by
 `scripts/generate_fillers.py` from the phrase list in `static/fillers.json`.
@@ -25,7 +25,7 @@ import logging
 import random
 from pathlib import Path
 
-logger = logging.getLogger("voice_adapter.filler_engine")
+logger = logging.getLogger("vocascade.filler_engine")
 
 # All known filler categories. Files under any other directory are ignored.
 KNOWN_CATEGORIES = {
@@ -100,3 +100,9 @@ class FillerEngine:
 
     def has_category(self, category: str) -> bool:
         return bool(self._fillers.get(category))
+
+    def get_categories(self) -> dict[str, int]:
+        """
+        Returns the count of loaded fillers in each category.
+        """
+        return {cat: len(files) for cat, files in self._fillers.items()}

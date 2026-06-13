@@ -5,14 +5,14 @@ Loads config, prints a health report, and launches the FastAPI app.
 
 import sys
 import logging
-from voice_adapter.config import load_config
+from vocascade.config import load_config
 
 # Set up logging
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
-logger = logging.getLogger("voice_adapter.main")
+logger = logging.getLogger("vocascade.main")
 
 def print_health_report(config):
     """Prints a health report summarizing the loaded configuration."""
@@ -43,7 +43,7 @@ def main():
         logger.info("Configuration loaded successfully. Starting FastAPI uvicorn server...")
         
         import uvicorn
-        from voice_adapter.adapter import app
+        from vocascade.adapter import app
         
         uvicorn.run(app, host=config.host, port=config.port)
     except Exception as e:

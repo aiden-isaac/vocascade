@@ -13,7 +13,7 @@ import logging
 import os
 import time
 
-logger = logging.getLogger("voice_satellite.telemetry")
+logger = logging.getLogger("vocascade.telemetry")
 
 
 class LatencyTracker:

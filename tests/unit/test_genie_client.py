@@ -1,10 +1,10 @@
 import asyncio
 import unittest
 from unittest.mock import MagicMock, AsyncMock, patch
-from voice_satellite.tts import GenieTTSClient
+from vocascade.tts.genie_client import GenieTTSClient
 
 class TestGenieTTSClient(unittest.IsolatedAsyncioTestCase):
-    @patch("voice_satellite.tts.genie_client.aiohttp.ClientSession")
+    @patch("vocascade.tts.genie_client.aiohttp.ClientSession")
     async def test_load_character_success(self, mock_session_cls):
         # Setup session mock
         mock_session = MagicMock()
@@ -31,7 +31,7 @@ class TestGenieTTSClient(unittest.IsolatedAsyncioTestCase):
         # Check load_character and set_reference_audio post calls
         self.assertEqual(mock_session.post.call_count, 2)
 
-    @patch("voice_satellite.tts.genie_client.aiohttp.ClientSession")
+    @patch("vocascade.tts.genie_client.aiohttp.ClientSession")
     async def test_load_character_failure(self, mock_session_cls):
         # Setup session mock
         mock_session = MagicMock()
@@ -57,7 +57,7 @@ class TestGenieTTSClient(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(client.initialized)
         self.assertTrue(client.degraded_mode)
 
-    @patch("voice_satellite.tts.genie_client.aiohttp.ClientSession")
+    @patch("vocascade.tts.genie_client.aiohttp.ClientSession")
     async def test_synthesize_success(self, mock_session_cls):
         # Setup session mock
         mock_session = MagicMock()
@@ -104,7 +104,7 @@ class TestGenieTTSClient(unittest.IsolatedAsyncioTestCase):
             chunks.append(chunk)
         self.assertEqual(chunks, [])
 
-    @patch("voice_satellite.tts.genie_client.aiohttp.ClientSession")
+    @patch("vocascade.tts.genie_client.aiohttp.ClientSession")
     async def test_synthesize_unreachable_server(self, mock_session_cls):
         # Mock a connection error / exception
         mock_session = MagicMock()
@@ -129,7 +129,7 @@ class TestGenieTTSClient(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(client.degraded_mode)
         self.assertFalse(client.initialized)
 
-    @patch("voice_satellite.tts.genie_client.aiohttp.ClientSession")
+    @patch("vocascade.tts.genie_client.aiohttp.ClientSession")
     async def test_close_session(self, mock_session_cls):
         mock_session = AsyncMock()
         mock_session.closed = False
@@ -144,8 +144,8 @@ class TestGenieTTSClient(unittest.IsolatedAsyncioTestCase):
         mock_session.close.assert_called_once()
         self.assertIsNone(client._session)
 
-    @patch("voice_satellite.tts.genie_client.aiohttp.ClientSession")
-    @patch("voice_satellite.tts.genie_client.LatencyTracker")
+    @patch("vocascade.tts.genie_client.aiohttp.ClientSession")
+    @patch("vocascade.tts.genie_client.LatencyTracker")
     async def test_synthesize_latency(self, mock_tracker_cls, mock_session_cls):
         mock_response = AsyncMock()
         mock_response.status = 200

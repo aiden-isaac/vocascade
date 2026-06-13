@@ -1,5 +1,5 @@
 import unittest
-from voice_satellite.tts import split_sentences, SentenceChunk
+from vocascade.tts.sentence_splitter import split_sentences, SentenceChunk
 
 class TestClauseSentenceSplitter(unittest.TestCase):
     def test_clause_split_under_threshold(self):

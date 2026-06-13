@@ -1,19 +1,19 @@
-"""Unit tests for voice_adapter.task_broker (spec 005 T109)."""
+"""Unit tests for vocascade.task_broker (spec 005 T109)."""
 
 import asyncio
 import unittest
 from unittest.mock import AsyncMock, MagicMock
 
-from voice_adapter.delivery import DeliveryCoordinator, DeliveryKind
-from voice_adapter.hermes_run_client import (
+from vocascade.delivery import DeliveryCoordinator, DeliveryKind
+from vocascade.hermes_run_client import (
     Capabilities,
     RunDispatchError,
     RunEvent,
     RunEventKind,
     RunHandle,
 )
-from voice_adapter.task_broker import TaskBroker
-from voice_adapter.transcript_manager import HermesTaskState, TranscriptManager
+from vocascade.task_broker import TaskBroker
+from vocascade.transcript_manager import HermesTaskState, TranscriptManager
 
 CAPS_RUNS = Capabilities(supports_runs=True)
 CAPS_FALLBACK = Capabilities(supports_runs=False)

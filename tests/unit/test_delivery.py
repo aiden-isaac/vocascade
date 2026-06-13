@@ -1,10 +1,10 @@
-"""Unit tests for voice_adapter.delivery — MVP subset (spec 005 T110):
+"""Unit tests for vocascade.delivery — MVP subset (spec 005 T110):
 idle gate, FIFO order, preamble derivation."""
 
 import asyncio
 import unittest
 
-from voice_adapter.delivery import (
+from vocascade.delivery import (
     DeliveryCoordinator,
     DeliveryKind,
     DeliveryState,

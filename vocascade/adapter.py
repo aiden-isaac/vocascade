@@ -61,15 +61,15 @@ from pipecat.services.whisper.stt import WhisperSTTService, WhisperSTTSettings
 from pipecat.transcriptions.language import Language
 from pipecat.transports.websocket.fastapi import FastAPIWebsocketTransport, FastAPIWebsocketParams
 
-from voice_adapter.config import AdapterConfig, load_config
-from voice_adapter.delivery import DeliveryCoordinator
-from voice_adapter.filler_engine import FillerEngine
-from voice_adapter.hermes_run_client import HermesRunClient
-from voice_adapter.task_broker import TaskBroker
-from voice_adapter.transcript_manager import HermesTaskState, TranscriptManager, TranscriptTurn
-from voice_adapter.tts_genie import GenieTTSService
+from vocascade.config import AdapterConfig, load_config
+from vocascade.delivery import DeliveryCoordinator
+from vocascade.filler_engine import FillerEngine
+from vocascade.hermes_run_client import HermesRunClient
+from vocascade.task_broker import TaskBroker
+from vocascade.transcript_manager import HermesTaskState, TranscriptManager, TranscriptTurn
+from vocascade.tts_genie import GenieTTSService
 
-logger = logging.getLogger("voice_adapter.adapter")
+logger = logging.getLogger("vocascade.adapter")
 
 # Module-level lock for enforcing single active WebSocket session
 _session_lock = asyncio.Lock()

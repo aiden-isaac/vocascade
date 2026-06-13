@@ -1,7 +1,7 @@
 import unittest
 import os
 from unittest.mock import patch
-from voice_adapter.config import load_config, AdapterConfig
+from vocascade.config import load_config, AdapterConfig
 
 class TestAdapterConfig(unittest.TestCase):
     def test_default_config_loading(self):
@@ -71,7 +71,7 @@ class TestAdapterConfig(unittest.TestCase):
     def test_005_defaults(self):
         # Clean environment + no .env so the documented defaults apply
         with patch.dict(os.environ, {}, clear=True):
-            with patch("voice_adapter.config.load_dotenv"):
+            with patch("vocascade.config.load_dotenv"):
                 config = load_config()
                 self.assertEqual(config.hermes_session_key, "voice-satellite")
                 self.assertEqual(config.hermes_context_source, "none")
@@ -80,7 +80,7 @@ class TestAdapterConfig(unittest.TestCase):
                 self.assertEqual(config.result_speech_budget, 600)
                 self.assertEqual(
                     config.task_journal_path,
-                    os.path.expanduser("~/.voice_adapter/tasks.json"),
+                    os.path.expanduser("~/.vocascade/tasks.json"),
                 )
                 # Honcho is strictly opt-in now: empty url = disabled
                 self.assertEqual(config.honcho_api_url, "")
@@ -96,7 +96,7 @@ class TestAdapterConfig(unittest.TestCase):
             "GENIE_REFERENCE_TEXT": ""
         }
         with patch.dict(os.environ, env_vars):
-            with patch("voice_adapter.config.logger.warning") as mock_warn:
+            with patch("vocascade.config.logger.warning") as mock_warn:
                 config = load_config()
                 self.assertIsNone(config.tts_onnx_model_dir)
                 self.assertIsNone(config.tts_reference_audio)

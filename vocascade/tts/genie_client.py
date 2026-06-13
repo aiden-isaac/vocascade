@@ -7,9 +7,9 @@ import logging
 from typing import AsyncIterator
 import aiohttp
 
-from voice_satellite.telemetry import LatencyTracker
+from vocascade.telemetry import LatencyTracker
 
-logger = logging.getLogger("voice_satellite.tts")
+logger = logging.getLogger("vocascade.tts")
 
 class GenieTTSClient:
     """

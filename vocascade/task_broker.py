@@ -17,25 +17,25 @@ import logging
 import time
 from typing import Optional
 
-from voice_adapter.delivery import (
+from vocascade.delivery import (
     DeliveryCoordinator,
     DeliveryKind,
     ProactiveResult,
     make_preamble,
 )
-from voice_adapter.hermes_run_client import (
+from vocascade.hermes_run_client import (
     HermesRunClient,
     RunDispatchError,
     RunEvent,
     RunEventKind,
 )
-from voice_adapter.transcript_manager import (
+from vocascade.transcript_manager import (
     HermesTask,
     HermesTaskState,
     TranscriptManager,
 )
 
-logger = logging.getLogger("voice_adapter.task_broker")
+logger = logging.getLogger("vocascade.task_broker")
 
 _FAILURE_SPEECH = "I wasn't able to finish that request — the agent reported a failure."
 _DISPATCH_FAILURE_SPEECH = "I couldn't hand that off to the agent. It may be unreachable."

@@ -1,4 +1,4 @@
-"""Unit tests for voice_adapter.hermes_run_client (spec 005 T108).
+"""Unit tests for vocascade.hermes_run_client (spec 005 T108).
 
 All HTTP is mocked with httpx.MockTransport — no network.
 """
@@ -8,7 +8,7 @@ import unittest
 
 import httpx
 
-from voice_adapter.hermes_run_client import (
+from vocascade.hermes_run_client import (
     Capabilities,
     HermesRunClient,
     RunDispatchError,

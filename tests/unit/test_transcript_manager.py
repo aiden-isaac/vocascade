@@ -1,6 +1,6 @@
 import unittest
 import time
-from voice_adapter.transcript_manager import (
+from vocascade.transcript_manager import (
     TranscriptManager,
     TranscriptTurn,
     HermesTaskState,

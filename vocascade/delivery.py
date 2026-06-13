@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Awaitable, Callable, Optional
 
-logger = logging.getLogger("voice_adapter.delivery")
+logger = logging.getLogger("vocascade.delivery")
 
 # Sink: async callable that injects text into the live pipeline for TTS.
 InjectFn = Callable[[str], Awaitable[None]]

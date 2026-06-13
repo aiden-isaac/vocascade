@@ -1,6 +1,6 @@
 import unittest
 import numpy as np
-from voice_satellite.audio.effects import (
+from vocascade.audio.effects import (
     apply_pitch_shift,
     apply_tremolo,
     apply_overdrive,

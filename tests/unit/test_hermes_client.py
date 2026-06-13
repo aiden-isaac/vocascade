@@ -3,7 +3,7 @@ from unittest.mock import MagicMock, AsyncMock, patch
 import uuid
 import json
 
-from voice_satellite.gateway.hermes_client import HermesClient
+from vocascade.gateway.hermes_client import HermesClient
 
 class MockResponse:
     def __init__(self, lines):
@@ -53,7 +53,7 @@ class TestHermesClient(unittest.IsolatedAsyncioTestCase):
         await client.sessions_abort()
         self.assertEqual(first_session_id, client.session_id)
 
-    @patch("voice_satellite.gateway.hermes_client.httpx.AsyncClient")
+    @patch("vocascade.gateway.hermes_client.httpx.AsyncClient")
     async def test_send_transcript_success(self, mock_async_client_cls):
         sse_lines = [
             'data: {"choices": [{"delta": {"content": "Hello"}}]}',
@@ -80,7 +80,7 @@ class TestHermesClient(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(kwargs["headers"]["X-Hermes-Session-Id"], client.session_id)
         self.assertEqual(kwargs["json"]["messages"], [{"role": "user", "content": "Hi"}])
 
-    @patch("voice_satellite.gateway.hermes_client.httpx.AsyncClient")
+    @patch("vocascade.gateway.hermes_client.httpx.AsyncClient")
     async def test_send_transcript_with_api_key(self, mock_async_client_cls):
         sse_lines = [
             'data: {"choices": [{"delta": {"content": "Hello"}}]}',
@@ -106,7 +106,7 @@ class TestHermesClient(unittest.IsolatedAsyncioTestCase):
         # No session key configured => header must be absent
         self.assertNotIn("X-Hermes-Session-Key", kwargs["headers"])
 
-    @patch("voice_satellite.gateway.hermes_client.httpx.AsyncClient")
+    @patch("vocascade.gateway.hermes_client.httpx.AsyncClient")
     async def test_send_transcript_session_key_header(self, mock_async_client_cls):
         sse_lines = [
             'data: {"choices": [{"delta": {"content": "Hello"}}]}',
@@ -138,8 +138,8 @@ class TestHermesClient(unittest.IsolatedAsyncioTestCase):
         client = HermesClient(base_url="http://localhost:8642/v1/")
         self.assertEqual(client.base_url, "http://localhost:8642/v1")
 
-    @patch("voice_satellite.gateway.hermes_client.httpx.AsyncClient")
-    @patch("voice_satellite.gateway.hermes_client.LatencyTracker")
+    @patch("vocascade.gateway.hermes_client.httpx.AsyncClient")
+    @patch("vocascade.gateway.hermes_client.LatencyTracker")
     async def test_send_transcript_latency(self, mock_tracker_cls, mock_async_client_cls):
         sse_lines = [
             'data: {"choices": [{"delta": {"content": "Hello"}}]}',

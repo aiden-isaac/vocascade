@@ -2,7 +2,7 @@ import tempfile
 import unittest
 from pathlib import Path
 import base64
-from voice_satellite.gateway import load_or_generate_keypair, sign_challenge
+from vocascade.gateway.auth import load_or_generate_keypair, sign_challenge
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey, Ed25519PublicKey
 from cryptography.hazmat.primitives import serialization
 

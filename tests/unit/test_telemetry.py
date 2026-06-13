@@ -1,5 +1,5 @@
 """
-Unit tests for voice_satellite.telemetry.LatencyTracker.
+Unit tests for vocascade.telemetry.LatencyTracker.
 """
 
 import logging
@@ -8,7 +8,7 @@ import time
 
 import pytest
 
-from voice_satellite.telemetry import LatencyTracker
+from vocascade.telemetry import LatencyTracker
 
 
 # ---------------------------------------------------------------------------
@@ -33,7 +33,7 @@ class TestLatencyTrackerBasic:
         # Ensure opt-out is NOT active
         os.environ.pop("LATENCY_LOGGING", None)
 
-        with caplog.at_level(logging.INFO, logger="voice_satellite.telemetry"):
+        with caplog.at_level(logging.INFO, logger="vocascade.telemetry"):
             tracker = LatencyTracker("stt", "test123")
             tracker.start()
             tracker.record()
@@ -48,7 +48,7 @@ class TestLatencyTrackerBasic:
         """duration_ms must always be ≥ 0."""
         os.environ.pop("LATENCY_LOGGING", None)
 
-        with caplog.at_level(logging.INFO, logger="voice_satellite.telemetry"):
+        with caplog.at_level(logging.INFO, logger="vocascade.telemetry"):
             tracker = LatencyTracker("stt", "sess")
             tracker.start()
             tracker.record()
@@ -81,7 +81,7 @@ class TestLatencyTrackerBasic:
         """Extra keyword arguments must appear in the log line before session=."""
         os.environ.pop("LATENCY_LOGGING", None)
 
-        with caplog.at_level(logging.INFO, logger="voice_satellite.telemetry"):
+        with caplog.at_level(logging.INFO, logger="vocascade.telemetry"):
             tracker = LatencyTracker("sentence_buffer", "abc")
             tracker.start()
             tracker.record(sentence_index=2)
@@ -104,7 +104,7 @@ class TestLatencyTrackerOptOut:
         """With LATENCY_LOGGING=false, record() must emit no log lines."""
         os.environ["LATENCY_LOGGING"] = "false"
         try:
-            with caplog.at_level(logging.INFO, logger="voice_satellite.telemetry"):
+            with caplog.at_level(logging.INFO, logger="vocascade.telemetry"):
                 tracker = LatencyTracker("stt", "quiet")
                 tracker.start()
                 tracker.record()
@@ -122,7 +122,7 @@ class TestLatencyTrackerOptOut:
         """LATENCY_LOGGING=FALSE (uppercase) must also silence output."""
         os.environ["LATENCY_LOGGING"] = "FALSE"
         try:
-            with caplog.at_level(logging.INFO, logger="voice_satellite.telemetry"):
+            with caplog.at_level(logging.INFO, logger="vocascade.telemetry"):
                 tracker = LatencyTracker("llm_first_token", "quiet")
                 tracker.start()
                 tracker.record()
@@ -138,7 +138,7 @@ class TestLatencyTrackerOptOut:
         """Values other than 'false' must NOT suppress output."""
         os.environ["LATENCY_LOGGING"] = "true"
         try:
-            with caplog.at_level(logging.INFO, logger="voice_satellite.telemetry"):
+            with caplog.at_level(logging.INFO, logger="vocascade.telemetry"):
                 tracker = LatencyTracker("end_to_end", "loud")
                 tracker.start()
                 tracker.record()
@@ -154,7 +154,7 @@ class TestLatencyTrackerSessionId:
         """An empty session ID is allowed and produces session= in the log."""
         os.environ.pop("LATENCY_LOGGING", None)
 
-        with caplog.at_level(logging.INFO, logger="voice_satellite.telemetry"):
+        with caplog.at_level(logging.INFO, logger="vocascade.telemetry"):
             tracker = LatencyTracker("stt", "")
             tracker.start()
             tracker.record()
@@ -168,7 +168,7 @@ class TestLatencyTrackerSessionId:
         os.environ.pop("LATENCY_LOGGING", None)
         session = "deadbeef"
 
-        with caplog.at_level(logging.INFO, logger="voice_satellite.telemetry"):
+        with caplog.at_level(logging.INFO, logger="vocascade.telemetry"):
             tracker = LatencyTracker("tts_first_chunk", session)
             tracker.start()
             tracker.record()

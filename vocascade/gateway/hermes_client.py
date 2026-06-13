@@ -8,10 +8,10 @@ import uuid
 from typing import AsyncIterator
 import httpx
 
-from voice_satellite.gateway.base import GatewayClient
-from voice_satellite.telemetry import LatencyTracker
+from vocascade.gateway.base import GatewayClient
+from vocascade.telemetry import LatencyTracker
 
-logger = logging.getLogger("voice_satellite.gateway")
+logger = logging.getLogger("vocascade.gateway")
 
 class HermesClient(GatewayClient):
     """

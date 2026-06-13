@@ -16,9 +16,9 @@ from pipecat.frames.frames import (
     StartFrame,
     TTSAudioRawFrame,
 )
-from voice_satellite.tts.genie_client import GenieTTSClient
+from vocascade.tts.genie_client import GenieTTSClient
 
-logger = logging.getLogger("voice_adapter.tts_genie")
+logger = logging.getLogger("vocascade.tts_genie")
 
 class GenieTTSService(TTSService):
     def __init__(

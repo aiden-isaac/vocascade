@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from dotenv import load_dotenv
 
-logger = logging.getLogger("voice_adapter.config")
+logger = logging.getLogger("vocascade.config")
 
 @dataclass(frozen=True)
 class AdapterConfig:
@@ -102,7 +102,7 @@ def load_config() -> AdapterConfig:
 
     # Resolve default paths
     default_offline_queue = os.path.expanduser("~/.hermes/offline_queue.json")
-    default_journal_path = os.path.expanduser("~/.voice_adapter/tasks.json")
+    default_journal_path = os.path.expanduser("~/.vocascade/tasks.json")
 
     return AdapterConfig(
         host=os.getenv("HOST", "0.0.0.0"),

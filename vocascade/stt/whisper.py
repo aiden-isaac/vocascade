@@ -8,9 +8,9 @@ from concurrent.futures import ThreadPoolExecutor
 import numpy as np
 from faster_whisper import WhisperModel
 
-from voice_satellite.telemetry import LatencyTracker
+from vocascade.telemetry import LatencyTracker
 
-logger = logging.getLogger("voice_satellite.stt")
+logger = logging.getLogger("vocascade.stt.whisper")
 
 class WhisperSTT:
     """

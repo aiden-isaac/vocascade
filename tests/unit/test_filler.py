@@ -1,7 +1,7 @@
 import tempfile
 import unittest
 from pathlib import Path
-from voice_satellite.audio import FillerEngine
+from vocascade.filler_engine import FillerEngine
 
 class TestFillerEngine(unittest.TestCase):
     def setUp(self):
@@ -31,9 +31,9 @@ class TestFillerEngine(unittest.TestCase):
         working_dir.mkdir(parents=True)
 
         # Write dummy PCM files
-        (thinking_dir / "think1.pcm").write_bytes(b"think_audio_1")
-        (thinking_dir / "think2.pcm").write_bytes(b"think_audio_2")
-        (working_dir / "work1.pcm").write_bytes(b"work_audio_1")
+        (thinking_dir / "think1.pcm").write_bytes(b"think_audio_01")
+        (thinking_dir / "think2.pcm").write_bytes(b"think_audio_02")
+        (working_dir / "work1.pcm").write_bytes(b"work_audio_001")
 
         engine = FillerEngine(self.filler_dir)
         
@@ -45,14 +45,14 @@ class TestFillerEngine(unittest.TestCase):
 
         # Verify get_filler retrieves expected bytes
         filler_work = engine.get_filler("working")
-        self.assertEqual(filler_work, b"work_audio_1")
+        self.assertEqual(filler_work, b"work_audio_001")
 
         filler_think = engine.get_filler("thinking")
-        self.assertIn(filler_think, [b"think_audio_1", b"think_audio_2"])
+        self.assertIn(filler_think, [b"think_audio_01", b"think_audio_02"])
 
         # Verify fallback to thinking for empty categories
         filler_fallback = engine.get_filler("acknowledge")
-        self.assertIn(filler_fallback, [b"think_audio_1", b"think_audio_2"])
+        self.assertIn(filler_fallback, [b"think_audio_01", b"think_audio_02"])
 
         # Verify returning None for unsupported categories if thinking also empty
         # Clear thinking files

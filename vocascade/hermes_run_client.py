@@ -27,7 +27,7 @@ from typing import AsyncIterator, Optional
 
 import httpx
 
-logger = logging.getLogger("voice_adapter.hermes_run_client")
+logger = logging.getLogger("vocascade.hermes_run_client")
 
 
 class RunEventKind(str, Enum):
@@ -351,7 +351,7 @@ class HermesRunClient:
     ) -> AsyncIterator[str]:
         """Streaming chat-completions fallback when the runs API is absent.
         Delegates to the existing HermesClient streaming parser."""
-        from voice_satellite.gateway.hermes_client import HermesClient
+        from vocascade.gateway.hermes_client import HermesClient
 
         if self._chat_client is None:
             self._chat_client = HermesClient(

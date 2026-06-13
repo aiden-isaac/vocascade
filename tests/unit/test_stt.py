@@ -2,10 +2,10 @@ import asyncio
 import unittest
 from unittest.mock import MagicMock, patch
 import numpy as np
-from voice_satellite.stt import WhisperSTT
+from vocascade.stt.whisper import WhisperSTT
 
 class TestWhisperSTT(unittest.IsolatedAsyncioTestCase):
-    @patch("voice_satellite.stt.whisper_stt.WhisperModel")
+    @patch("vocascade.stt.whisper.WhisperModel")
     def setUp(self, mock_whisper_model_cls):
         # Setup mocks
         self.mock_model = MagicMock()
@@ -40,7 +40,7 @@ class TestWhisperSTT(unittest.IsolatedAsyncioTestCase):
         result_none = await self.stt.transcribe(None)
         self.assertEqual(result_none, "")
 
-    @patch("voice_satellite.stt.whisper_stt.LatencyTracker")
+    @patch("vocascade.stt.whisper.LatencyTracker")
     async def test_whisper_stt_transcribe_latency(self, mock_tracker_cls):
         mock_tracker = MagicMock()
         mock_tracker_cls.return_value = mock_tracker
