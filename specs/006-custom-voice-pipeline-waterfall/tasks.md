@@ -51,10 +51,10 @@ description: "Task list for 006-custom-voice-pipeline-waterfall"
 **Purpose**: Port the Pipecat-coupled pieces to framework-free equivalents and lay the pipeline/router skeletons. No user story can complete until this is done.
 
 - [x] T208 [US0] Port `RawFrameSerializer` (WS JSON/binary codec) off Pipecat frames into a standalone codec — `vocascade/transport/serializer.py`.
-- [ ] T209 [US0] Port the VAD shim into a framework-free stage; add optional server-side `silero-vad` per OQ-2 (edge VAD remains authoritative) — `vocascade/pipeline/vad.py`.
-- [ ] T210 [US0] Reshape `GenieTTSService` off the Pipecat `TTSService` base into a plain async TTS sink wrapping `vocascade/tts/genie_client.py`; **preserve slow-first-chunk tolerance** (4–7s, FR-005) — `vocascade/pipeline/tts.py`.
-- [ ] T211 [US1] `VoicePipeline` skeleton — the ~300-line asyncio core loop + the interrupt `asyncio.Event` shared by all stages — `vocascade/pipeline/pipeline.py`.
-- [ ] T212 [P] [US2] Define `ConfidenceResult`, `WaterfallStage` ABC, and `SessionState` — `vocascade/waterfall/types.py`, `vocascade/session/state.py`.
+- [x] T209 [US0] Port the VAD shim into a framework-free stage; add optional server-side `silero-vad` per OQ-2 (edge VAD remains authoritative) — `vocascade/pipeline/vad.py`.
+- [x] T210 [US0] Reshape `GenieTTSService` off the Pipecat `TTSService` base into a plain async TTS sink wrapping `vocascade/tts/genie_client.py`; **preserve slow-first-chunk tolerance** (4–7s, FR-005) — `vocascade/pipeline/tts.py`.
+- [x] T211 [US1] `VoicePipeline` skeleton — the ~300-line asyncio core loop + the interrupt `asyncio.Event` shared by all stages — `vocascade/pipeline/pipeline.py`.
+- [x] T212 [P] [US2] Define `ConfidenceResult`, `WaterfallStage` ABC, and `SessionState` — `vocascade/waterfall/types.py`, `vocascade/session/state.py`.
 
 **Checkpoint**: package imports with no `pipecat`/`voice_satellite`; pipeline skeleton instantiable; types available.
 
@@ -81,8 +81,8 @@ description: "Task list for 006-custom-voice-pipeline-waterfall"
 
 **Independent Test**: The eval harness resolves fixtures to the expected stage/skill.
 
-- [ ] T217 [US2] `@skill` decorator + `SkillRegistry` (registration, duplicate-name guard) — `vocascade/skills/__init__.py`, `vocascade/skills/registry.py`.
-- [ ] T218 [US2] `SkillContext` + `ToolBag` — `vocascade/skills/context.py`.
+- [x] T217 [US2] `@skill` decorator + `SkillRegistry` (registration, duplicate-name guard) — `vocascade/skills/__init__.py`, `vocascade/skills/registry.py`.
+- [x] T218 [US2] `SkillContext` + `ToolBag` — `vocascade/skills/context.py`.
 - [ ] T219 [US2] HIGH stage (keyword/regex, >0.8, <5ms) — `vocascade/waterfall/stages/high.py`.
 - [ ] T220 [US2] MEDIUM stage classifier + startup prompt auto-generation from skill `examples` (capped, clamped per OQ-5) — `vocascade/waterfall/stages/medium.py`, `vocascade/waterfall/classifier.py`.
 - [ ] T221 [US2] Config-driven stage order/thresholds in the router — `vocascade/waterfall/router.py`, `config.yaml`.
