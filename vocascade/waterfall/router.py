@@ -3,30 +3,27 @@ vocascade/waterfall/router.py — Confidence waterfall router and stage implemen
 """
 
 import logging
-from typing import List, Dict, Any, Optional
+from typing import List, Dict
 from vocascade.waterfall.types import WaterfallStage, ConfidenceResult
+from vocascade.waterfall.classifier import IntentClassifier
+from vocascade.waterfall.stages.high import HighStage
+from vocascade.waterfall.stages.medium import MediumStage
 from vocascade.skills.registry import registry
 from vocascade.skills.context import SkillContext
 
 logger = logging.getLogger("vocascade.waterfall.router")
 
+# HIGH/MEDIUM are real (US2) and imported above. STOP/CONVERSE remain stubs that
+# report confidence 0.0 until US5 (T231/T232); from_config parks them above any
+# threshold so they never win in the meantime.
+
 class StopStage(WaterfallStage):
-    """STOP/system stage (always first). Stubbed to 0.0 for Phase 3."""
+    """STOP/system stage (always first). Stub until US5 (T231)."""
     async def evaluate(self, utterance: str, ctx: SkillContext) -> ConfidenceResult:
         return ConfidenceResult(stage=self.name, confidence=0.0)
 
 class ConverseStage(WaterfallStage):
-    """CONVERSE multi-turn claim stage. Stubbed to 0.0 for Phase 3."""
-    async def evaluate(self, utterance: str, ctx: SkillContext) -> ConfidenceResult:
-        return ConfidenceResult(stage=self.name, confidence=0.0)
-
-class HighStage(WaterfallStage):
-    """HIGH confidence keyword/regex stage. Stubbed to 0.0 for Phase 3."""
-    async def evaluate(self, utterance: str, ctx: SkillContext) -> ConfidenceResult:
-        return ConfidenceResult(stage=self.name, confidence=0.0)
-
-class MediumStage(WaterfallStage):
-    """MEDIUM confidence local-LLM classifier stage. Stubbed to 0.0 for Phase 3."""
+    """CONVERSE multi-turn claim stage. Stub until US5 (T232)."""
     async def evaluate(self, utterance: str, ctx: SkillContext) -> ConfidenceResult:
         return ConfidenceResult(stage=self.name, confidence=0.0)
 
@@ -66,6 +63,49 @@ class HermesStage(WaterfallStage):
         )
 
 
+# Stages constructed generically (HIGH/MEDIUM need injected deps, handled separately).
+_STUB_STAGE_CLASSES = {
+    "stop": StopStage,
+    "converse": ConverseStage,
+    "smalltalk": SmalltalkStage,
+    "hermes": HermesStage,
+}
+
+
+def _threshold_for(name: str, thresholds: Dict[str, float]) -> float:
+    """Resolve a stage's win threshold from config (FR-014)."""
+    if name == "high":
+        return thresholds.get("high", 0.95)
+    if name == "medium":
+        return thresholds.get("medium", 0.65)
+    if name == "smalltalk":
+        return thresholds.get("low", 0.35)
+    if name == "hermes":
+        # HERMES reports confidence 1.0; a 0.0 threshold guarantees it always
+        # clears as the last-resort fallback.
+        return 0.0
+    # stop/converse are stubs reporting 0.0 — park above 1.0 so they never win
+    # (a 0.0 threshold would make `0.0 >= 0.0` true and silently short-circuit).
+    return 1.1
+
+
+def _ordered_stage_names(names: List[str]) -> List[str]:
+    """Honor FR-011: STOP first, HERMES last; keep the rest in configured order."""
+    ordered = list(names)
+    changed = False
+    if "stop" in ordered and ordered[0] != "stop":
+        ordered.remove("stop")
+        ordered.insert(0, "stop")
+        changed = True
+    if "hermes" in ordered and ordered[-1] != "hermes":
+        ordered.remove("hermes")
+        ordered.append("hermes")
+        changed = True
+    if changed:
+        logger.warning("Reordered waterfall stages to honor STOP-first/HERMES-last (FR-011): %s", ordered)
+    return ordered
+
+
 class WaterfallRouter:
     """
     Confidence waterfall router.
@@ -99,49 +139,50 @@ class WaterfallRouter:
 
     @classmethod
     def from_config(cls, config) -> "WaterfallRouter":
-        """Factory method to construct WaterfallRouter and its stages from config."""
-        stages = []
+        """Construct the router and its stages from config (FR-011/FR-014)."""
         thresholds = config.waterfall_thresholds
-        stages_list = config.waterfall_stages
+        stages_list = _ordered_stage_names(config.waterfall_stages)
 
-        # Mapping stage name -> Stage class
-        stage_mapping = {
-            "stop": StopStage,
-            "converse": ConverseStage,
-            "high": HighStage,
-            "medium": MediumStage,
-            "smalltalk": SmalltalkStage,
-            "hermes": HermesStage,
-        }
+        # Medium-stage deps (OQ-5): a dedicated classifier LLM (optionally a
+        # cheaper model than smalltalk's) and a prompt auto-generated once at
+        # startup from the registered skills' examples (SC-007).
+        classifier_llm = None
+        if getattr(config, "llm_base_url", None):
+            from vocascade.gateway.local_llm import LocalLLM
+            classifier_llm = LocalLLM(
+                base_url=config.llm_base_url,
+                api_key=config.llm_api_key,
+                model=getattr(config, "classifier_model", None) or config.llm_model,
+            )
+        classifier = IntentClassifier(
+            max_examples_per_skill=getattr(config, "classifier_max_examples", 5),
+        )
+        classifier.build_prompt()
+        band = (
+            getattr(config, "medium_band_low", 0.5),
+            getattr(config, "medium_band_high", 0.8),
+        )
 
+        stages: List[WaterfallStage] = []
         for name in stages_list:
-            if name not in stage_mapping:
-                logger.warning(f"Unknown stage '{name}' in config. Skipping.")
-                continue
+            enabled = config.skills_config.get(name, {}).get("enabled", True)
+            threshold = _threshold_for(name, thresholds)
 
-            stage_cls = stage_mapping[name]
-            enabled = config.skills_config.get(name, {}).get("enabled", True) if name in config.skills_config else True
-
-            # Determine threshold
             if name == "high":
-                threshold = thresholds.get("high", 0.95)
+                stage = HighStage(name=name, threshold=threshold, enabled=enabled)
             elif name == "medium":
-                threshold = thresholds.get("medium", 0.65)
-            elif name == "smalltalk":
-                # Fall back to low threshold or smalltalk_confidence (default 0.35)
-                threshold = thresholds.get("low", 0.35)
-            elif name == "hermes":
-                # Absolute fallback: HERMES reports confidence 1.0, so a 0.0
-                # threshold guarantees it always clears when reached last.
-                threshold = 0.0
+                stage = MediumStage(
+                    name=name, threshold=threshold, enabled=enabled,
+                    classifier=classifier, llm=classifier_llm, band=band,
+                )
             else:
-                # stop/converse are still stubs that report confidence 0.0. A 0.0
-                # threshold would let them win with `0.0 >= 0.0` and short-circuit
-                # the whole waterfall (skill_name=None → silent turn). Park them
-                # above 1.0 so they never clear until implemented (US2/US5).
-                threshold = 1.1
+                stage_cls = _STUB_STAGE_CLASSES.get(name)
+                if stage_cls is None:
+                    logger.warning(f"Unknown stage '{name}' in config. Skipping.")
+                    continue
+                stage = stage_cls(name=name, threshold=threshold, enabled=enabled)
 
-            stages.append(stage_cls(name=name, threshold=threshold, enabled=enabled))
+            stages.append(stage)
             logger.info(f"Initialized stage '{name}' (threshold: {threshold}, enabled: {enabled})")
 
         return cls(stages=stages, thresholds=thresholds)

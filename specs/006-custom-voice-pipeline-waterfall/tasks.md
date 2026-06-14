@@ -83,10 +83,10 @@ description: "Task list for 006-custom-voice-pipeline-waterfall"
 
 - [x] T217 [US2] `@skill` decorator + `SkillRegistry` (registration, duplicate-name guard) — `vocascade/skills/__init__.py`, `vocascade/skills/registry.py`.
 - [x] T218 [US2] `SkillContext` + `ToolBag` — `vocascade/skills/context.py`.
-- [ ] T219 [US2] HIGH stage (keyword/regex, >0.8, <5ms) — `vocascade/waterfall/stages/high.py`.
-- [ ] T220 [US2] MEDIUM stage classifier + startup prompt auto-generation from skill `examples` (capped, clamped per OQ-5) — `vocascade/waterfall/stages/medium.py`, `vocascade/waterfall/classifier.py`.
-- [ ] T221 [US2] Config-driven stage order/thresholds in the router — `vocascade/waterfall/router.py`, `config.yaml`.
-- [ ] T222 [P] [US2] Unit tests: stage ordering, threshold/tie resolution, prompt regeneration — `tests/unit/test_waterfall.py`, `tests/unit/test_skill_registry.py`.
+- [x] T219 [US2] HIGH stage (keyword/regex, >0.8, <5ms) — `vocascade/waterfall/stages/high.py`.
+- [x] T220 [US2] MEDIUM stage classifier + startup prompt auto-generation from skill `examples` (capped, clamped per OQ-5) — `vocascade/waterfall/stages/medium.py`, `vocascade/waterfall/classifier.py`.
+- [x] T221 [US2] Config-driven stage order/thresholds in the router — `vocascade/waterfall/router.py`, `config.yaml`.
+- [x] T222 [P] [US2] Unit tests: stage ordering, threshold/tie resolution, prompt regeneration — `tests/unit/test_waterfall.py`, `tests/unit/test_skill_registry.py`.
 
 **Checkpoint**: utterances route deterministically; adding a skill changes the classifier prompt.
 

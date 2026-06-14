@@ -16,6 +16,10 @@ waterfall:
     high: 0.95
     medium: 0.65
     low: 0.35
+  # Medium-stage local-LLM intent classifier (OQ-5)
+  classifier_model: ""        # blank = reuse LLM_MODEL from .env
+  max_examples_per_skill: 5   # examples per skill fed into the auto-generated prompt
+  medium_band: [0.5, 0.8]     # classifier confidence is clamped into this band
 
 skills:
   datetime:

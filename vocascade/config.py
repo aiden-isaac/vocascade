@@ -80,6 +80,13 @@ class AdapterConfig:
     # Feature flags
     skip_genie_init: bool
 
+    # Medium-stage intent classifier (OQ-5; from config.yaml `waterfall`).
+    # Defaulted so callers that build AdapterConfig directly (tests) need not set them.
+    classifier_model: str | None = None      # blank/None = reuse llm_model
+    classifier_max_examples: int = 5         # examples per skill in the prompt
+    medium_band_low: float = 0.5             # classifier confidence clamp floor
+    medium_band_high: float = 0.8            # classifier confidence clamp ceiling
+
 
 def _parse_bool(val: str | None) -> bool:
     if not val:
@@ -130,6 +137,16 @@ def load_config() -> AdapterConfig:
     waterfall = yaml_config["waterfall"]
     if not isinstance(waterfall, dict) or "stages" not in waterfall or "thresholds" not in waterfall:
         raise ValueError(f"Configuration file '{config_path}': 'waterfall' section must contain 'stages' and 'thresholds'")
+
+    # Medium-stage classifier config (OQ-5) — all optional with defaults.
+    classifier_model = waterfall.get("classifier_model") or None
+    classifier_max_examples = int(waterfall.get("max_examples_per_skill", 5))
+    band = waterfall.get("medium_band", [0.5, 0.8])
+    try:
+        medium_band_low, medium_band_high = float(band[0]), float(band[1])
+    except (TypeError, IndexError, ValueError):
+        logger.warning("Invalid waterfall.medium_band %r; using default [0.5, 0.8]", band)
+        medium_band_low, medium_band_high = 0.5, 0.8
 
     skills = yaml_config["skills"]
     if not isinstance(skills, dict):
@@ -208,4 +225,9 @@ def load_config() -> AdapterConfig:
         offline_end_hour=int(os.getenv("OFFLINE_END_HOUR", "5")),
 
         skip_genie_init=_parse_bool(os.getenv("VOICE_SATELLITE_SKIP_GENIE_INIT", "False")),
+
+        classifier_model=classifier_model,
+        classifier_max_examples=classifier_max_examples,
+        medium_band_low=medium_band_low,
+        medium_band_high=medium_band_high,
     )
