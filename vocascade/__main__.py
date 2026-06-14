@@ -1,5 +1,5 @@
 """
-Main entry point for the Pipecat Voice Adapter.
+Main entry point for the Vocascade voice server.
 Loads config, prints a health report, and launches the FastAPI app.
 """
 
@@ -17,7 +17,7 @@ logger = logging.getLogger("vocascade.main")
 def print_health_report(config):
     """Prints a health report summarizing the loaded configuration."""
     print("=" * 60)
-    print("  PIPECAT VOICE ADAPTER HEALTH REPORT")
+    print("  VOCASCADE VOICE SERVER HEALTH REPORT")
     print("=" * 60)
     print(f"Server Host/Port:   {config.host}:{config.port}")
     print(f"Audio Sample Rates: IN: {config.audio_in_sample_rate} Hz, OUT: {config.audio_out_sample_rate} Hz")

@@ -4,7 +4,7 @@
 #
 # Starts, in order:
 #   1. Genie TTS server   (genie_tts_env, 127.0.0.1:8000)
-#   2. voice_adapter app  (.venv, host:port from .env, PORT defaults to 8000)
+#   2. vocascade app      (.venv, host:port from .env, PORT defaults to 8000)
 #
 # Both servers' logs are streamed to this terminal, each line prefixed with a
 # colour-coded [GENIE] / [ADAPTER] label so you can tell them apart. Press
@@ -17,7 +17,7 @@ cd "$REPO_ROOT"
 
 # --- interpreters -----------------------------------------------------------
 GENIE_PY="$REPO_ROOT/genie_tts_env/bin/python"   # Genie TTS's own venv
-ADAPTER_PY="$REPO_ROOT/.venv/bin/python"         # voice_adapter's venv
+ADAPTER_PY="$REPO_ROOT/.venv/bin/python"         # vocascade's venv
 
 GENIE_HOST="127.0.0.1"
 GENIE_PORT="8000"
@@ -81,9 +81,9 @@ for _ in $(seq 1 60); do
     sleep 1
 done
 
-# --- 2. voice_adapter app ---------------------------------------------------
-sys "starting voice_adapter ..."
-"$ADAPTER_PY" -u -m voice_adapter \
+# --- 2. vocascade app ---------------------------------------------------
+sys "starting vocascade ..."
+"$ADAPTER_PY" -u -m vocascade \
     > >(prefix "ADAPTER" "$C_ADAPTER") 2>&1 &
 ADAPTER_PID=$!
 PIDS+=("$ADAPTER_PID")

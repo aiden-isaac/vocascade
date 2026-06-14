@@ -66,10 +66,10 @@ description: "Task list for 006-custom-voice-pipeline-waterfall"
 
 **Independent Test**: Say the wake word, ask a smalltalk question, hear a persona reply; no `pipecat` import in the path.
 
-- [ ] T213 [US1] Wire the loop: mic/transport in → wake word → VAD → STT (`vocascade/stt/whisper.py`) → router → ported TTS → speaker — `vocascade/pipeline/pipeline.py`.
-- [ ] T214 [US1] Minimal 2-stage waterfall (SMALLTALK floor + HERMES passthrough) so a turn always resolves — `vocascade/waterfall/router.py`.
-- [ ] T215 [US1] Smalltalk skill (local-LLM persona, fixed 0.35 floor) — `vocascade/skills/base_skills/smalltalk.py`.
-- [ ] T216 [P] [US1] Integration test of the round-trip with mocked audio I/O — `tests/integration/test_pipeline_roundtrip.py`.
+- [x] T213 [US1] Wire the loop: mic/transport in → wake word → VAD → STT (`vocascade/stt/whisper.py`) → router → ported TTS → speaker — `vocascade/pipeline/pipeline.py` (transport wiring in `vocascade/adapter.py`).
+- [x] T214 [US1] Minimal 2-stage waterfall (SMALLTALK floor + HERMES passthrough) so a turn always resolves — `vocascade/waterfall/router.py`.
+- [x] T215 [US1] Smalltalk skill (local-LLM persona, fixed 0.35 floor) — `vocascade/skills/base_skills/smalltalk.py`.
+- [x] T216 [P] [US1] Integration test of the round-trip with mocked audio I/O — `tests/integration/test_pipeline_roundtrip.py` (plus server-level `tests/integration/test_server_ws.py`).
 
 **Checkpoint**: 🎯 **STOP & VALIDATE** — voice turn works end-to-end, Pipecat removed.
 
