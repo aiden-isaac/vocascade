@@ -92,13 +92,15 @@ As a user, I want the assistant to feel instant — never dead air while it deci
 
 **Why this priority**: Routing correctness alone can still feel slow; masking makes the experience feel responsive. It depends on the waterfall (US2) and Hermes stage (US3).
 
-**Independent Test**: For each routing outcome, observe that the appropriate masking behavior fires — no filler for instant matches, a tool-appropriate filler before a tool call, and a query-appropriate filler before streamed agent output.
+**Independent Test**: For each routing outcome, observe that the appropriate masking behavior fires — no filler for instant matches, a dynamically generated spoken filler before a tool call, a generated opening before streamed agent output, escalating follow-ups while a slow run keeps producing nothing, and an instant pre-rendered acknowledge clip on the wakeword.
 
 **Acceptance Scenarios**:
 
 1. **Given** a high-confidence instant skill match, **When** it is handled, **Then** no filler audio is played (the answer is already immediate).
-2. **Given** a medium-stage tool skill, **When** the tool runs, **Then** a tool-appropriate filler plays immediately and the response streams as it becomes available.
-3. **Given** a Hermes request, **When** the run is dispatched, **Then** a query-appropriate opening plays and the run's streamed output continues the utterance naturally.
+2. **Given** a medium-stage tool skill, **When** the tool runs, **Then** a dynamically generated spoken filler plays and the response streams as it becomes available.
+3. **Given** a Hermes request, **When** the run is dispatched, **Then** a dynamically generated query-appropriate opening plays and the run's streamed output continues the utterance naturally.
+4. **Given** a dispatched run that produces no output for a while, **When** the configured interval elapses, **Then** an escalating "still working" follow-up is spoken (repeating at a configurable, optionally backing-off interval up to a cap) until output begins streaming.
+5. **Given** the wakeword fires, **When** the session activates, **Then** a pre-rendered acknowledgement clip plays instantly (the only pre-rendered audio in use; all masking fillers are generated on the fly).
 
 ---
 
@@ -250,9 +252,12 @@ As a user, I want the agent's long-term memory to stay consistent even when some
 
 - **FR-040**: Latency masking MUST be a layer distinct from routing.
 - **FR-041**: A high-confidence instant match MUST play no filler.
-- **FR-042**: A medium-stage tool skill MUST play a tool-appropriate filler before its result and then stream the response.
-- **FR-043**: A Hermes request MUST play a query-appropriate opening and then stream the run's incremental output into TTS.
-- **FR-044**: The system MAY produce an optimistic partial opening (local-LLM generated) while a slower stage resolves, and SHOULD favor short, voice-optimized responses.
+- **FR-042**: A medium-stage tool skill MUST play a dynamically generated spoken filler before its result and then stream the response.
+- **FR-043**: A Hermes request MUST play a dynamically generated query-appropriate opening and then stream the run's incremental output into TTS.
+- **FR-044**: Masking fillers MUST be generated on the fly and spoken via TTS (never pre-rendered clips), favoring short, voice-optimized lines; the local-LLM filler prompt MUST be constrained so a filler never answers the request, asks a question, or starts a conversation.
+- **FR-045**: While a slow stage produces no output, the system MUST emit progressive "still working" follow-up fillers at a configurable interval (with optional back-off and a cap), stopping as soon as output begins streaming.
+- **FR-046**: A pre-rendered acknowledgement clip MUST play instantly when the wakeword fires; this is the ONLY pre-rendered audio in use.
+- **FR-047**: The filler content source (pooled phrases / local-LLM / hybrid) and cadence (interval, back-off, cap) MUST be configurable.
 
 **Hermes stage (always-async + streamed delivery)**
 

@@ -9,15 +9,27 @@ from test_pipeline_roundtrip.py, which hand-assembles the stages without the
 server.
 """
 
+import copy
 import json
 import sys
 import importlib
+import dataclasses
 import unittest
 from unittest.mock import MagicMock, AsyncMock, patch
 
 from fastapi.testclient import TestClient
 
+from vocascade.config import load_config
 from vocascade.skills.registry import registry
+
+
+def _config_with_smalltalk_enabled():
+    """The committed config.yaml disables smalltalk (Hermes-first); re-enable it
+    so the smalltalk round-trip is hermetic and never reaches the live Hermes."""
+    base = load_config()
+    skills = copy.deepcopy(base.skills_config)
+    skills.setdefault("smalltalk", {})["enabled"] = True
+    return dataclasses.replace(base, skills_config=skills)
 
 
 def _force_register_bundled_skills():
@@ -61,7 +73,8 @@ class TestServerWebSocket(unittest.TestCase):
         mock_tts_client.close = AsyncMock()
         mock_tts_client.synthesize = MagicMock(side_effect=_empty_synth)
 
-        with patch("vocascade.adapter.WhisperSTT", return_value=mock_stt), \
+        with patch("vocascade.adapter.load_config", return_value=_config_with_smalltalk_enabled()), \
+             patch("vocascade.adapter.WhisperSTT", return_value=mock_stt), \
              patch("vocascade.gateway.local_llm.LocalLLM", return_value=mock_llm), \
              patch("vocascade.pipeline.tts.GenieTTSClient", return_value=mock_tts_client):
             from vocascade.adapter import app
@@ -89,6 +102,31 @@ class TestServerWebSocket(unittest.TestCase):
 
         # Status returns to active_listening so the client can speak again.
         self.assertIn("active_listening", [m.get("state") for m in msgs if m["type"] == "status"])
+
+    def test_wakeword_plays_acknowledge_clip(self):
+        mock_stt = MagicMock()
+        mock_stt.transcribe = AsyncMock(return_value="")
+        mock_stt.close = MagicMock()
+
+        mock_tts_client = MagicMock()
+        mock_tts_client.load_character = AsyncMock()
+        mock_tts_client.stop = AsyncMock()
+        mock_tts_client.close = AsyncMock()
+        mock_tts_client.synthesize = MagicMock(side_effect=_empty_synth)
+
+        with patch("vocascade.adapter.WhisperSTT", return_value=mock_stt), \
+             patch("vocascade.pipeline.tts.GenieTTSClient", return_value=mock_tts_client):
+            from vocascade.adapter import app
+
+            with TestClient(app) as client:
+                with client.websocket_connect("/ws") as ws:
+                    ws.send_text(json.dumps({"type": "wakeword"}))
+                    # active_listening status, then the pre-rendered ack audio.
+                    msgs = [json.loads(ws.receive_text()) for _ in range(2)]
+
+        types = [m["type"] for m in msgs]
+        self.assertIn("status", types)
+        self.assertIn("audio", types)
 
     def test_second_connection_rejected_while_active(self):
         mock_stt = MagicMock()

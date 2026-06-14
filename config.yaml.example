@@ -36,3 +36,12 @@ skills:
     filler: "working"      # query-appropriate opening before a run (set "none" to disable)
   stop:
     enabled: true
+
+# Latency masking — spoken fillers while a slow stage works (US4).
+# Pre-rendered audio is used ONLY for the wakeword acknowledge; everything here
+# is generated and spoken via TTS on the fly.
+latency:
+  filler_mode: "hybrid"         # pool | llm | hybrid — how filler lines are produced
+  filler_interval_seconds: 3.0  # gap before the first follow-up while waiting
+  filler_backoff: true          # widen the gap after each follow-up (3 → ~5 → ~8s)
+  filler_max: 3                 # max follow-up lines (0 disables, -1 = unlimited)

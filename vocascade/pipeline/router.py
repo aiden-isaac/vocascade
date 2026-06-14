@@ -90,7 +90,6 @@ class RouterStage(PipelineStage):
                         skill_config=config_dict.get(result.skill_name, {}),
                         utterance=frame.text,
                         local_llm=context.local_llm,
-                        emit_clip=self._emit_clip,
                         emit_text=self._emit_text,
                     )
                 except Exception as e:
@@ -108,10 +107,22 @@ class RouterStage(PipelineStage):
                         called = skill_obj.handler(frame.text, {}, context)
                         if inspect.isasyncgen(called):
                             spoken: list[str] = []
-                            async for chunk in called:
-                                if chunk:
-                                    spoken.append(chunk)
-                                    await super().push(TextFrame(text=chunk))
+                            if self.latency is not None:
+                                # Inject progressive "still working" fillers during
+                                # the pre-content wait (US4); real content only is
+                                # accumulated for the assistant_response message.
+                                async for chunk, is_filler in self.latency.with_progressive_fillers(
+                                    called, frame.text, context.local_llm
+                                ):
+                                    if chunk:
+                                        await super().push(TextFrame(text=chunk))
+                                        if not is_filler:
+                                            spoken.append(chunk)
+                            else:
+                                async for chunk in called:
+                                    if chunk:
+                                        spoken.append(chunk)
+                                        await super().push(TextFrame(text=chunk))
                             if spoken:
                                 await super().push(ControlMessageFrame(
                                     {"type": "assistant_response", "text": " ".join(spoken)}))

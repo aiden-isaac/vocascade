@@ -87,6 +87,12 @@ class AdapterConfig:
     medium_band_low: float = 0.5             # classifier confidence clamp floor
     medium_band_high: float = 0.8            # classifier confidence clamp ceiling
 
+    # Latency masking fillers (US4; from config.yaml `latency`).
+    filler_mode: str = "hybrid"              # pool | llm | hybrid
+    filler_interval_seconds: float = 3.0     # gap before the first follow-up filler
+    filler_backoff: bool = True              # widen the gap after each follow-up
+    filler_max: int = 3                      # max follow-up lines (0 off, -1 unlimited)
+
 
 def _parse_bool(val: str | None) -> bool:
     if not val:
@@ -151,6 +157,13 @@ def load_config() -> AdapterConfig:
     skills = yaml_config["skills"]
     if not isinstance(skills, dict):
         raise ValueError(f"Configuration file '{config_path}': 'skills' section must be a dictionary")
+
+    # Latency masking (US4) — optional section, all keys defaulted.
+    latency_cfg = yaml_config.get("latency") or {}
+    filler_mode = str(latency_cfg.get("filler_mode", "hybrid"))
+    filler_interval_seconds = float(latency_cfg.get("filler_interval_seconds", 3.0))
+    filler_backoff = bool(latency_cfg.get("filler_backoff", True))
+    filler_max = int(latency_cfg.get("filler_max", 3))
 
     # Optional TTS keys — warn and degrade
     tts_onnx_model_dir = os.getenv("GENIE_ONNX_MODEL_DIR")
@@ -230,4 +243,9 @@ def load_config() -> AdapterConfig:
         classifier_max_examples=classifier_max_examples,
         medium_band_low=medium_band_low,
         medium_band_high=medium_band_high,
+
+        filler_mode=filler_mode,
+        filler_interval_seconds=filler_interval_seconds,
+        filler_backoff=filler_backoff,
+        filler_max=filler_max,
     )

@@ -112,9 +112,9 @@ description: "Task list for 006-custom-voice-pipeline-waterfall"
 
 **Independent Test**: HIGH no filler; MEDIUM tool-filler then stream; HERMES query-filler then streamed delta.
 
-- [x] T226 [US4] Filler policy layer (HIGH none / MEDIUM tool-specific / HERMES query-specific) using KEEP `vocascade/filler_engine.py` — `vocascade/pipeline/latency.py`.
-- [x] T227 [US4] Optimistic partial openings (local-LLM) + voice-optimized short responses — `vocascade/pipeline/latency.py`.
-- [x] T228 [P] [US4] Latency tests/measurements (SC-002/SC-003) — `tests/unit/test_latency.py`.
+- [x] T226 [US4] Filler policy (HIGH none / MEDIUM + HERMES dynamic opening) + instant pre-rendered **wakeword acknowledge** (the only KEEP `vocascade/filler_engine.py` use) — `vocascade/pipeline/latency.py`, `vocascade/adapter.py`.
+- [x] T227 [US4] Dynamic fillers: configurable source (pool/llm/hybrid, tightly-prompted) + **progressive interval follow-ups** (interval/back-off/cap) + voice-optimized short lines — `vocascade/pipeline/latency.py`, `vocascade/pipeline/router.py`, `config.yaml`.
+- [x] T228 [P] [US4] Latency tests: policy, provider modes, progressive fillers, wakeword ack — `tests/unit/test_latency.py`, `tests/integration/test_server_ws.py`.
 
 **Checkpoint**: routing outcomes feel instant.
 

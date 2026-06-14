@@ -42,7 +42,7 @@ from vocascade.hermes_run_client import HermesRunClient
 from vocascade.delivery import DeliveryCoordinator
 from vocascade.task_broker import TaskBroker
 from vocascade.filler_engine import FillerEngine
-from vocascade.pipeline.latency import LatencyMasker
+from vocascade.pipeline.latency import LatencyMasker, FillerProvider
 from vocascade.pipeline.pipeline import (
     VoicePipeline,
     PipelineStage,
@@ -150,10 +150,19 @@ async def lifespan(app_: FastAPI):
     app_.state.task_broker = TaskBroker(run_client, app_.state.delivery)
     logger.info("Hermes broker ready (backend %s)", config.hermes_base_url)
 
-    # Latency masking (US4): pre-rendered fillers + optimistic openings.
+    # Latency masking (US4): dynamic spoken fillers + progressive follow-ups.
+    # Pre-rendered clips are used ONLY for the wakeword acknowledge.
     filler_engine = FillerEngine(config.filler_dir)
-    app_.state.latency = LatencyMasker(filler_engine)
-    logger.info("Latency masker ready (filler clips: %s)", filler_engine.get_categories())
+    app_.state.latency = LatencyMasker(
+        filler_engine,
+        FillerProvider(mode=config.filler_mode),
+        interval=config.filler_interval_seconds,
+        backoff=config.filler_backoff,
+        max_fillers=config.filler_max,
+    )
+    logger.info("Latency masker ready (mode=%s, interval=%.1fs, max=%d; ack clips=%d)",
+                config.filler_mode, config.filler_interval_seconds, config.filler_max,
+                filler_engine.get_categories().get("acknowledge", 0))
 
     yield
 
@@ -216,7 +225,8 @@ def _build_pipeline(config, stt: WhisperSTT, degraded_tts: bool,
 
 
 async def _handle_control(text: str, pipeline: VoicePipeline, outbound: "asyncio.Queue[str]",
-                          delivery: DeliveryCoordinator, inject) -> None:
+                          delivery: DeliveryCoordinator, inject, inject_audio,
+                          masker: LatencyMasker) -> None:
     """Handle a JSON control message from the client."""
     try:
         msg = json.loads(text)
@@ -231,6 +241,11 @@ async def _handle_control(text: str, pipeline: VoicePipeline, outbound: "asyncio
         pipeline.interrupt_event.clear()
         delivery.bind_session(inject)
         await outbound.put(json.dumps({"type": "status", "state": "active_listening"}))
+        # Instant pre-rendered acknowledgement ("Yes?") — the only pre-rendered
+        # audio in use; everything else is dynamically generated (US4 / FR-046).
+        pcm = masker.filler_engine.get_filler("acknowledge") if masker.filler_engine else None
+        if pcm:
+            await inject_audio(pcm)
     elif mtype == "interrupt":
         # Client-side barge-in: kill any in-flight proactive delivery and abort
         # in-flight synthesis. The next utterance re-arms the loop.
@@ -270,6 +285,11 @@ async def websocket_endpoint(websocket: WebSocket):
         async def inject(text: str) -> None:
             await pipeline.tts_stage.push(TextFrame(text=text))
 
+        # Pre-rendered ack clips are at the output sample rate; play them straight
+        # through TTS (it forwards AudioFrames untouched to the transport).
+        async def inject_audio(pcm: bytes) -> None:
+            await pipeline.tts_stage.push(AudioFrame(audio=pcm, sample_rate=config.audio_out_sample_rate))
+
         async def sender() -> None:
             try:
                 while True:
@@ -297,7 +317,8 @@ async def websocket_endpoint(websocket: WebSocket):
                         sample_rate=config.audio_in_sample_rate,
                     ))
                 elif message.get("text") is not None:
-                    await _handle_control(message["text"], pipeline, outbound, delivery, inject)
+                    await _handle_control(message["text"], pipeline, outbound, delivery,
+                                          inject, inject_audio, app.state.latency)
         except WebSocketDisconnect:
             logger.info("WebSocket disconnected by client")
         except Exception as exc:
