@@ -31,5 +31,8 @@ skills:
   smalltalk:
     enabled: true
     filler: "thinking"
+  hermes:
+    enabled: true
+    filler: "working"      # query-appropriate opening before a run (set "none" to disable)
   stop:
     enabled: true

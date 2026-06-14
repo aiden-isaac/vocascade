@@ -41,6 +41,8 @@ from vocascade.transport.serializer import RawFrameSerializer
 from vocascade.hermes_run_client import HermesRunClient
 from vocascade.delivery import DeliveryCoordinator
 from vocascade.task_broker import TaskBroker
+from vocascade.filler_engine import FillerEngine
+from vocascade.pipeline.latency import LatencyMasker
 from vocascade.pipeline.pipeline import (
     VoicePipeline,
     PipelineStage,
@@ -148,6 +150,11 @@ async def lifespan(app_: FastAPI):
     app_.state.task_broker = TaskBroker(run_client, app_.state.delivery)
     logger.info("Hermes broker ready (backend %s)", config.hermes_base_url)
 
+    # Latency masking (US4): pre-rendered fillers + optimistic openings.
+    filler_engine = FillerEngine(config.filler_dir)
+    app_.state.latency = LatencyMasker(filler_engine)
+    logger.info("Latency masker ready (filler clips: %s)", filler_engine.get_categories())
+
     yield
 
     logger.info("Shutting down vocascade adapter...")
@@ -178,7 +185,8 @@ async def index() -> HTMLResponse:
 def _build_pipeline(config, stt: WhisperSTT, degraded_tts: bool,
                     outbound: "asyncio.Queue[str]", serializer: RawFrameSerializer,
                     task_broker: TaskBroker | None = None,
-                    delivery: DeliveryCoordinator | None = None):
+                    delivery: DeliveryCoordinator | None = None,
+                    latency: LatencyMasker | None = None):
     """Assemble a fresh per-session VoicePipeline: VAD → STT → router → TTS → transport-out."""
     session_state = SessionState(voice_session_id=str(uuid.uuid4()), state=SessionStateEnum.ACTIVE)
     router = WaterfallRouter.from_config(config)
@@ -186,7 +194,8 @@ def _build_pipeline(config, stt: WhisperSTT, degraded_tts: bool,
     stages = [
         VADStage(server_vad_enabled=config.server_vad_enabled, sample_rate=config.audio_in_sample_rate),
         STTStage(whisper_stt=stt),
-        RouterStage(router=router, session_state=session_state, config=config, task_broker=task_broker),
+        RouterStage(router=router, session_state=session_state, config=config,
+                    task_broker=task_broker, latency=latency),
         GenieTTSStage(
             tts_url=config.tts_url,
             character_name=config.tts_character_name,
@@ -252,7 +261,7 @@ async def websocket_endpoint(websocket: WebSocket):
         outbound: "asyncio.Queue[str]" = asyncio.Queue()
         pipeline = _build_pipeline(
             config, app.state.stt, app.state.degraded_tts, outbound, serializer,
-            task_broker=broker, delivery=delivery,
+            task_broker=broker, delivery=delivery, latency=app.state.latency,
         )
         await pipeline.start()
 
