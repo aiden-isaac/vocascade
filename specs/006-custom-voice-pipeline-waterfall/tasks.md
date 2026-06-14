@@ -98,9 +98,9 @@ description: "Task list for 006-custom-voice-pipeline-waterfall"
 
 **Independent Test**: prompt-emitting run streams to TTS; slow run delivered proactively when complete.
 
-- [ ] T223 [US3] HERMES stage: dispatch every query via `/v1/runs` using KEEP `vocascade/hermes_run_client.py` + `vocascade/gateway/hermes_client.py` — `vocascade/waterfall/stages/hermes.py`.
-- [ ] T224 [US3] Stream `message.delta` events into TTS as they arrive; KEEP `vocascade/task_broker.py` + `vocascade/delivery.py` handle late/terminal completion (proactive delivery). No stream-vs-run branch — `vocascade/waterfall/stages/hermes.py`.
-- [ ] T225 [P] [US3] Tests: streamed delta→TTS path; late-completion proactive delivery; in-flight task retained at session end; stream-drop reconcile-via-snapshot — `tests/unit/test_hermes_stage.py`.
+- [x] T223 [US3] HERMES stage: dispatch every query via `/v1/runs` using KEEP `vocascade/hermes_run_client.py` + `vocascade/gateway/hermes_client.py` — `vocascade/waterfall/stages/hermes.py`.
+- [x] T224 [US3] Stream `message.delta` events into TTS as they arrive; KEEP `vocascade/task_broker.py` + `vocascade/delivery.py` handle late/terminal completion (proactive delivery). No stream-vs-run branch — `vocascade/waterfall/stages/hermes.py`.
+- [x] T225 [P] [US3] Tests: streamed delta→TTS path; late-completion proactive delivery; in-flight task retained at session end; stream-drop reconcile-via-snapshot — `tests/unit/test_hermes_stage.py`.
 
 **Checkpoint**: heavy-brain requests work both fast (streamed) and slow (proactive), same machinery.
 

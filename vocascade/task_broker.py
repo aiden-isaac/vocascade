@@ -46,7 +46,14 @@ def _generate_task_id(counter: int) -> str:
     return f"task_{now.strftime('%Y%m%d_%H%M%S')}_{counter:02d}"
 
 
+# Sentinel pushed onto a live sink when its run reaches a terminal state.
+LIVE_DONE = object()
+
+
 class TaskBroker:
+    # Re-exported so a live consumer can compare against `broker.LIVE_DONE`.
+    LIVE_DONE = LIVE_DONE
+
     def __init__(
         self,
         run_client: HermesRunClient,
@@ -60,9 +67,32 @@ class TaskBroker:
         self._by_run_id: dict[str, str] = {}
         self._consumers: dict[str, asyncio.Task] = {}
         self._counter = 0
+        # US3 live streaming: a turn may attach a sink to receive a run's
+        # message.delta fragments in real time (T224). While a sink is attached
+        # the run's terminal result is delivered live, not proactively.
+        self._live_sinks: dict[str, "asyncio.Queue"] = {}
+        self._delta_streamed: set[str] = set()
         # Wire delivered-state back into the registry.
         if delivery.on_delivered is None:
             delivery.on_delivered = self._on_delivered
+
+    # ── live streaming sink (US3 / T224) ─────────────────────────────────────
+
+    def attach_live_sink(self, task_id: str) -> "asyncio.Queue":
+        """Stream this task's incremental output into the returned queue.
+
+        Attach immediately after `dispatch()` returns (before awaiting), so the
+        sink is registered before the run consumer first runs. The queue yields
+        delta text fragments, then `LIVE_DONE` on terminal.
+        """
+        q: "asyncio.Queue" = asyncio.Queue()
+        self._live_sinks[task_id] = q
+        return q
+
+    def detach_live_sink(self, task_id: str) -> None:
+        """Stop live-streaming a task. If the run is still in flight, its result
+        will be delivered proactively instead (the conversation moved on)."""
+        self._live_sinks.pop(task_id, None)
 
     # ── session wiring ───────────────────────────────────────────────────────
 
@@ -224,6 +254,14 @@ class TaskBroker:
         elif event.kind == RunEventKind.APPROVAL_REQUIRED:
             self._enqueue_approval(task, event)
         else:
+            # Progress event. If a live turn is streaming this run, forward the
+            # incremental assistant text (message.delta) into its sink for TTS.
+            if event.payload.get("event") == "message.delta":
+                sink = self._live_sinks.get(task_id)
+                delta = event.payload.get("delta") or ""
+                if sink is not None and delta:
+                    self._delta_streamed.add(task_id)
+                    sink.put_nowait(delta)
             logger.debug("Task %s progress event: %s", task_id, event.kind)
 
     def _apply_terminal(
@@ -237,6 +275,25 @@ class TaskBroker:
             )
             return
         self._set_state(task, state, result_text)
+
+        sink = self._live_sinks.get(task.task_id)
+        if sink is not None:
+            # A live turn is streaming this run: finish its stream and suppress
+            # the proactive copy (the current turn speaks the result live).
+            if state == HermesTaskState.COMPLETED:
+                # Runs that emit only a terminal result (no deltas, OQ-1
+                # fallback) still need their text handed to the live turn.
+                if task.task_id not in self._delta_streamed and result_text:
+                    sink.put_nowait(result_text)
+                task.delivered = True
+            elif state == HermesTaskState.FAILED:
+                sink.put_nowait(_FAILURE_SPEECH)
+            # cancelled: nothing to say
+            sink.put_nowait(self.LIVE_DONE)
+            self._delta_streamed.discard(task.task_id)
+            return
+
+        self._delta_streamed.discard(task.task_id)
         if state == HermesTaskState.COMPLETED and result_text:
             self.delivery.enqueue(ProactiveResult(
                 task_id=task.task_id,

@@ -29,3 +29,6 @@ class SkillContext:
     config: Dict[str, Any] = field(default_factory=dict)
     emit_filler: Optional[Callable[[str], Awaitable[None]]] = None
     local_llm: Any = None
+    # App-level Hermes TaskBroker (US3). Present only for the hermes skill;
+    # additive per the skill-SDK contract. None when no backend is wired.
+    task_broker: Any = None

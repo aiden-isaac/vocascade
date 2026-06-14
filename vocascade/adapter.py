@@ -3,17 +3,21 @@ vocascade/adapter.py — Framework-free FastAPI transport for the vocascade voic
 
 Wires the custom asyncio ``VoicePipeline`` (VAD → STT → waterfall router → TTS)
 to a single WebSocket session. This is the T213 "wire the loop" integration:
-the running server now drives real utterances end-to-end through the confidence
+the running server drives real utterances end-to-end through the confidence
 waterfall and speaks character replies, replacing the retired Pipecat
 orchestration (kept for reference in ``adapter_legacy.py``).
+
+US3 adds the Hermes backend: an app-level run client + task broker +
+delivery coordinator (created once in ``lifespan``, outliving voice sessions).
+The hermes skill streams a run's ``message.delta`` output into the current
+turn's TTS; results that arrive after the conversation moves on are spoken by
+the DeliveryCoordinator at the next idle moment (injected through ``inject``).
 
 Wire protocol (matches ``static/index.html`` and ``RawFrameSerializer``):
   • client → server: one binary WS message per complete utterance (client-side
     VAD endpoints it); JSON control messages ``{"type": "wakeword"|"interrupt"|…}``.
   • server → client: JSON ``{"type": "audio", "data": <base64 pcm>, …}`` plus
     JSON status/transcript/assistant_response messages.
-
-Hermes is a passthrough mockup at this phase (US3/T223 wires the real backend).
 """
 
 import asyncio
@@ -34,13 +38,19 @@ from vocascade.waterfall.router import WaterfallRouter
 from vocascade.skills.registry import registry
 from vocascade.session.state import SessionState, SessionStateEnum
 from vocascade.transport.serializer import RawFrameSerializer
+from vocascade.hermes_run_client import HermesRunClient
+from vocascade.delivery import DeliveryCoordinator
+from vocascade.task_broker import TaskBroker
 from vocascade.pipeline.pipeline import (
     VoicePipeline,
     PipelineStage,
     Frame,
     AudioFrame,
+    TextFrame,
     ControlMessageFrame,
     InterruptionFrame,
+    UserStartedSpeakingFrame,
+    UserStoppedSpeakingFrame,
     BotStartedSpeakingFrame,
     BotStoppedSpeakingFrame,
 )
@@ -60,14 +70,17 @@ class TransportOutputStage(PipelineStage):
     """
     Terminal pipeline sink. Serialises outbound frames onto a per-session queue
     drained by a single sender coroutine, so the receive loop and the pipeline
-    never call ``websocket.send`` concurrently. Bot start/stop frames are mapped
-    to client status messages.
+    never call ``websocket.send`` concurrently. It also drives the delivery gate
+    (notify_* hooks) from the frames it observes, since every forwarded frame
+    passes through here.
     """
 
-    def __init__(self, outbound: "asyncio.Queue[str]", serializer: RawFrameSerializer):
+    def __init__(self, outbound: "asyncio.Queue[str]", serializer: RawFrameSerializer,
+                 delivery: DeliveryCoordinator | None = None):
         super().__init__()
         self.outbound = outbound
         self.serializer = serializer
+        self.delivery = delivery
 
     async def push(self, frame: Frame):
         if isinstance(frame, AudioFrame):
@@ -75,12 +88,26 @@ class TransportOutputStage(PipelineStage):
             if data is not None:
                 await self.outbound.put(data)
         elif isinstance(frame, ControlMessageFrame):
+            if self.delivery is not None and frame.message.get("type") == "transcript":
+                # A transcription reached routing — keep the channel busy so a
+                # proactive result doesn't talk over the impending reply.
+                self.delivery.notify_response_pending()
             data = self.serializer.serialize(frame)
             if data is not None:
                 await self.outbound.put(data)
+        elif isinstance(frame, UserStartedSpeakingFrame):
+            if self.delivery is not None:
+                self.delivery.notify_user_started_speaking()
+        elif isinstance(frame, UserStoppedSpeakingFrame):
+            if self.delivery is not None:
+                self.delivery.notify_user_stopped_speaking()
         elif isinstance(frame, BotStartedSpeakingFrame):
+            if self.delivery is not None:
+                self.delivery.notify_bot_started_speaking()
             await self.outbound.put(json.dumps({"type": "status", "state": "assistant_streaming"}))
         elif isinstance(frame, BotStoppedSpeakingFrame):
+            if self.delivery is not None:
+                self.delivery.notify_bot_stopped_speaking()
             await self.outbound.put(json.dumps({"type": "audio_end"}))
             await self.outbound.put(json.dumps({"type": "status", "state": "active_listening"}))
         # Terminal sink: nothing downstream.
@@ -94,7 +121,7 @@ async def lifespan(app_: FastAPI):
     logger.info("Loading Whisper STT model '%s' (%s)...", config.whisper_model, config.whisper_language)
     app_.state.stt = WhisperSTT(model_name=config.whisper_model, language=config.whisper_language)
 
-    # Register bundled skills (smalltalk floor + hermes passthrough for the MVP).
+    # Register bundled skills (smalltalk, hermes; keyword/example skills arrive in US6).
     registry.discover_bundled_skills()
     logger.info("Registered skills: %s", [s.name for s in registry.get_all_skills()])
 
@@ -107,9 +134,28 @@ async def lifespan(app_: FastAPI):
             "(GENIE_ONNX_MODEL_DIR / GENIE_REFERENCE_AUDIO / GENIE_REFERENCE_TEXT) not fully set."
         )
 
+    # Hermes backend (US3): one run client + broker + delivery coordinator for
+    # the app's lifetime — tasks outlive voice sessions (FR-061). No startup
+    # network probe; the broker probes capabilities lazily on first dispatch.
+    run_client = HermesRunClient(
+        base_url=config.hermes_base_url,
+        api_key=config.hermes_api_key,
+        session_key=config.hermes_session_key,
+        model=config.hermes_model,
+    )
+    app_.state.run_client = run_client
+    app_.state.delivery = DeliveryCoordinator(speech_budget=config.result_speech_budget)
+    app_.state.task_broker = TaskBroker(run_client, app_.state.delivery)
+    logger.info("Hermes broker ready (backend %s)", config.hermes_base_url)
+
     yield
 
     logger.info("Shutting down vocascade adapter...")
+    await app_.state.task_broker.shutdown()
+    try:
+        await run_client.aclose()
+    except Exception:  # best-effort; client may never have opened a connection
+        pass
     app_.state.stt.close()
 
 
@@ -130,7 +176,9 @@ async def index() -> HTMLResponse:
 
 
 def _build_pipeline(config, stt: WhisperSTT, degraded_tts: bool,
-                    outbound: "asyncio.Queue[str]", serializer: RawFrameSerializer):
+                    outbound: "asyncio.Queue[str]", serializer: RawFrameSerializer,
+                    task_broker: TaskBroker | None = None,
+                    delivery: DeliveryCoordinator | None = None):
     """Assemble a fresh per-session VoicePipeline: VAD → STT → router → TTS → transport-out."""
     session_state = SessionState(voice_session_id=str(uuid.uuid4()), state=SessionStateEnum.ACTIVE)
     router = WaterfallRouter.from_config(config)
@@ -138,7 +186,7 @@ def _build_pipeline(config, stt: WhisperSTT, degraded_tts: bool,
     stages = [
         VADStage(server_vad_enabled=config.server_vad_enabled, sample_rate=config.audio_in_sample_rate),
         STTStage(whisper_stt=stt),
-        RouterStage(router=router, session_state=session_state, config=config),
+        RouterStage(router=router, session_state=session_state, config=config, task_broker=task_broker),
         GenieTTSStage(
             tts_url=config.tts_url,
             character_name=config.tts_character_name,
@@ -149,15 +197,17 @@ def _build_pipeline(config, stt: WhisperSTT, degraded_tts: bool,
             degraded_mode=degraded_tts,
             sample_rate=config.audio_out_sample_rate,
         ),
-        TransportOutputStage(outbound, serializer),
+        TransportOutputStage(outbound, serializer, delivery=delivery),
     ]
     pipeline = VoicePipeline(stages)
-    # The TTS sink needs explicit teardown beyond pipeline.stop() (closes aiohttp).
+    # The TTS sink needs explicit teardown beyond pipeline.stop() (closes aiohttp)
+    # and is the injection point for proactive (system-initiated) speech.
     pipeline.tts_stage = stages[-2]
     return pipeline
 
 
-async def _handle_control(text: str, pipeline: VoicePipeline, outbound: "asyncio.Queue[str]") -> None:
+async def _handle_control(text: str, pipeline: VoicePipeline, outbound: "asyncio.Queue[str]",
+                          delivery: DeliveryCoordinator, inject) -> None:
     """Handle a JSON control message from the client."""
     try:
         msg = json.loads(text)
@@ -167,12 +217,15 @@ async def _handle_control(text: str, pipeline: VoicePipeline, outbound: "asyncio
 
     mtype = msg.get("type")
     if mtype == "wakeword":
-        # Session is live; a fresh turn may follow. Clear any prior interrupt arm.
+        # Session is live; a fresh turn may follow. Clear any prior interrupt arm
+        # and let proactive deliveries flow (idle-gated) for this session.
         pipeline.interrupt_event.clear()
+        delivery.bind_session(inject)
         await outbound.put(json.dumps({"type": "status", "state": "active_listening"}))
     elif mtype == "interrupt":
-        # Client-side barge-in: abort any in-flight synthesis. The next utterance
-        # re-arms the loop (interrupt_event is cleared when fresh audio arrives).
+        # Client-side barge-in: kill any in-flight proactive delivery and abort
+        # in-flight synthesis. The next utterance re-arms the loop.
+        delivery.notify_interruption()
         pipeline.interrupt_event.set()
         await pipeline.push(InterruptionFrame())
     # set_timeout / playback_progress / unknown: ignored for the MVP loop.
@@ -193,10 +246,20 @@ async def websocket_endpoint(websocket: WebSocket):
         logger.info("WebSocket session opened")
 
         config = app.state.config
+        delivery: DeliveryCoordinator = app.state.delivery
+        broker: TaskBroker = app.state.task_broker
         serializer = RawFrameSerializer()
         outbound: "asyncio.Queue[str]" = asyncio.Queue()
-        pipeline = _build_pipeline(config, app.state.stt, app.state.degraded_tts, outbound, serializer)
+        pipeline = _build_pipeline(
+            config, app.state.stt, app.state.degraded_tts, outbound, serializer,
+            task_broker=broker, delivery=delivery,
+        )
         await pipeline.start()
+
+        # Proactive (system-initiated) speech is injected as a TextFrame straight
+        # into TTS; its BotStarted/Stopped frames drive the delivery gate.
+        async def inject(text: str) -> None:
+            await pipeline.tts_stage.push(TextFrame(text=text))
 
         async def sender() -> None:
             try:
@@ -225,12 +288,15 @@ async def websocket_endpoint(websocket: WebSocket):
                         sample_rate=config.audio_in_sample_rate,
                     ))
                 elif message.get("text") is not None:
-                    await _handle_control(message["text"], pipeline, outbound)
+                    await _handle_control(message["text"], pipeline, outbound, delivery, inject)
         except WebSocketDisconnect:
             logger.info("WebSocket disconnected by client")
         except Exception as exc:
             logger.error("WebSocket session error: %s", exc, exc_info=True)
         finally:
+            # Session ends: unbind delivery but DO NOT shut down the broker —
+            # in-flight Hermes tasks are retained and delivered next session (FR-061).
+            delivery.unbind_session()
             await pipeline.stop()
             await pipeline.tts_stage.close()
             sender_task.cancel()

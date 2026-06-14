@@ -23,11 +23,12 @@ from vocascade.skills.registry import registry
 def _force_register_bundled_skills():
     """Register smalltalk/hermes into a fresh registry, bypassing the import cache."""
     registry.clear()
-    mod = "vocascade.skills.base_skills.smalltalk"
-    if mod in sys.modules:
-        importlib.reload(sys.modules[mod])
-    else:
-        importlib.import_module(mod)
+    for mod in ("vocascade.skills.base_skills.smalltalk",
+                "vocascade.skills.base_skills.hermes"):
+        if mod in sys.modules:
+            importlib.reload(sys.modules[mod])
+        else:
+            importlib.import_module(mod)
 
 
 async def _empty_synth(text, **kwargs):

@@ -8,6 +8,7 @@ from vocascade.waterfall.types import WaterfallStage, ConfidenceResult
 from vocascade.waterfall.classifier import IntentClassifier
 from vocascade.waterfall.stages.high import HighStage
 from vocascade.waterfall.stages.medium import MediumStage
+from vocascade.waterfall.stages.hermes import HermesStage
 from vocascade.skills.registry import registry
 from vocascade.skills.context import SkillContext
 
@@ -51,16 +52,7 @@ class SmalltalkStage(WaterfallStage):
             skill_name="smalltalk"
         )
 
-class HermesStage(WaterfallStage):
-    """HERMES always-async last stage. Acts as absolute fallback passthrough for Phase 3."""
-    async def evaluate(self, utterance: str, ctx: SkillContext) -> ConfidenceResult:
-        if not self.enabled:
-            return ConfidenceResult(stage=self.name, confidence=0.0)
-        return ConfidenceResult(
-            stage=self.name,
-            confidence=1.0,
-            skill_name="hermes"
-        )
+# HermesStage (the always-async last stage) lives in stages/hermes.py (US3).
 
 
 # Stages constructed generically (HIGH/MEDIUM need injected deps, handled separately).

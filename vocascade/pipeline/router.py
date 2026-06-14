@@ -2,6 +2,7 @@
 vocascade/pipeline/router.py — Router pipeline stage.
 """
 
+import inspect
 import logging
 from vocascade.pipeline.pipeline import (
     PipelineStage,
@@ -23,11 +24,13 @@ class RouterStage(PipelineStage):
     constructs the SkillContext, executes the skill, and pushes the text response
     downstream as TextFrame(s).
     """
-    def __init__(self, router, session_state: SessionState, config):
+    def __init__(self, router, session_state: SessionState, config, task_broker=None):
         super().__init__()
         self.router = router
         self.session_state = session_state
         self.config = config
+        # App-level Hermes broker (US3); handed to the hermes skill via ctx.
+        self.task_broker = task_broker
 
     async def push(self, frame: Frame):
         if isinstance(frame, TranscriptionFrame):
@@ -46,7 +49,8 @@ class RouterStage(PipelineStage):
                 history=[],
                 config=config_dict,
                 emit_filler=None,
-                local_llm=None
+                local_llm=None,
+                task_broker=self.task_broker,
             )
             
             # Resolve local_llm client if base_url is configured
@@ -66,19 +70,31 @@ class RouterStage(PipelineStage):
                 skill_obj = registry.get_skill(result.skill_name)
                 if skill_obj:
                     try:
-                        # Executing the handler
-                        res = await skill_obj.handler(frame.text, {}, context)
-                        
-                        # Handle return: can be a string or async generator
-                        if isinstance(res, str):
-                            # Surface the full reply text (also the only signal in
-                            # degraded TTS mode, where no audio is synthesised).
-                            await super().push(ControlMessageFrame({"type": "assistant_response", "text": res}))
-                            await super().push(TextFrame(text=res))
-                        elif hasattr(res, "__aiter__"):
-                            async for chunk in res:
+                        # A handler is either a coroutine returning the full
+                        # spoken text (str) or an async generator streaming text
+                        # chunks (e.g. the hermes skill). Don't await an async
+                        # generator — iterate it.
+                        called = skill_obj.handler(frame.text, {}, context)
+                        if inspect.isasyncgen(called):
+                            spoken: list[str] = []
+                            async for chunk in called:
                                 if chunk:
+                                    spoken.append(chunk)
                                     await super().push(TextFrame(text=chunk))
+                            if spoken:
+                                await super().push(ControlMessageFrame(
+                                    {"type": "assistant_response", "text": " ".join(spoken)}))
+                        else:
+                            res = await called
+                            if isinstance(res, str):
+                                # Surface the full reply text (also the only signal
+                                # in degraded TTS mode, where no audio is made).
+                                await super().push(ControlMessageFrame({"type": "assistant_response", "text": res}))
+                                await super().push(TextFrame(text=res))
+                            elif hasattr(res, "__aiter__"):
+                                async for chunk in res:
+                                    if chunk:
+                                        await super().push(TextFrame(text=chunk))
                     except Exception as e:
                         logger.error(f"Error executing skill '{result.skill_name}': {e}", exc_info=True)
                 else:

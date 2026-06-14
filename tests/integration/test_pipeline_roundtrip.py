@@ -40,13 +40,16 @@ class MockSpeakerStage(PipelineStage):
 class TestPipelineRoundtrip(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         registry.clear()
-        # Force registration of base skills by reloading the module to bypass sys.modules cache
+        # Force registration of base skills by reloading the modules to bypass
+        # the sys.modules import cache (the @skill decorators only run on import).
         import sys
         import importlib
-        if "vocascade.skills.base_skills.smalltalk" in sys.modules:
-            importlib.reload(sys.modules["vocascade.skills.base_skills.smalltalk"])
-        else:
-            import vocascade.skills.base_skills.smalltalk
+        for mod in ("vocascade.skills.base_skills.smalltalk",
+                    "vocascade.skills.base_skills.hermes"):
+            if mod in sys.modules:
+                importlib.reload(sys.modules[mod])
+            else:
+                importlib.import_module(mod)
 
     def tearDown(self):
         registry.clear()
@@ -279,13 +282,12 @@ class TestPipelineRoundtrip(unittest.IsolatedAsyncioTestCase):
         await pipeline.stop()
         await tts_stage.close()
 
-        # Verify fallback response is spoken (from handle_hermes_mockup)
-        # The synthesized text should contain the Hermes fallback response
-        # Let's inspect the call to GenieTTSClient's synthesize method.
-        # We can extract the synthesizer mock call argument
+        # The hermes skill has no TaskBroker wired in this pipeline (US3 backend
+        # is app-level), so it degrades to a graceful spoken notice rather than
+        # the old mockup echo.
         self.assertTrue(mock_tts_client.synthesize.called)
         synthesize_text = mock_tts_client.synthesize.call_args[0][0]
-        self.assertEqual(synthesize_text, "[Hermes agent mockup] tell me a joke")
+        self.assertEqual(synthesize_text, "I can't reach the agent right now.")
 
         received_types = [type(f) for f in speaker_stage.received_frames]
         self.assertIn(BotStartedSpeakingFrame, received_types)

@@ -68,9 +68,5 @@ async def handle_smalltalk(intent: str, entities: dict, ctx: SkillContext) -> st
             return "Ordis cannot access the ship archives, Operator."
         return "I don't have access to my brain right now."
 
-@skill(name="hermes")
-async def handle_hermes_mockup(intent: str, entities: dict, ctx: SkillContext) -> str:
-    """
-    Hermes mockup skill for Phase 3.
-    """
-    return f"[Hermes agent mockup] {intent}"
+# The hermes skill moved to base_skills/hermes.py (US3 — real async run dispatch,
+# replacing the Phase-3 mockup).
