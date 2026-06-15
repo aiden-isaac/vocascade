@@ -2,10 +2,9 @@
 vocascade/adapter.py — Framework-free FastAPI transport for the vocascade voice loop.
 
 Wires the custom asyncio ``VoicePipeline`` (VAD → STT → waterfall router → TTS)
-to a single WebSocket session. This is the T213 "wire the loop" integration:
-the running server drives real utterances end-to-end through the confidence
-waterfall and speaks character replies, replacing the retired Pipecat
-orchestration (kept for reference in ``adapter_legacy.py``).
+to a single WebSocket session: the running server drives real utterances
+end-to-end through the confidence waterfall and speaks character replies. This
+framework-free orchestration replaces the original third-party voice framework.
 
 US3 adds the Hermes backend: an app-level run client + task broker +
 delivery coordinator (created once in ``lifespan``, outliving voice sessions).

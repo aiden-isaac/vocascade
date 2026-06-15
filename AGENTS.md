@@ -1,74 +1,81 @@
-# Voice Satellite — Agent Instructions
+# vocascade — Agent Instructions
+
+> For the full architecture, runtime topology, and the gotchas that bite, read
+> [`CLAUDE.md`](CLAUDE.md). This file is the quick map.
 
 ## Repo layout
 
 ```
-voice_satellite/        # Application package
-├── server.py           # FastAPI app: WS endpoint, lifespan, gateway factory
-├── config.py           # Frozen dataclass SatelliteConfig, dotenv loader
-├── __main__.py         # Bootstrap + uvicorn launcher (health report)
-├── gateway/            # OpenClawClient | HermesClient (swappable via GATEWAY_BACKEND)
-├── stt/                # faster-whisper wrapper (WhisperSTT)
-├── tts/                # GenieTTSClient, sentence_splitter
-├── audio/              # FillerEngine, DSP effects chain (pitch/tremolo/overdrive/bitcrush/stutter)
-└── session/            # ConversationSession + state machine
-static/                 # index.html, fillers/, wakeword/
-scripts/                # download_wakeword_models.sh, generate_fillers.py, etc.
-tests/unit/             # All current tests live here (60 tests)
-specs/                  # Speckit specs & plans (001-voice-satellite-core, 002-hermes-gateway)
-old_project/            # Legacy code — do not modify
+vocascade/                 # The single application package (no third-party voice framework)
+├── adapter.py             # FastAPI app: /ws endpoint, lifespan, app-level wiring
+├── __main__.py            # Bootstrap + uvicorn launcher (health report)
+├── config.py              # Frozen AdapterConfig; loads config.yaml (structure) + .env (secrets)
+├── pipeline/              # Custom asyncio VoicePipeline + stages (vad, stt, router, tts, latency)
+├── waterfall/             # Confidence router + stages (stop, converse, high, medium, hermes) + classifier
+├── skills/                # @skill registry, SkillContext, base_skills/ (datetime, timers, smalltalk, hermes, stop)
+├── session/              # state, state_machine, teardown, summary (session-end memory gist)
+├── gateway/               # local_llm (fast brain), auth (Ed25519), hermes_client (chat fallback)
+├── stt/                   # faster-whisper wrapper (WhisperSTT)
+├── tts/                   # GenieTTSClient (voice cloning)
+├── transport/             # WS serializer + transport-auth gate (trust-network | device-identity)
+├── edge/                  # __main__: edge/satellite client (wake word, VAD, audio I/O, WS client)
+├── eval/                  # route_harness + fixtures.jsonl (headless routing eval)
+├── audio/                 # DSP character effects chain
+└── delivery.py, task_broker.py, hermes_run_client.py, filler_engine.py, telemetry.py
+user_skills/               # User-provided skills, auto-discovered at startup
+static/                    # index.html (browser client), fillers/, wakeword/
+scripts/                   # run_voice_stack.sh, generate_fillers.py, etc.
+tests/                     # unit/, integration/, contract/
+old_project/               # Legacy code — do not modify
 ```
 
-Entry point: `python -m voice_satellite` → bootstraps STT/TTS/gateway, prints health report, then runs uvicorn on `server:app`.
+Entry points: `python -m vocascade` (server) and `python -m vocascade.edge` (edge client).
 
 ## Commands
 
-**Setup:**
-```
-cp .env.example .env          # populate with your settings
-pip install -r requirements.txt   # or activate .venv if present
-bash scripts/download_wakeword_models.sh   # downloads ONNX models to static/wakeword/
+Always use the project `.venv` (the default `python` is miniconda and lacks deps).
+
+```bash
+cp .env.example .env && cp config.yaml.example config.yaml   # then edit
+
+PYTHONPATH=. .venv/bin/python -m pytest tests/ -q            # all tests
+bash scripts/run_voice_stack.sh                              # Genie TTS + server
+.venv/bin/python -m vocascade                               # server only
+.venv/bin/python -m vocascade.edge                          # edge client (mic + wake word)
+PYTHONPATH=. .venv/bin/python -m vocascade.eval.route_harness "what time is it"
+.venv/bin/python scripts/generate_fillers.py                # re-render acknowledge audio
 ```
 
-**Run:**
-```
-uvicorn voice_satellite.server:app --host 0.0.0.0 --port 8000
-# or equivalently:
-python -m voice_satellite
-```
-
-**Tests (from repo root):**
-```
-PYTHONPATH=. python -m pytest tests/
-```
-No conftest.py, no pytest.ini — flat discovery under `tests/`. Tests import `voice_satellite` directly, so `PYTHONPATH=.` is required.
-
-**Codegen / helpers:**
-```
-python scripts/generate_character.py      # generates Genie TTS character profile
-python scripts/generate_fillers.py        # renders filler audio clips from text
-```
+`PYTHONPATH=.` is required — tests/app import `vocascade` as a top-level package.
+No `conftest.py`/`pytest.ini`; flat discovery under `tests/`.
 
 ## Gotchas
 
-- **Backend toggle**: `GATEWAY_BACKEND=hermes` (default) vs `openclaw`. The `__main__.py` bootstrap currently only tests the OpenClaw client path; Hermes is wired in `server.py:get_gateway_client()`. Adding Hermes to the bootstrap health report requires an explicit code change.
-- **Hermetic failure**: if `OPENCLAW_GATEWAY_TOKEN` is missing AND `GATEWAY_BACKEND=openclaw`, startup exits immediately. If it's missing with `hermes`, startup continues (token is optional for Hermes).
-- **TTS degradation**: if any of `GENIE_ONNX_MODEL_DIR`, `GENIE_REFERENCE_AUDIO`, `GENIE_REFERENCE_TEXT` is unset, TTS runs degraded (text-only, no voice cloning). Set `VOICE_SATELLITE_SKIP_GENIE_INIT=true` to skip TTS init entirely.
-- **Single WebSocket session**: the `_session_lock` enforces at-most-one active WS connection. Concurrent connections are rejected with close code 1008.
-- **Filler audio**: PCM files live in `static/fillers/<category>/` as `.pcm`. Categories and fallback texts are in `static/fillers.json`. Files are served as base64 over WebSocket at 32 kHz sample rate.
-- **Wakeword**: models downloaded by `download_wakeword_models.sh` go to `static/wakeword/`. The `eden_wakeword.onnx` at the repo root is also used — check `static/wakeword/model.json` for the active model reference.
-- **Character effects**: `get_character_effects_config()` applies randomized glitch effects for `"ordis"` / `"default"`. Other characters get `{}` (no effects). Effects mutate numpy arrays in-place-style; caller should not reuse the input buffer after passing through `apply_effect_chain()`.
+- **Config split (OQ-4)**: `config.yaml` = structure (waterfall order/thresholds,
+  per-skill settings, latency, role, transport auth); `.env` = secrets/endpoints.
+  Missing required values fail fast with a located message.
+- **Two brains**: the local LLM (`LLM_BASE_URL`) handles smalltalk + the medium
+  classifier + the smalltalk gate; Hermes (`HERMES_BASE_URL`) is the always-async
+  fallback. The local LLM is never given tool schemas.
+- **Smalltalk gate (FR-033)**: smalltalk abstains for data/action utterances so
+  they fall through to Hermes. Toggle with `skills.smalltalk.gate`.
+- **Transport auth (OQ-3)**: `transport_auth_mode` MUST be explicit
+  (`trust-network` | `device-identity`); the server refuses to start otherwise.
+- **TTS degradation**: if any of `GENIE_ONNX_MODEL_DIR` / `GENIE_REFERENCE_AUDIO`
+  / `GENIE_REFERENCE_TEXT` is unset, TTS runs text-only. `VOICE_SATELLITE_SKIP_GENIE_INIT=true`
+  skips TTS init.
+- **Single WS session**: a module-level `_session_lock` allows one active `/ws`
+  connection; concurrent connects are rejected with close code 1008.
+- **Ports**: server `8005` (current `.env`), Genie TTS `127.0.0.1:8000`. A stale
+  process on `:8005` makes the stack appear to "shut down on startup" (`ss -ltnp | grep :8005`).
 
 ## Spec workflow
 
-This repo uses the **Speckit** workflow. Design artifacts live in `specs/<naming>/`:
-- `spec.md` — feature specification
-- `plan.md` — implementation plan
-- `tasks.md` — actionable task breakdown
-
-When modifying existing features, read the corresponding spec/plan first. When creating new features, follow the speckit workflow (spec → plan → tasks → implement).
+This repo uses the **Speckit** workflow; design artifacts live in `specs/<NNN-name>/`
+(`spec.md` → `plan.md` → `tasks.md`). Read the relevant spec before changing a feature.
 
 <!-- SPECKIT START -->
-**Active feature**: [`006-custom-voice-pipeline-waterfall`](specs/006-custom-voice-pipeline-waterfall/plan.md) — remove the Pipecat framework in favor of a custom asyncio `VoicePipeline` + OVOS-style confidence waterfall, consolidated into a single `vocascade` package. Supersedes 004 (Pipecat) and extends 005 (Hermes runs API, now with streamed delivery).
+**Active feature**: [`006-custom-voice-pipeline-waterfall`](specs/006-custom-voice-pipeline-waterfall/plan.md)
+— the custom asyncio `VoicePipeline` + OVOS-style confidence waterfall, consolidated
+into the single `vocascade` package. Supersedes 001–004; extends 005 (Hermes runs API).
 <!-- SPECKIT END -->
-

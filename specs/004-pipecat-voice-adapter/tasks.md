@@ -1,5 +1,13 @@
 # Tasks: Pipecat Voice Adapter
 
+> ⚠️ **SUPERSEDED (2026-06-16).** Spec 004 built the Pipecat-based `voice_adapter`.
+> Feature **006 (`custom-voice-pipeline-waterfall`)** removed the Pipecat framework
+> entirely and consolidated everything into the single `vocascade` package: the
+> custom asyncio `VoicePipeline` replaces Pipecat's `Pipeline`/`Runner`/`Task`/
+> `FrameProcessor`, and `pipecat-ai` is no longer a dependency. The tasks below are
+> retained for history only — do not implement them. See
+> [`specs/006-custom-voice-pipeline-waterfall/`](../006-custom-voice-pipeline-waterfall/).
+
 **Input**: Design documents from `/specs/004-pipecat-voice-adapter/`
 
 **Prerequisites**: plan.md (required), spec.md (required for user stories), research.md, data-model.md, quickstart.md

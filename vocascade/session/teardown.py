@@ -8,7 +8,7 @@ never depends on a small local model reliably emitting a sentinel (FR-062):
   2. A deterministic farewell-phrase match on the user's transcript (the backstop).
 
 Either one arms a teardown; re-engaging mid-farewell disarms it. Ported verbatim
-from the retired Pipecat ``TeardownInterceptor`` so behavior is unchanged.
+from the original ``TeardownInterceptor`` so behavior is unchanged.
 """
 
 import re

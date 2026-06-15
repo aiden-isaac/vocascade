@@ -53,6 +53,9 @@ LIVE_DONE = object()
 class TaskBroker:
     # Re-exported so a live consumer can compare against `broker.LIVE_DONE`.
     LIVE_DONE = LIVE_DONE
+    # Cap on retained terminal tasks so the registry doesn't grow unbounded over a
+    # long-running process (SC-011). Active (non-terminal) tasks are never pruned.
+    _MAX_TERMINAL = 200
 
     def __init__(
         self,
@@ -113,6 +116,17 @@ class TaskBroker:
     def active_tasks(self) -> list[HermesTask]:
         return [t for t in self.tasks.values() if not t.is_terminal()]
 
+    def _prune_terminal(self) -> None:
+        """Drop the oldest terminal tasks beyond ``_MAX_TERMINAL`` (SC-011). The
+        dict preserves insertion order, so the leading terminal ids are oldest;
+        active tasks are always retained."""
+        terminal = [tid for tid, t in self.tasks.items() if t.is_terminal()]
+        excess = len(terminal) - self._MAX_TERMINAL
+        for tid in terminal[:max(0, excess)]:
+            task = self.tasks.pop(tid, None)
+            if task is not None and task.run_id:
+                self._by_run_id.pop(task.run_id, None)
+
     # ── dispatch ─────────────────────────────────────────────────────────────
 
     async def dispatch(self, request_text: str, session_id: str = "") -> HermesTask:
@@ -130,6 +144,7 @@ class TaskBroker:
             session_id=session_id,
         )
         self.tasks[task.task_id] = task
+        self._prune_terminal()
 
         caps = await self.run_client.probe_capabilities()
         if not caps.supports_runs:

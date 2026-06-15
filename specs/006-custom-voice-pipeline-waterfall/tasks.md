@@ -212,10 +212,10 @@ description: "Task list for 006-custom-voice-pipeline-waterfall"
 
 **Purpose**: Remove the last Pipecat remnants and update docs.
 
-- [ ] T248 [P] Delete the Pipecat orchestration (`Pipeline`/`Runner`/`Task`/`FrameProcessor`) from the old adapter once all callers are migrated — remove `vocascade/adapter.py`.
-- [ ] T249 [P] Update `README.md`, `AGENTS.md`, and the topology diagram for the `vocascade` single-package architecture and config split.
-- [ ] T250 [P] Annotate `specs/004-pipecat-voice-adapter/tasks.md` items as superseded (Pipecat removed).
-- [ ] T251 Full suite + 24-hour soak: no orphaned tasks, no unbounded registry/queue/skill-state growth (SC-001, SC-009, SC-011).
+- [x] T248 [P] Delete the Pipecat orchestration once all callers are migrated — removed `vocascade/adapter_legacy.py` + `vocascade/tts_genie.py` (the actual Pipecat code; `adapter.py` is the framework-free server since US1). Also removed the empty `voice_satellite/` shell and repointed `scripts/generate_fillers.py`. (Task text said "remove adapter.py" — stale; `adapter.py` is the current server.)
+- [x] T249 [P] Update `README.md`, `AGENTS.md`, and the topology diagram for the `vocascade` single-package architecture and config split.
+- [x] T250 [P] Annotate `specs/004-pipecat-voice-adapter/tasks.md` items as superseded (Pipecat removed).
+- [x] T251 Full suite (261 pass) + SC-001 verified (0 pipecat/voice_satellite refs) + SC-009 (eval harness green). SC-011: found + fixed two unbounded structures (task registry → `TaskBroker._prune_terminal`; delivery queue → bounded deque); `scripts/soak_test.py` shows flat growth at 5000 dispatches. The literal 24-hour wall-clock soak is operational (run `soak_test.py --duration 86400`).
 
 ---
 

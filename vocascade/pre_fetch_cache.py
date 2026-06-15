@@ -1,7 +1,7 @@
 """
-Pre-fetch cache for the Pipecat Voice Adapter.
+Pre-fetch cache for the vocascade voice stack.
 Stores a cached snapshot of the environment state.
-In Phase 3, this is a pure stub with inactive start/stop methods.
+This is currently a pure stub with inactive start/stop methods.
 """
 
 from dataclasses import dataclass, field

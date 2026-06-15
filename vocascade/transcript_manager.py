@@ -1,5 +1,5 @@
 """
-Transcript manager for the Pipecat Voice Adapter.
+Transcript manager for the vocascade voice stack.
 Maintains tagged sliding window conversation history and execution state tracking.
 """
 

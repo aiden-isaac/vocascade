@@ -19,8 +19,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 # Prevent load_config from failing on missing key environment variables
 os.environ.setdefault("OPENCLAW_GATEWAY_TOKEN", "dummy_token")
 
-from voice_satellite.config import load_config
-from voice_satellite.tts.genie_client import GenieTTSClient
+from vocascade.config import load_config
+from vocascade.tts.genie_client import GenieTTSClient
 
 def phrase_to_slug(phrase: str) -> str:
     """'Let me check the weave.' -> 'let_me_check_the_weave'"""

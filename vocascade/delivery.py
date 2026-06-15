@@ -17,6 +17,10 @@ from typing import Awaitable, Callable, Optional
 
 logger = logging.getLogger("vocascade.delivery")
 
+# Cap on undelivered proactive results so the queue can't grow without bound if a
+# session never returns to drain it (SC-011). Oldest/stalest are dropped first.
+_MAX_PROACTIVE_QUEUE = 100
+
 # Sink: async callable that injects text into the live pipeline for TTS.
 InjectFn = Callable[[str], Awaitable[None]]
 # Optional condenser: full text -> speech-sized text (one local-LLM call, T117).
@@ -80,7 +84,10 @@ class DeliveryCoordinator:
         condenser: Optional[CondenseFn] = None,
         on_delivered: Optional[Callable[[ProactiveResult], None]] = None,
     ) -> None:
-        self.queue: deque[ProactiveResult] = deque()
+        # Bounded so undelivered proactive results can't grow without limit if a
+        # session never returns to drain them (SC-011); the oldest (stalest) are
+        # dropped first.
+        self.queue: deque[ProactiveResult] = deque(maxlen=_MAX_PROACTIVE_QUEUE)
         self.speech_budget = speech_budget
         self.condenser = condenser
         self.on_delivered = on_delivered
@@ -172,6 +179,10 @@ class DeliveryCoordinator:
         )
 
     def enqueue(self, result: ProactiveResult) -> None:
+        if len(self.queue) == self.queue.maxlen:
+            dropped = self.queue[0]
+            logger.warning("Delivery queue full (%d); dropping stalest result %s",
+                           self.queue.maxlen, dropped.task_id)
         logger.info(
             "Delivery queued: %s for %s (%d queued) — gate: %s",
             result.kind.value, result.task_id, len(self.queue) + 1, self.gate_state(),
