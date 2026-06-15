@@ -2,12 +2,17 @@
 tests/unit/test_stop.py — STOP/SYSTEM stage + RouterStage cancellation (US5 / T233).
 """
 
+import json
+import asyncio
 import unittest
 from unittest import IsolatedAsyncioTestCase
 
+from vocascade.adapter import _handle_control
+from vocascade.delivery import DeliveryCoordinator
 from vocascade.pipeline.pipeline import PipelineStage, TranscriptionFrame, TextFrame
 from vocascade.pipeline.router import RouterStage
 from vocascade.session.state import SessionState, ConverseClaim
+from vocascade.session.state_machine import SessionMachine
 from vocascade.skills.registry import registry
 from vocascade.waterfall.router import WaterfallRouter
 from vocascade.waterfall.stages.stop import StopStage
@@ -113,6 +118,46 @@ class TestRouterStop(IsolatedAsyncioTestCase):
         sink = await _route("set a timer", session, broker=_FakeBroker([]))
         self.assertFalse(session.teardown_armed)
         self.assertEqual(_spoken(sink), [])
+
+
+class _FakePipeline:
+    def __init__(self, sid):
+        self.interrupt_event = asyncio.Event()
+        self.session_machine = SessionMachine(SessionState(voice_session_id=sid))
+
+    async def push(self, frame):
+        pass
+
+
+class _FakeMasker:
+    filler_engine = None
+
+
+class TestBargeInCancelsRuns(IsolatedAsyncioTestCase):
+    async def _control(self, msg_type, broker, sid="s1"):
+        async def _inject(text):
+            pass
+
+        async def _inject_audio(pcm):
+            pass
+
+        await _handle_control(
+            json.dumps({"type": msg_type}),
+            _FakePipeline(sid), asyncio.Queue(), DeliveryCoordinator(),
+            _inject, _inject_audio, _FakeMasker(), broker,
+        )
+
+    async def test_interrupt_cancels_this_sessions_runs(self):
+        # "scratch that, do X instead": a barge-in must abandon the in-flight run
+        # so its result isn't pushed proactively later.
+        broker = _FakeBroker([_Task("t1", "s1"), _Task("t2", "other-session")])
+        await self._control("interrupt", broker)
+        self.assertEqual(broker.cancelled, ["t1"])
+
+    async def test_wakeword_does_not_cancel_runs(self):
+        broker = _FakeBroker([_Task("t1", "s1")])
+        await self._control("wakeword", broker)
+        self.assertEqual(broker.cancelled, [])
 
 
 if __name__ == "__main__":

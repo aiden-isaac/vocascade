@@ -246,7 +246,7 @@ def _build_pipeline(config, stt: WhisperSTT, degraded_tts: bool,
 
 async def _handle_control(text: str, pipeline: VoicePipeline, outbound: "asyncio.Queue[str]",
                           delivery: DeliveryCoordinator, inject, inject_audio,
-                          masker: LatencyMasker) -> None:
+                          masker: LatencyMasker, broker: TaskBroker | None = None) -> None:
     """Handle a JSON control message from the client."""
     try:
         msg = json.loads(text)
@@ -275,6 +275,16 @@ async def _handle_control(text: str, pipeline: VoicePipeline, outbound: "asyncio
         delivery.notify_interruption()
         pipeline.interrupt_event.set()
         await pipeline.push(InterruptionFrame())
+        # A barge-in abandons the current activity: cancel this session's in-flight
+        # Hermes runs so an interrupted query's result is not pushed proactively
+        # later (e.g. "scratch that, do X instead"). Going silent is NOT a barge-in,
+        # so the legitimate late-delivery path (FR-052) is preserved.
+        if broker is not None:
+            machine = getattr(pipeline, "session_machine", None)
+            sid = machine.state.voice_session_id if machine is not None else ""
+            for task in list(broker.active_tasks()):
+                if not sid or task.session_id == sid:
+                    await broker.cancel(task.task_id)
     # set_timeout / playback_progress / unknown: ignored for the MVP loop.
 
 
@@ -341,7 +351,7 @@ async def websocket_endpoint(websocket: WebSocket):
                     ))
                 elif message.get("text") is not None:
                     await _handle_control(message["text"], pipeline, outbound, delivery,
-                                          inject, inject_audio, app.state.latency)
+                                          inject, inject_audio, app.state.latency, broker)
         except WebSocketDisconnect:
             logger.info("WebSocket disconnected by client")
         except Exception as exc:
