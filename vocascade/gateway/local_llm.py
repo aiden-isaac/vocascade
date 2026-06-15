@@ -13,10 +13,14 @@ class LocalLLM:
     Lightweight async client for calling the local LLM chat/completions endpoint.
     Used for smalltalk generation and medium-stage classification.
     """
-    def __init__(self, base_url: str, api_key: Optional[str] = None, model: str = "qwen-moe-coder-fast"):
+    def __init__(self, base_url: str, api_key: Optional[str] = None, model: str = "qwen-moe-coder-fast",
+                 timeout: float = 15.0):
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
         self.model = model
+        # Per-call HTTP timeout. The medium-stage classifier uses a short one so a
+        # hung local LLM degrades fast instead of stalling routing (US7).
+        self.timeout = timeout
 
     async def chat(
         self,
@@ -48,7 +52,7 @@ class LocalLLM:
                     url,
                     json=payload,
                     headers=headers,
-                    timeout=15.0
+                    timeout=self.timeout
                 )
                 response.raise_for_status()
                 data = response.json()

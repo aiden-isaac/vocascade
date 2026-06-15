@@ -158,8 +158,8 @@ description: "Task list for 006-custom-voice-pipeline-waterfall"
 
 **Independent Test**: force tool-call failure / Hermes unreachable / server down → defined spoken-or-surfaced fallback.
 
-- [ ] T239 [US7] Per-stage fallback: tool-call failure degrades or speaks a graceful error; Hermes-unreachable notice with local loop continuing; server-unreachable status on the edge — `vocascade/waterfall/router.py`, `vocascade/pipeline/pipeline.py`.
-- [ ] T240 [P] [US7] Tests: each failure mode degrades, none silent — `tests/unit/test_degradation.py`.
+- [x] T239 [US7] Per-stage fallback: tool-call failure degrades or speaks a graceful error; Hermes-unreachable notice with local loop continuing; server-unreachable status on the edge — `vocascade/pipeline/router.py`, `vocascade/gateway/local_llm.py`, `config.yaml`.
+- [x] T240 [P] [US7] Tests: each failure mode degrades, none silent — `tests/unit/test_degradation.py`.
 
 **Checkpoint**: resilient on unreliable networks (Constitution VI).
 

@@ -138,6 +138,7 @@ class WaterfallRouter:
                 base_url=config.llm_base_url,
                 api_key=config.llm_api_key,
                 model=getattr(config, "classifier_model", None) or config.llm_model,
+                timeout=getattr(config, "classifier_timeout_seconds", 6.0),
             )
         classifier = IntentClassifier(
             max_examples_per_skill=getattr(config, "classifier_max_examples", 5),

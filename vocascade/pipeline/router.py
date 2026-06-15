@@ -103,7 +103,15 @@ class RouterStage(PipelineStage):
                         if chunk:
                             await super().push(TextFrame(text=chunk))
         except Exception as e:
+            # FR-100: a handler/tool failure degrades to a spoken error — never a
+            # silent drop.
             logger.error(f"Error speaking result: {e}", exc_info=True)
+            try:
+                msg = "Sorry, I ran into a problem with that."
+                await super().push(ControlMessageFrame({"type": "assistant_response", "text": msg}))
+                await super().push(TextFrame(text=msg))
+            except Exception:
+                logger.error("Failed to speak the degradation notice", exc_info=True)
 
     async def push(self, frame: Frame):
         if isinstance(frame, TranscriptionFrame):

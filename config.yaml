@@ -20,6 +20,7 @@ waterfall:
   classifier_model: ""        # blank = reuse LLM_MODEL from .env
   max_examples_per_skill: 5   # examples per skill fed into the auto-generated prompt
   medium_band: [0.5, 0.8]     # classifier confidence is clamped into this band
+  classifier_timeout_seconds: 6.0  # a hung local LLM degrades fast, not stalls routing
 
 skills:
   datetime:
@@ -29,7 +30,7 @@ skills:
     enabled: true
     filler: "acknowledge"
   smalltalk:
-    enabled: false
+    enabled: true
     filler: "thinking"
   hermes:
     enabled: true

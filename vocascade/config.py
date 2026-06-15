@@ -86,6 +86,7 @@ class AdapterConfig:
     classifier_max_examples: int = 5         # examples per skill in the prompt
     medium_band_low: float = 0.5             # classifier confidence clamp floor
     medium_band_high: float = 0.8            # classifier confidence clamp ceiling
+    classifier_timeout_seconds: float = 6.0  # short — a hung LLM must not stall routing (US7)
 
     # Latency masking fillers (US4; from config.yaml `latency`).
     filler_mode: str = "hybrid"              # pool | llm | hybrid
@@ -147,6 +148,7 @@ def load_config() -> AdapterConfig:
     # Medium-stage classifier config (OQ-5) — all optional with defaults.
     classifier_model = waterfall.get("classifier_model") or None
     classifier_max_examples = int(waterfall.get("max_examples_per_skill", 5))
+    classifier_timeout_seconds = float(waterfall.get("classifier_timeout_seconds", 6.0))
     band = waterfall.get("medium_band", [0.5, 0.8])
     try:
         medium_band_low, medium_band_high = float(band[0]), float(band[1])
@@ -243,6 +245,7 @@ def load_config() -> AdapterConfig:
         classifier_max_examples=classifier_max_examples,
         medium_band_low=medium_band_low,
         medium_band_high=medium_band_high,
+        classifier_timeout_seconds=classifier_timeout_seconds,
 
         filler_mode=filler_mode,
         filler_interval_seconds=filler_interval_seconds,
