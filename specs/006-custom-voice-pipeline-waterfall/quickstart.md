@@ -66,10 +66,16 @@ The fastest way to confirm skills route correctly — no mic, STT, or TTS:
 
 ```bash
 PYTHONPATH=. .venv/bin/python -m vocascade.eval.route_harness "what time is it"
-# → winning_stage=high  skill=datetime  confidence=0.92  trace=[stop:0, converse:0, high:0.92]
+# winning_stage=high  skill=datetime  confidence=1.0
+# trace: stop:0.00  converse:0.00  high:1.00 (WON)
 
 PYTHONPATH=. .venv/bin/python -m pytest tests/test_routing_eval.py -q   # fixtures in CI
 ```
+
+Agent-class utterances ("what are my tasks today") route to `hermes`, not the
+smalltalk floor — the smalltalk gate (FR-033) abstains for them. Those fixtures
+are marked `requires_llm` and run against the live local LLM; the deterministic
+STOP/HIGH/smalltalk fixtures run headless in CI.
 
 Add a fixture line to `vocascade/eval/fixtures.jsonl` for each new skill and run
 the harness in CI; target ≥95% expected-stage accuracy (SC-004).

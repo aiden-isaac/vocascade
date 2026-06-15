@@ -87,7 +87,9 @@ class TestPipelineRoundtrip(unittest.IsolatedAsyncioTestCase):
             waterfall_stages=["smalltalk", "hermes"],
             waterfall_thresholds={"low": 0.35},
             skills_config={
-                "smalltalk": {"enabled": True, "filler": "thinking"},
+                # gate off: this exercises the smalltalk roundtrip, not the
+                # routing gate (which would add a second LLM call).
+                "smalltalk": {"enabled": True, "filler": "thinking", "gate": False},
                 "hermes": {"enabled": True}
             },
             host="127.0.0.1",

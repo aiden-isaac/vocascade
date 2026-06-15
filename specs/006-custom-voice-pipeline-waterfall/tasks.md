@@ -187,8 +187,9 @@ description: "Task list for 006-custom-voice-pipeline-waterfall"
 
 > Recommended sequencing: this can run right after Phase 4 (it needs only the waterfall, not audio) so US2 is verifiable text-only earlier.
 
-- [ ] T244 [US9] Text-in → routing-decision-out harness over the full waterfall (no audio/STT/TTS) — `vocascade/eval/route_harness.py`.
-- [ ] T245 [P] [US9] Labeled fixtures + CI runner (≥50 utterances, ≥95% expected-stage) — `vocascade/eval/fixtures.jsonl`, `tests/test_routing_eval.py`.
+- [x] T244 [US9] Text-in → routing-decision-out harness over the full waterfall (no audio/STT/TTS) — `vocascade/eval/route_harness.py`.
+- [x] T245 [P] [US9] Labeled fixtures + CI runner (≥50 utterances, ≥95% expected-stage) — `vocascade/eval/fixtures.jsonl`, `tests/test_routing_eval.py`.
+- [x] T245a [US9] Smalltalk routing gate (FR-033): smalltalk abstains for agent-class utterances so they reach Hermes instead of being answered from general knowledge — `vocascade/waterfall/router.py`, `config.yaml`. (Folded in here; the harness fixtures verify it.)
 
 **Checkpoint**: routing correctness measurable headlessly (SC-004/SC-009).
 

@@ -37,6 +37,10 @@ skills:
   smalltalk:
     enabled: true
     filler: "thinking"
+    # Content-aware gate (FR-033): when true, smalltalk abstains for utterances
+    # that need the agent (personal data, real-time info, actions) so they fall
+    # through to Hermes instead of being answered from general knowledge.
+    gate: true
   hermes:
     enabled: true
     filler: "working"      # query-appropriate opening before a run (set "none" to disable)

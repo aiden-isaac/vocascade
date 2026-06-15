@@ -1,0 +1,68 @@
+{"utterance": "stop", "expected_stage": "stop", "expected_skill": "stop", "requires_llm": false}
+{"utterance": "stop it", "expected_stage": "stop", "expected_skill": "stop", "requires_llm": false}
+{"utterance": "stop please", "expected_stage": "stop", "expected_skill": "stop", "requires_llm": false}
+{"utterance": "please stop", "expected_stage": "stop", "expected_skill": "stop", "requires_llm": false}
+{"utterance": "cancel", "expected_stage": "stop", "expected_skill": "stop", "requires_llm": false}
+{"utterance": "cancel that", "expected_stage": "stop", "expected_skill": "stop", "requires_llm": false}
+{"utterance": "never mind", "expected_stage": "stop", "expected_skill": "stop", "requires_llm": false}
+{"utterance": "nevermind", "expected_stage": "stop", "expected_skill": "stop", "requires_llm": false}
+{"utterance": "be quiet", "expected_stage": "stop", "expected_skill": "stop", "requires_llm": false}
+{"utterance": "shut up", "expected_stage": "stop", "expected_skill": "stop", "requires_llm": false}
+{"utterance": "enough", "expected_stage": "stop", "expected_skill": "stop", "requires_llm": false}
+{"utterance": "that's enough", "expected_stage": "stop", "expected_skill": "stop", "requires_llm": false}
+{"utterance": "abort", "expected_stage": "stop", "expected_skill": "stop", "requires_llm": false}
+{"utterance": "wait stop", "expected_stage": "stop", "expected_skill": "stop", "requires_llm": false}
+{"utterance": "goodbye", "expected_stage": "stop", "expected_skill": "stop", "requires_llm": false}
+{"utterance": "good bye", "expected_stage": "stop", "expected_skill": "stop", "requires_llm": false}
+{"utterance": "good night", "expected_stage": "stop", "expected_skill": "stop", "requires_llm": false}
+{"utterance": "that will be all", "expected_stage": "stop", "expected_skill": "stop", "requires_llm": false}
+{"utterance": "that'll be all", "expected_stage": "stop", "expected_skill": "stop", "requires_llm": false}
+{"utterance": "that is all", "expected_stage": "stop", "expected_skill": "stop", "requires_llm": false}
+{"utterance": "that's all for now thanks", "expected_stage": "stop", "expected_skill": "stop", "requires_llm": false}
+{"utterance": "nothing else", "expected_stage": "stop", "expected_skill": "stop", "requires_llm": false}
+{"utterance": "we're done", "expected_stage": "stop", "expected_skill": "stop", "requires_llm": false}
+{"utterance": "i'm done", "expected_stage": "stop", "expected_skill": "stop", "requires_llm": false}
+{"utterance": "see you later", "expected_stage": "stop", "expected_skill": "stop", "requires_llm": false}
+{"utterance": "talk to you later", "expected_stage": "stop", "expected_skill": "stop", "requires_llm": false}
+{"utterance": "what time is it", "expected_stage": "high", "expected_skill": "datetime", "requires_llm": false}
+{"utterance": "what's the time", "expected_stage": "high", "expected_skill": "datetime", "requires_llm": false}
+{"utterance": "tell me the time", "expected_stage": "high", "expected_skill": "datetime", "requires_llm": false}
+{"utterance": "do you have the time", "expected_stage": "high", "expected_skill": "datetime", "requires_llm": false}
+{"utterance": "what is the date", "expected_stage": "high", "expected_skill": "datetime", "requires_llm": false}
+{"utterance": "what's today's date", "expected_stage": "high", "expected_skill": "datetime", "requires_llm": false}
+{"utterance": "what day is it", "expected_stage": "high", "expected_skill": "datetime", "requires_llm": false}
+{"utterance": "what's the date today", "expected_stage": "high", "expected_skill": "datetime", "requires_llm": false}
+{"utterance": "check the clock", "expected_stage": "high", "expected_skill": "datetime", "requires_llm": false}
+{"utterance": "current time please", "expected_stage": "high", "expected_skill": "datetime", "requires_llm": false}
+{"utterance": "set a timer for 5 minutes", "expected_stage": "high", "expected_skill": "timers", "requires_llm": false}
+{"utterance": "set a timer", "expected_stage": "high", "expected_skill": "timers", "requires_llm": false}
+{"utterance": "start a timer", "expected_stage": "high", "expected_skill": "timers", "requires_llm": false}
+{"utterance": "set timer for 10 minutes", "expected_stage": "high", "expected_skill": "timers", "requires_llm": false}
+{"utterance": "timer for 3 minutes", "expected_stage": "high", "expected_skill": "timers", "requires_llm": false}
+{"utterance": "can you set a timer", "expected_stage": "high", "expected_skill": "timers", "requires_llm": false}
+{"utterance": "i need a timer", "expected_stage": "high", "expected_skill": "timers", "requires_llm": false}
+{"utterance": "start a timer for an hour", "expected_stage": "high", "expected_skill": "timers", "requires_llm": false}
+{"utterance": "how are you", "expected_stage": "smalltalk", "expected_skill": "smalltalk", "requires_llm": false}
+{"utterance": "how are you doing", "expected_stage": "smalltalk", "expected_skill": "smalltalk", "requires_llm": false}
+{"utterance": "tell me a joke", "expected_stage": "smalltalk", "expected_skill": "smalltalk", "requires_llm": false}
+{"utterance": "what's your name", "expected_stage": "smalltalk", "expected_skill": "smalltalk", "requires_llm": false}
+{"utterance": "who are you", "expected_stage": "smalltalk", "expected_skill": "smalltalk", "requires_llm": false}
+{"utterance": "what can you do", "expected_stage": "smalltalk", "expected_skill": "smalltalk", "requires_llm": false}
+{"utterance": "say something funny", "expected_stage": "smalltalk", "expected_skill": "smalltalk", "requires_llm": false}
+{"utterance": "tell me something interesting", "expected_stage": "smalltalk", "expected_skill": "smalltalk", "requires_llm": false}
+{"utterance": "do you like music", "expected_stage": "smalltalk", "expected_skill": "smalltalk", "requires_llm": false}
+{"utterance": "i'm bored", "expected_stage": "smalltalk", "expected_skill": "smalltalk", "requires_llm": false}
+{"utterance": "what's up", "expected_stage": "smalltalk", "expected_skill": "smalltalk", "requires_llm": false}
+{"utterance": "are you there", "expected_stage": "smalltalk", "expected_skill": "smalltalk", "requires_llm": false}
+{"utterance": "what are my tasks today", "expected_stage": "hermes", "expected_skill": "hermes", "requires_llm": true}
+{"utterance": "check my todoist tasks", "expected_stage": "hermes", "expected_skill": "hermes", "requires_llm": true}
+{"utterance": "what's on my calendar", "expected_stage": "hermes", "expected_skill": "hermes", "requires_llm": true}
+{"utterance": "do i have any meetings today", "expected_stage": "hermes", "expected_skill": "hermes", "requires_llm": true}
+{"utterance": "send an email to bob", "expected_stage": "hermes", "expected_skill": "hermes", "requires_llm": true}
+{"utterance": "what's the weather like", "expected_stage": "hermes", "expected_skill": "hermes", "requires_llm": true}
+{"utterance": "check the hermes server", "expected_stage": "hermes", "expected_skill": "hermes", "requires_llm": true}
+{"utterance": "what's in my inbox", "expected_stage": "hermes", "expected_skill": "hermes", "requires_llm": true}
+{"utterance": "add milk to my shopping list", "expected_stage": "hermes", "expected_skill": "hermes", "requires_llm": true}
+{"utterance": "what's the latest news", "expected_stage": "hermes", "expected_skill": "hermes", "requires_llm": true}
+{"utterance": "what's the stock price of apple", "expected_stage": "hermes", "expected_skill": "hermes", "requires_llm": true}
+{"utterance": "read my latest messages", "expected_stage": "hermes", "expected_skill": "hermes", "requires_llm": true}

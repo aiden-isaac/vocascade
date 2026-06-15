@@ -19,13 +19,61 @@ logger = logging.getLogger("vocascade.waterfall.router")
 # STOP/CONVERSE/HIGH/MEDIUM/HERMES all live in stages/ now (US2/US3/US5).
 # SmalltalkStage stays here — it is the local-LLM floor (US1).
 
+# Smalltalk routing gate (FR-033): a one-word local-LLM decision that keeps the
+# smalltalk floor from swallowing utterances that actually need the agent. Kept
+# deliberately tight so it never *answers* — it only routes.
+_GATE_SYSTEM_PROMPT = """You route a user's message in a voice assistant.
+Reply with ONE word, exactly SMALLTALK or AGENT.
+
+SMALLTALK = greetings, chit-chat, opinions, persona/identity questions, or
+general-knowledge questions you can answer directly from your own knowledge.
+AGENT = anything needing the user's personal data (tasks, calendar, email, notes,
+messages, files), real-time or external information (weather, news, prices, the
+web, a server's status), device/home control, or taking an action (send,
+schedule, remind, add, buy, check something).
+
+Reply with ONLY the single word SMALLTALK or AGENT."""
+
+
 class SmalltalkStage(WaterfallStage):
-    """SMALLTALK floor fallback stage. Returns fixed 0.35 floor if smalltalk skill registered."""
+    """
+    SMALLTALK floor fallback stage (FR-030). Reports a fixed low confidence so it
+    wins only when nothing above it scored higher — *and*, when a local LLM is
+    available, a content-aware gate (FR-033) makes it abstain for utterances that
+    need the agent, so those fall through to the Hermes stage below it instead of
+    being answered (badly) from general knowledge.
+    """
+
+    def __init__(self, name: str = "smalltalk", threshold: float = 0.35,
+                 enabled: bool = True, llm=None, gate: bool = True):
+        super().__init__(name=name, threshold=threshold, enabled=enabled)
+        # Dedicated short-timeout gate LLM (shared with the medium classifier);
+        # falls back to the per-invocation ctx.local_llm when not injected.
+        self.llm = llm
+        self.gate = gate
+
     async def evaluate(self, utterance: str, ctx: SkillContext) -> ConfidenceResult:
         skill_obj = registry.get_skill("smalltalk")
         if not self.enabled or not skill_obj:
             return ConfidenceResult(stage=self.name, confidence=0.0)
-            
+
+        conf = self._floor(skill_obj, utterance)
+
+        # Content-aware gate: claim only genuine conversation; let data / tool /
+        # real-time / action requests drop through to the Hermes fallback.
+        llm = self.llm or getattr(ctx, "local_llm", None)
+        if self.gate and llm is not None and conf > 0.0:
+            try:
+                if await self._needs_agent(utterance, llm):
+                    logger.info("Smalltalk gate: '%s' needs the agent — abstaining to Hermes.", utterance)
+                    return ConfidenceResult(stage=self.name, confidence=0.0)
+            except Exception as e:
+                # A gate failure must never starve smalltalk — answer locally.
+                logger.warning("Smalltalk gate failed (%s); answering locally.", e)
+
+        return ConfidenceResult(stage=self.name, confidence=conf, skill_name="smalltalk")
+
+    def _floor(self, skill_obj, utterance: str) -> float:
         conf = 0.35
         if skill_obj.confidence:
             try:
@@ -36,12 +84,15 @@ class SmalltalkStage(WaterfallStage):
                     conf = float(skill_obj.confidence)
             except Exception as e:
                 logger.error(f"Error evaluating smalltalk custom confidence scorer: {e}")
-                
-        return ConfidenceResult(
-            stage=self.name,
-            confidence=conf,
-            skill_name="smalltalk"
-        )
+        return conf
+
+    async def _needs_agent(self, utterance: str, llm) -> bool:
+        messages = [
+            {"role": "system", "content": _GATE_SYSTEM_PROMPT},
+            {"role": "user", "content": utterance},
+        ]
+        raw = await llm.chat(messages, temperature=0.0, max_tokens=3)
+        return "AGENT" in (raw or "").upper()
 
 # HermesStage (the always-async last stage) lives in stages/hermes.py (US3).
 
@@ -101,25 +152,39 @@ class WaterfallRouter:
         self.stages = stages
         self.thresholds = thresholds
 
-    async def resolve(self, utterance: str, ctx: SkillContext) -> ConfidenceResult:
+    async def resolve(self, utterance: str, ctx: SkillContext, trace: list = None) -> ConfidenceResult:
+        """Resolve the winning stage. If ``trace`` is provided, append a per-stage
+        record to it (used by the eval harness, US9 — the live path passes none)."""
         logger.info(f"WaterfallRouter resolving: '{utterance}'")
         for stage in self.stages:
             if not stage.enabled:
                 logger.debug(f"Stage '{stage.name}' is disabled. Skipping.")
+                if trace is not None:
+                    trace.append({"stage": stage.name, "confidence": None,
+                                  "threshold": stage.threshold, "won": False, "skipped": True})
                 continue
 
             try:
                 result = await stage.evaluate(utterance, ctx)
                 threshold = stage.threshold
+                won = result.confidence >= threshold
                 logger.debug(f"Stage '{stage.name}' evaluated with confidence {result.confidence} (threshold {threshold})")
+                if trace is not None:
+                    trace.append({"stage": stage.name, "confidence": result.confidence,
+                                  "threshold": threshold, "won": won, "skill": result.skill_name})
 
-                if result.confidence >= threshold:
+                if won:
                     logger.info(f"WaterfallRouter: stage '{stage.name}' won (confidence: {result.confidence}, skill: {result.skill_name})")
                     return result
             except Exception as e:
                 logger.error(f"Error evaluating stage '{stage.name}': {e}", exc_info=True)
+                if trace is not None:
+                    trace.append({"stage": stage.name, "error": str(e), "won": False})
 
         logger.warning("WaterfallRouter: no stage met its threshold. Falling back to hermes.")
+        if trace is not None:
+            trace.append({"stage": "hermes", "confidence": 1.0, "threshold": 0.0,
+                          "won": True, "skill": "hermes", "fallback": True})
         return ConfidenceResult(stage="hermes", confidence=1.0, skill_name="hermes")
 
     @classmethod
@@ -160,6 +225,14 @@ class WaterfallRouter:
                 stage = MediumStage(
                     name=name, threshold=threshold, enabled=enabled,
                     classifier=classifier, llm=classifier_llm, band=band,
+                )
+            elif name == "smalltalk":
+                # The gate reuses the short-timeout classifier LLM (FR-033); a
+                # per-skill `gate: false` reverts to the plain floor.
+                gate = config.skills_config.get("smalltalk", {}).get("gate", True)
+                stage = SmalltalkStage(
+                    name=name, threshold=threshold, enabled=enabled,
+                    llm=classifier_llm, gate=gate,
                 )
             else:
                 stage_cls = _STUB_STAGE_CLASSES.get(name)

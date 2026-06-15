@@ -32,6 +32,7 @@ skills:
   smalltalk:
     enabled: true
     filler: "thinking"
+    gate: true             # abstain for agent-class utterances → they fall to Hermes (FR-033)
   hermes:
     enabled: true
     filler: "working"      # query-appropriate opening before a run (set "none" to disable)
