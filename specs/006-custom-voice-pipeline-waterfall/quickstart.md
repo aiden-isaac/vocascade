@@ -27,19 +27,22 @@ Two files, clear split (research OQ-4):
   edge/server roles, transport auth mode. Copy `config.yaml.example` and edit.
 
 ```yaml
+system:
+  role: both                            # both | edge | server  (FR-110)
+  transport_auth_mode: trust-network    # or device-identity (Ed25519) — must be explicit
+  server_vad_enabled: false
 waterfall:
-  order: [stop, converse, high, medium, smalltalk, hermes]
-  medium_threshold: 0.5
-  smalltalk_confidence: 0.35
+  stages: [stop, converse, high, medium, smalltalk, hermes]
+  thresholds: { high: 0.95, medium: 0.65, low: 0.35 }
 skills:
   timers:   { enabled: true }
   datetime: { enabled: true }
-transport:
-  auth: device_identity        # or: trusted_network  (Tailscale boundary) — must be explicit
-roles:
-  edge:   [wakeword, vad, audio_io, pipeline_client]
-  server: [stt, waterfall, local_llm, tts, hermes]
 ```
+
+`transport_auth_mode` is **mandatory and validated** (OQ-3): on an unknown value
+the server refuses to start rather than defaulting to an open endpoint (FR-111).
+For `device-identity`, the key paths live in `.env`
+(`EDGE_IDENTITY_KEY_PATH`, optional `AUTHORIZED_KEYS_PATH` allowlist).
 
 The app fails fast with a located message if a required value is missing or the
 YAML is malformed.
@@ -88,17 +91,49 @@ async def handle(intent, entities, ctx: SkillContext) -> str:
 Restart; the medium-stage classifier prompt regenerates automatically to include
 the new examples. Verify with the harness before touching audio.
 
-## 6. Latency budget (per hop, split topology)
+## 6. Split topology: roles, latency budget, network failure (US8)
+
+**Role boundary (FR-110).** Hosts come from `.env` (`WS_URL`) — no hardcoded
+addresses. Each role's responsibilities:
+
+| Role | Runs |
+|------|------|
+| **edge** (`python -m vocascade.edge`) | wake word, VAD, audio I/O, pipeline client |
+| **server** (`python -m vocascade`) | STT, waterfall, local LLM, TTS, Hermes |
+
+**Transport auth (OQ-3 / FR-111).** Choose deliberately:
+- `trust-network` — the network boundary (e.g. Tailscale) is the perimeter; the
+  edge connects straight through. Right for co-located or VPN-only deployments.
+- `device-identity` — the server presents a nonce, the edge signs it with its
+  Ed25519 key, the server verifies it and (if `AUTHORIZED_KEYS_PATH` is set)
+  checks the public key against the allowlist. With no allowlist the identity is
+  proven but unpinned (TOFU) and the fingerprint is logged. The edge generates
+  its key on first run. *(The browser dev UI only works under `trust-network`.)*
+
+**Per-hop latency budget:**
 
 | Hop | Budget |
 |-----|--------|
 | Wake word + VAD (edge) | imperceptible; segments on-device |
+| Device-identity handshake (once per connect) | one extra RTT, before any audio |
 | Edge → server audio (WS) | LAN/Tailscale RTT |
 | STT (server) | streaming |
 | Waterfall: high stage | < 5 ms |
-| Waterfall: medium classifier | ~100–200 ms |
+| Waterfall: medium classifier | ~100–200 ms (6 s hard cap, then degrades) |
 | Hermes first `message.delta` → TTS | ~300–500 ms |
 | STOP → cancellation | < 200 ms |
+
+**Network-failure handling (FR-102).** No hop hangs:
+
+| Failure | Edge behavior |
+|---------|---------------|
+| Server unreachable at connect | clear status logged, stays in LISTENING (wake word still works) |
+| Auth rejected (`device-identity`) | clear status, closes, returns to LISTENING — never streams audio unauthenticated |
+| Mid-utterance partition (WS drops) | surfaces "connection lost", returns to LISTENING; the user re-triggers with the wake word |
+| Silence (15 s no audio) | disconnects and returns to LISTENING to free the single server session |
+
+In-flight Hermes work on the server is **retained** across an edge
+disconnect (FR-061) and spoken proactively when the edge reconnects.
 
 ## 7. STOP & barge-in
 

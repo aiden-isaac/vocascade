@@ -1,5 +1,10 @@
 system:
   role: "both"                  # both | edge | server
+  # Edge↔server transport auth (OQ-3). MUST be explicit — the server refuses to
+  # start on an unknown value rather than defaulting to an open endpoint.
+  #   trust-network   — the network boundary (e.g. Tailscale) is the perimeter.
+  #   device-identity — Ed25519 challenge-response; key paths in .env
+  #                     (EDGE_IDENTITY_KEY_PATH / AUTHORIZED_KEYS_PATH).
   transport_auth_mode: "trust-network"  # trust-network | device-identity
   server_vad_enabled: false
 

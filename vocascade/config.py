@@ -94,6 +94,12 @@ class AdapterConfig:
     filler_backoff: bool = True              # widen the gap after each follow-up
     filler_max: int = 3                      # max follow-up lines (0 off, -1 unlimited)
 
+    # Device-identity transport auth (OQ-3/US8; paths from env per OQ-4).
+    # Edge signs the server nonce with identity_key_path; server checks the
+    # presented public key against authorized_keys_path (None = no allowlist).
+    identity_key_path: str = "~/.vocascade/identity.pem"
+    authorized_keys_path: str | None = None
+
 
 def _parse_bool(val: str | None) -> bool:
     if not val:
@@ -251,4 +257,10 @@ def load_config() -> AdapterConfig:
         filler_interval_seconds=filler_interval_seconds,
         filler_backoff=filler_backoff,
         filler_max=filler_max,
+
+        identity_key_path=os.path.expanduser(
+            os.getenv("EDGE_IDENTITY_KEY_PATH", "~/.vocascade/identity.pem")),
+        authorized_keys_path=(
+            os.path.expanduser(os.getenv("AUTHORIZED_KEYS_PATH"))
+            if os.getenv("AUTHORIZED_KEYS_PATH") else None),
     )

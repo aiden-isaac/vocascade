@@ -39,6 +39,7 @@ from vocascade.skills.registry import registry
 from vocascade.session.state import SessionState, SessionStateEnum
 from vocascade.session.state_machine import SessionMachine
 from vocascade.transport.serializer import RawFrameSerializer
+from vocascade.transport.server import transport_auth_from_config
 from vocascade.hermes_run_client import HermesRunClient
 from vocascade.delivery import DeliveryCoordinator
 from vocascade.task_broker import TaskBroker
@@ -137,6 +138,10 @@ class TransportOutputStage(PipelineStage):
 async def lifespan(app_: FastAPI):
     config = load_config()
     app_.state.config = config
+
+    # Transport auth gate (US8 / OQ-3). Built here so an invalid/missing auth
+    # mode fails fast at startup — the endpoint can never default to open (FR-111).
+    app_.state.transport_auth = transport_auth_from_config(config)
 
     logger.info("Loading Whisper STT model '%s' (%s)...", config.whisper_model, config.whisper_language)
     app_.state.stt = WhisperSTT(model_name=config.whisper_model, language=config.whisper_language)
@@ -302,7 +307,16 @@ async def websocket_endpoint(websocket: WebSocket):
 
     async with _session_lock:
         await websocket.accept()
-        logger.info("WebSocket session opened")
+
+        # Transport auth gate (US8 / OQ-3): trust-network passes through; in
+        # device-identity mode the client must complete the Ed25519 handshake
+        # before any audio flows. A reject closes with 1008 (policy violation).
+        auth_result = await app.state.transport_auth.authenticate(websocket)
+        if not auth_result.ok:
+            logger.warning("Rejecting connection: transport auth failed (%s)", auth_result.reason)
+            await websocket.close(code=1008)
+            return
+        logger.info("WebSocket session opened (%s)", auth_result.reason)
 
         config = app.state.config
         delivery: DeliveryCoordinator = app.state.delivery

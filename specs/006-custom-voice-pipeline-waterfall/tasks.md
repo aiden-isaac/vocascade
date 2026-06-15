@@ -171,9 +171,9 @@ description: "Task list for 006-custom-voice-pipeline-waterfall"
 
 **Independent Test**: configure roles via config (no hardcoded hosts); edge runs wakeword+VAD+IO+client, server runs STT+waterfall+LLM+TTS+Hermes; partition handled per policy.
 
-- [ ] T241 [US8] Reshape the edge client (wake word KEEP, VAD, audio I/O, pipeline client over WS) — `vocascade/edge/__main__.py` (from `satellite.py`).
-- [ ] T242 [US8] Server transport endpoint replacing the retired FastAPI server; enforce the explicit transport-auth decision (device identity vs trusted-network, OQ-3) — `vocascade/transport/server.py`.
-- [ ] T243 [P] [US8] Document per-hop latency budget + network-failure handling — `specs/006-custom-voice-pipeline-waterfall/quickstart.md`.
+- [x] T241 [US8] Reshape the edge client (wake word KEEP, VAD, audio I/O, pipeline client over WS) — `vocascade/edge/__main__.py` (from `satellite.py`).
+- [x] T242 [US8] Server transport endpoint replacing the retired FastAPI server; enforce the explicit transport-auth decision (device identity vs trusted-network, OQ-3) — `vocascade/transport/server.py`.
+- [x] T243 [P] [US8] Document per-hop latency budget + network-failure handling — `specs/006-custom-voice-pipeline-waterfall/quickstart.md`.
 
 **Checkpoint**: deployable split topology, no accidental open endpoint.
 

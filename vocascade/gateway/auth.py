@@ -1,11 +1,22 @@
 """
 Ed25519 device identity and gateway challenge-response authentication.
+
+The edge holds a private key (``load_or_generate_keypair``) and signs the
+server's nonce (``sign_challenge``). The server presents that nonce, then
+verifies the returned signature against the presented public key
+(``verify_signature``) and — when an allowlist is configured — checks the key's
+fingerprint against the trust store (``load_authorized_keys``). This is the
+device-identity half of OQ-3; the trust-network mode skips it entirely.
 """
 
 import base64
+import logging
 from pathlib import Path
+from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey, Ed25519PublicKey
 from cryptography.hazmat.primitives import serialization
+
+logger = logging.getLogger("vocascade.gateway.auth")
 
 def load_or_generate_keypair(path: str | Path) -> tuple[Ed25519PrivateKey, Ed25519PublicKey]:
     """
@@ -45,3 +56,61 @@ def sign_challenge(private_key: Ed25519PrivateKey, nonce: str) -> str:
     """
     signature_bytes = private_key.sign(nonce.encode("utf-8"))
     return base64.b64encode(signature_bytes).decode("utf-8")
+
+
+def public_key_to_b64(public_key: Ed25519PublicKey) -> str:
+    """Encode a public key as base64 of its 32-byte raw form (the wire/trust-store form)."""
+    raw = public_key.public_bytes(
+        encoding=serialization.Encoding.Raw,
+        format=serialization.PublicFormat.Raw,
+    )
+    return base64.b64encode(raw).decode("utf-8")
+
+
+def public_key_from_b64(b64: str) -> Ed25519PublicKey:
+    """Decode a base64 raw Ed25519 public key. Raises ValueError on malformed input."""
+    try:
+        raw = base64.b64decode(b64, validate=True)
+        return Ed25519PublicKey.from_public_bytes(raw)
+    except Exception as e:  # binascii.Error, ValueError from bad length, etc.
+        raise ValueError(f"Malformed Ed25519 public key: {e}") from e
+
+
+def verify_signature(public_key_b64: str, nonce: str, signature_b64: str) -> bool:
+    """
+    Server side of the challenge-response: verify that ``signature_b64`` is a valid
+    Ed25519 signature of ``nonce`` by the holder of ``public_key_b64``. Returns
+    True only on a cryptographically valid signature; any malformed input or
+    mismatch returns False (never raises).
+    """
+    try:
+        public_key = public_key_from_b64(public_key_b64)
+        signature = base64.b64decode(signature_b64, validate=True)
+        public_key.verify(signature, nonce.encode("utf-8"))
+        return True
+    except (InvalidSignature, ValueError):
+        return False
+    except Exception as e:  # defensive: never let a verify failure crash the gate
+        logger.warning("Unexpected error verifying device signature: %s", e)
+        return False
+
+
+def load_authorized_keys(path: str | Path | None) -> set[str]:
+    """
+    Load the trust store: a set of base64 raw Ed25519 public keys, one per line,
+    with ``#`` comments and blank lines ignored. A missing path or file yields an
+    empty set (no allowlist configured — callers decide the policy for that case).
+    """
+    if not path:
+        return set()
+    key_path = Path(path)
+    if not key_path.exists():
+        return set()
+    keys: set[str] = set()
+    for raw_line in key_path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        # Tolerate "<b64key>  optional comment/label" lines.
+        keys.add(line.split()[0])
+    return keys
