@@ -31,21 +31,46 @@ class HermesStage(WaterfallStage):
         return ConfidenceResult(stage=self.name, confidence=1.0, skill_name="hermes")
 
 
-def _drain_sentences(buffer: str):
-    """Split a growing buffer into (complete_sentences, trailing_remainder).
+# A speakable segment ends at a sentence terminator OR a list-item/line break.
+# Agent replies are often markdown (headers, bullet lists, times) with few
+# sentence enders, so newlines are first-class boundaries — otherwise the whole
+# reply buffers and hits TTS as one giant block (28s+ to first audio).
+_SEGMENT_BOUNDARY = re.compile(r"(?<=[.!?:])\s+|\n+")
+# Coalesce tiny fragments up to ~a sentence so we don't fire a TTS call per word,
+# but flush a long run so no single TTS call swells back into the old problem.
+_MIN_SEGMENT_CHARS = 40
+_MAX_SEGMENT_CHARS = 220
 
-    Complete sentences (terminated by . ! ?) are returned for immediate TTS; the
-    unterminated tail stays buffered until more deltas arrive.
+
+def _drain_segments(buffer: str):
+    """Split a growing buffer into (complete_segments, trailing_remainder).
+
+    A segment is terminated by a sentence ender (. ! ? :) followed by whitespace,
+    or by a line break. The unterminated tail stays buffered until more deltas
+    arrive (or the stream ends).
     """
-    parts = re.split(r"(?<=[.!?])\s+", buffer)
+    parts = _SEGMENT_BOUNDARY.split(buffer)
     if len(parts) <= 1:
         return [], buffer
-    return [p for p in parts[:-1] if p.strip()], parts[-1]
+    return parts[:-1], parts[-1]
+
+
+def _clean_for_speech(segment: str) -> str:
+    """Strip markdown, list markers, emoji, and odd symbols so TTS speaks the
+    content naturally (and faster) instead of reading '**', '-', or '✅' aloud."""
+    s = re.sub(r"[*_`#>\[\]]+", "", segment)          # markdown emphasis/headers
+    s = s.replace("—", ", ").replace("–", ", ")        # em/en dash → spoken pause
+    s = re.sub(r"[^\x00-\x7f]+", "", s)                # drop emoji / non-ASCII
+    s = re.sub(r"^[\s\-•*.,]+", "", s)                 # leading bullet/marker noise
+    s = re.sub(r"\s+", " ", s).strip()
+    s = re.sub(r"\s+([,.;:!?])", r"\1", s)             # no space before punctuation
+    return s
 
 
 async def stream_hermes_reply(prompt: str, broker, *, session_id: str = "") -> AsyncIterator[str]:
-    """Dispatch a Hermes run and yield its reply sentence-by-sentence as the
-    run's `message.delta` fragments arrive (T224).
+    """Dispatch a Hermes run and yield its reply segment-by-segment as the run's
+    `message.delta` fragments arrive (T224), so TTS can start speaking the first
+    line while the rest is still streaming/synthesizing.
 
     On dispatch failure the broker has already queued a proactive failure notice,
     so we yield nothing and let that fire. If this generator is cancelled (the
@@ -59,19 +84,38 @@ async def stream_hermes_reply(prompt: str, broker, *, session_id: str = "") -> A
 
     sink = broker.attach_live_sink(task.task_id)
     buffer = ""
+    pending = ""
     try:
         while True:
             item = await sink.get()
             if item is broker.LIVE_DONE:
                 break
             buffer += item
-            complete, buffer = _drain_sentences(buffer)
-            for sentence in complete:
-                yield sentence
-        tail = buffer.strip()
-        if tail:
-            if tail[-1] not in ".!?":
-                tail += "."
-            yield tail
+            complete, buffer = _drain_segments(buffer)
+            for seg in complete:
+                cleaned = _clean_for_speech(seg)
+                if not cleaned:
+                    continue
+                pending = f"{pending} {cleaned}".strip() if pending else cleaned
+                # Force-flush an over-long run at a word boundary.
+                while len(pending) >= _MAX_SEGMENT_CHARS:
+                    cut = pending.rfind(" ", 0, _MAX_SEGMENT_CHARS)
+                    cut = cut if cut > 0 else _MAX_SEGMENT_CHARS
+                    head, pending = pending[:cut].strip(), pending[cut:].strip()
+                    if head:
+                        yield head
+                # Otherwise flush once it's a full thought (sentence end) or big
+                # enough to be worth a TTS call.
+                if pending and (pending[-1] in ".!?:" or len(pending) >= _MIN_SEGMENT_CHARS):
+                    yield pending
+                    pending = ""
+        # Stream ended: flush the buffered remainder + anything pending.
+        cleaned = _clean_for_speech(buffer)
+        if cleaned:
+            pending = f"{pending} {cleaned}".strip() if pending else cleaned
+        if pending:
+            if pending[-1] not in ".!?:":
+                pending += "."
+            yield pending
     finally:
         broker.detach_live_sink(task.task_id)

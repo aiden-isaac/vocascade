@@ -15,7 +15,9 @@ from unittest import IsolatedAsyncioTestCase
 from vocascade.hermes_run_client import RunEvent, RunEventKind, RunHandle, Capabilities
 from vocascade.delivery import DeliveryCoordinator
 from vocascade.task_broker import TaskBroker
-from vocascade.waterfall.stages.hermes import stream_hermes_reply, _drain_sentences
+from vocascade.waterfall.stages.hermes import (
+    stream_hermes_reply, _drain_segments, _clean_for_speech,
+)
 from vocascade.skills.context import SkillContext, ToolBag
 from vocascade.session.state import SessionState
 
@@ -78,16 +80,36 @@ def _broker(run_client, delivery=None):
     return TaskBroker(run_client, delivery or DeliveryCoordinator())
 
 
-class TestDrainSentences(unittest.TestCase):
+class TestDrainSegments(unittest.TestCase):
     def test_holds_incomplete_tail(self):
-        complete, rem = _drain_sentences("The weather is sunny. Enjoy")
+        complete, rem = _drain_segments("The weather is sunny. Enjoy")
         self.assertEqual(complete, ["The weather is sunny."])
         self.assertEqual(rem, "Enjoy")
 
     def test_no_boundary_keeps_buffer(self):
-        complete, rem = _drain_sentences("still going")
+        complete, rem = _drain_segments("still going")
         self.assertEqual(complete, [])
         self.assertEqual(rem, "still going")
+
+    def test_newline_is_a_segment_boundary(self):
+        # Markdown list items have no sentence enders; newlines must still split.
+        complete, rem = _drain_segments("- one\n- two\n- three")
+        self.assertEqual(complete, ["- one", "- two"])
+        self.assertEqual(rem, "- three")
+
+    def test_colon_header_splits(self):
+        complete, rem = _drain_segments("Today's plan: more")
+        self.assertEqual(complete, ["Today's plan:"])
+        self.assertEqual(rem, "more")
+
+
+class TestCleanForSpeech(unittest.TestCase):
+    def test_strips_markdown_bullets_and_emoji(self):
+        self.assertEqual(
+            _clean_for_speech("- **Water the plants** — ~7:30 PM 🌱"),
+            "Water the plants, ~7:30 PM")
+        self.assertEqual(_clean_for_speech("**Daily recurring:**"), "Daily recurring:")
+        self.assertEqual(_clean_for_speech("   "), "")
 
 
 class TestHermesStreaming(IsolatedAsyncioTestCase):
@@ -99,6 +121,26 @@ class TestHermesStreaming(IsolatedAsyncioTestCase):
         ]))
         out = [s async for s in stream_hermes_reply("weather?", broker, session_id="s1")]
         self.assertEqual(out, ["The weather is sunny.", "Enjoy your day."])
+
+    async def test_markdown_block_streams_as_multiple_clean_segments(self):
+        # A markdown task list (the real-world shape that used to buffer into one
+        # 28s TTS block) must split into several speakable, markdown-free pieces.
+        md = ("Here's what's on deck for today:\n\n"
+              "**Daily recurring:**\n"
+              "- Doxy dose (breakfast) — ~10:00 AM ✅ already ran\n"
+              "- Water the plants — ~7:30 PM \U0001f331\n\n"
+              "Everything else is queued up as expected.")
+        broker = _broker(FakeRunClient([_completed(md)]))
+        out = [s async for s in stream_hermes_reply("tasks?", broker, session_id="s1")]
+
+        self.assertGreater(len(out), 1, "reply must stream in multiple segments, not one block")
+        joined = " ".join(out)
+        for noise in ("**", "✅", "\U0001f331", "—"):
+            self.assertNotIn(noise, joined)
+        self.assertIn("Doxy dose", joined)
+        self.assertIn("Water the plants", joined)
+        self.assertIn("queued up as expected", joined)
+        self.assertTrue(all(len(s) <= 220 for s in out))
 
     async def test_terminal_only_run_delivers_output(self):
         # No deltas (OQ-1 fallback / snapshot-reconciled run): the full output
