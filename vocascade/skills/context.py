@@ -32,3 +32,6 @@ class SkillContext:
     # App-level Hermes TaskBroker (US3). Present only for the hermes skill;
     # additive per the skill-SDK contract. None when no backend is wired.
     task_broker: Any = None
+    # Speak something proactively later, idle-gated (US6 — e.g. a timer firing).
+    # `await ctx.notify("Your timer is up.")`. None when no delivery is wired.
+    notify: Optional[Callable[[str], Awaitable[None]]] = None

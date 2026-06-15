@@ -2,6 +2,7 @@
 vocascade/pipeline/router.py — Router pipeline stage.
 """
 
+import time
 import inspect
 import logging
 from vocascade.pipeline.pipeline import (
@@ -26,7 +27,8 @@ class RouterStage(PipelineStage):
     constructs the SkillContext, executes the skill, and pushes the text response
     downstream as TextFrame(s).
     """
-    def __init__(self, router, session_state: SessionState, config, task_broker=None, latency=None):
+    def __init__(self, router, session_state: SessionState, config, task_broker=None,
+                 latency=None, delivery=None):
         super().__init__()
         self.router = router
         self.session_state = session_state
@@ -35,7 +37,18 @@ class RouterStage(PipelineStage):
         self.task_broker = task_broker
         # Latency masking layer (US4); emits a filler/opening before a result.
         self.latency = latency
+        # Delivery coordinator (US6); backs ctx.notify for skill proactive speech.
+        self.delivery = delivery
         self._out_sample_rate = getattr(config, "audio_out_sample_rate", 32000)
+
+    async def _notify(self, text: str):
+        """ctx.notify — speak `text` proactively at the next idle moment (US6)."""
+        if self.delivery is not None and text:
+            from vocascade.delivery import ProactiveResult, DeliveryKind
+            self.delivery.enqueue(ProactiveResult(
+                task_id=f"notify_{int(time.time() * 1000)}",
+                kind=DeliveryKind.RESULT, preamble="",
+                speech_text=text, full_text=text))
 
     async def _emit_clip(self, pcm: bytes):
         await super().push(AudioFrame(audio=pcm, sample_rate=self._out_sample_rate))
@@ -92,28 +105,6 @@ class RouterStage(PipelineStage):
         except Exception as e:
             logger.error(f"Error speaking result: {e}", exc_info=True)
 
-    async def _handle_system(self, result, utterance: str, context):
-        """STOP / farewell system intents from the STOP stage (US5)."""
-        action = result.payload.get("action")
-        if action == "stop":
-            # Cancel in-flight Hermes runs for this session so they don't deliver
-            # later (the TTS/turn is already aborted by the client barge-in).
-            if self.task_broker is not None:
-                sid = context.session.voice_session_id
-                for task in list(self.task_broker.active_tasks()):
-                    if not sid or task.session_id == sid:
-                        await self.task_broker.cancel(task.task_id)
-            context.session.converse_claim = None     # STOP releases any claim (FR-081)
-            ack = "Okay."
-            await super().push(ControlMessageFrame({"type": "assistant_response", "text": ack}))
-            await super().push(TextFrame(text=ack))
-        elif action == "farewell":
-            # Arm teardown; the transport returns to passive after this is spoken.
-            context.session.teardown_armed = True
-            bye = "Goodbye."
-            await super().push(ControlMessageFrame({"type": "assistant_response", "text": bye}))
-            await super().push(TextFrame(text=bye))
-
     async def push(self, frame: Frame):
         if isinstance(frame, TranscriptionFrame):
             logger.info(f"RouterStage processing transcription: '{frame.text}'")
@@ -133,6 +124,7 @@ class RouterStage(PipelineStage):
                 emit_filler=self._emit_filler,
                 local_llm=None,
                 task_broker=self.task_broker,
+                notify=self._notify,
             )
             
             # Resolve local_llm client if base_url is configured
@@ -146,12 +138,6 @@ class RouterStage(PipelineStage):
             
             # 2. Resolve via WaterfallRouter
             result = await self.router.resolve(frame.text, context)
-
-            # 2a. System intents (STOP / farewell) — handled before any skill so a
-            # bare "stop"/"goodbye" never dispatches a run (US5).
-            if result.stage == "stop":
-                await self._handle_system(result, frame.text, context)
-                return
 
             # 2b. CONVERSE — a skill claimed this turn; route it to the claim's resume.
             if result.payload.get("converse") and context.session.converse_claim is not None:
@@ -182,7 +168,10 @@ class RouterStage(PipelineStage):
             if skill_obj is None:
                 logger.error(f"Routed to skill '{result.skill_name}' but it is not registered.")
                 return
-            await self._speak_result(skill_obj.handler(frame.text, {}, context), frame.text, context)
+            # Stage payload (e.g. STOP's action, HIGH's matched keyword) flows to
+            # the handler as `entities`.
+            await self._speak_result(
+                skill_obj.handler(frame.text, result.payload, context), frame.text, context)
 
         else:
             # Pass all other frames downstream

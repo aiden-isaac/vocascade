@@ -70,6 +70,19 @@ class SkillRegistry:
         self.skills[name] = skill_obj
         logger.info(f"Registered skill '{name}' (source: {source})")
 
+    def configure(self, skills_config: Optional[Dict[str, Any]]) -> None:
+        """Apply per-skill config after discovery (US6 / FR-023): drop skills
+        disabled in config (so they don't participate in routing) and attach each
+        kept skill's config block."""
+        skills_config = skills_config or {}
+        for name in list(self.skills):
+            cfg = skills_config.get(name, {}) or {}
+            if cfg.get("enabled", True) is False:
+                del self.skills[name]
+                logger.info("Skill '%s' disabled by config — unregistered", name)
+            else:
+                self.skills[name].config = cfg
+
     def get_skill(self, name: str) -> Optional[Skill]:
         """Retrieve a registered skill by name."""
         return self.skills.get(name)

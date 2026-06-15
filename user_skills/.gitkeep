@@ -1,0 +1,3 @@
+# Drop a .py file here with an @skill(...) handler and a config.yaml `skills:`
+# entry to add a skill — no changes to pipeline/STT/TTS code (US6 / FR-024).
+# Import errors in one file are isolated (logged + skipped); they never abort startup.

@@ -85,7 +85,12 @@ class TestStopStage(IsolatedAsyncioTestCase):
 
 class TestRouterStop(IsolatedAsyncioTestCase):
     def setUp(self):
-        registry.clear()   # no skills → the hermes fallback resolves to nothing
+        registry.clear()
+        # The stop handler is a real skill now (T236); register just it.
+        import importlib
+        import sys
+        mod = "vocascade.skills.base_skills.stop"
+        importlib.reload(sys.modules[mod]) if mod in sys.modules else importlib.import_module(mod)
 
     def tearDown(self):
         registry.clear()

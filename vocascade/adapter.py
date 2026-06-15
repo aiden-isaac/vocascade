@@ -141,8 +141,10 @@ async def lifespan(app_: FastAPI):
     logger.info("Loading Whisper STT model '%s' (%s)...", config.whisper_model, config.whisper_language)
     app_.state.stt = WhisperSTT(model_name=config.whisper_model, language=config.whisper_language)
 
-    # Register bundled skills (smalltalk, hermes; keyword/example skills arrive in US6).
+    # Register bundled + user skills, then apply config (drop disabled, US6).
     registry.discover_bundled_skills()
+    registry.discover_user_skills()              # user_skills/ — import-isolated (FR-022)
+    registry.configure(config.skills_config)     # disabled-skill exclusion + per-skill config
     logger.info("Registered skills: %s", [s.name for s in registry.get_all_skills()])
 
     app_.state.degraded_tts = not (
@@ -223,7 +225,7 @@ def _build_pipeline(config, stt: WhisperSTT, degraded_tts: bool,
         VADStage(server_vad_enabled=config.server_vad_enabled, sample_rate=config.audio_in_sample_rate),
         STTStage(whisper_stt=stt),
         RouterStage(router=router, session_state=session_state, config=config,
-                    task_broker=task_broker, latency=latency),
+                    task_broker=task_broker, latency=latency, delivery=delivery),
         GenieTTSStage(
             tts_url=config.tts_url,
             character_name=config.tts_character_name,

@@ -142,11 +142,11 @@ description: "Task list for 006-custom-voice-pipeline-waterfall"
 
 **Independent Test**: drop a skill in `user_skills/` + config entry → auto-discovered and routable; disabled skill not registered; import error isolated.
 
-- [ ] T234 [P] [US6] Timers skill — `vocascade/skills/base_skills/timers.py`.
-- [ ] T235 [P] [US6] Datetime skill — `vocascade/skills/base_skills/datetime.py`.
-- [ ] T236 [P] [US6] Stop skill handler (verbal/explicit) — `vocascade/skills/base_skills/stop.py`.
-- [ ] T237 [US6] `user_skills/` auto-discovery + per-skill config + import-failure isolation — `vocascade/skills/registry.py`, `config.yaml`, `user_skills/.gitkeep`.
-- [ ] T238 [P] [US6] Tests: discovery, disabled-skill exclusion, import-failure isolation — `tests/unit/test_user_skills.py`.
+- [x] T234 [P] [US6] Timers skill — `vocascade/skills/base_skills/timers.py`.
+- [x] T235 [P] [US6] Datetime skill — `vocascade/skills/base_skills/datetime.py`.
+- [x] T236 [P] [US6] Stop skill handler (verbal/explicit) — `vocascade/skills/base_skills/stop.py`.
+- [x] T237 [US6] `user_skills/` auto-discovery + per-skill config + import-failure isolation — `vocascade/skills/registry.py`, `config.yaml`, `user_skills/.gitkeep`.
+- [x] T238 [P] [US6] Tests: discovery, disabled-skill exclusion, import-failure isolation — `tests/unit/test_user_skills.py`.
 
 **Checkpoint**: contributors can add skills without touching audio code (SC-005).
 
