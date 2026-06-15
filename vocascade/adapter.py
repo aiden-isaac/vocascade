@@ -37,6 +37,7 @@ from vocascade.stt.whisper import WhisperSTT
 from vocascade.waterfall.router import WaterfallRouter
 from vocascade.skills.registry import registry
 from vocascade.session.state import SessionState, SessionStateEnum
+from vocascade.session.state_machine import SessionMachine
 from vocascade.transport.serializer import RawFrameSerializer
 from vocascade.hermes_run_client import HermesRunClient
 from vocascade.delivery import DeliveryCoordinator
@@ -78,11 +79,13 @@ class TransportOutputStage(PipelineStage):
     """
 
     def __init__(self, outbound: "asyncio.Queue[str]", serializer: RawFrameSerializer,
-                 delivery: DeliveryCoordinator | None = None):
+                 delivery: DeliveryCoordinator | None = None,
+                 machine: SessionMachine | None = None):
         super().__init__()
         self.outbound = outbound
         self.serializer = serializer
         self.delivery = delivery
+        self.machine = machine   # session lifecycle + teardown (US5)
 
     async def push(self, frame: Frame):
         if isinstance(frame, AudioFrame):
@@ -90,7 +93,7 @@ class TransportOutputStage(PipelineStage):
             if data is not None:
                 await self.outbound.put(data)
         elif isinstance(frame, ControlMessageFrame):
-            if self.delivery is not None and frame.message.get("type") == "transcript":
+            if frame.message.get("type") == "transcript" and self.delivery is not None:
                 # A transcription reached routing — keep the channel busy so a
                 # proactive result doesn't talk over the impending reply.
                 self.delivery.notify_response_pending()
@@ -98,20 +101,35 @@ class TransportOutputStage(PipelineStage):
             if data is not None:
                 await self.outbound.put(data)
         elif isinstance(frame, UserStartedSpeakingFrame):
+            if self.machine is not None:
+                self.machine.on_user_engaged()   # re-engage disarms a pending teardown
             if self.delivery is not None:
                 self.delivery.notify_user_started_speaking()
         elif isinstance(frame, UserStoppedSpeakingFrame):
             if self.delivery is not None:
                 self.delivery.notify_user_stopped_speaking()
         elif isinstance(frame, BotStartedSpeakingFrame):
+            if self.machine is not None:
+                self.machine.on_bot_started()
             if self.delivery is not None:
                 self.delivery.notify_bot_started_speaking()
             await self.outbound.put(json.dumps({"type": "status", "state": "assistant_streaming"}))
         elif isinstance(frame, BotStoppedSpeakingFrame):
-            if self.delivery is not None:
-                self.delivery.notify_bot_stopped_speaking()
             await self.outbound.put(json.dumps({"type": "audio_end"}))
-            await self.outbound.put(json.dumps({"type": "status", "state": "active_listening"}))
+            if self.machine is not None and self.machine.should_teardown:
+                # Farewell / ENDSESSION: return to passive. In-flight tasks are
+                # retained (the broker is not touched); queued results are held
+                # for the next session (FR-061/FR-062).
+                self.machine.on_teardown()
+                if self.delivery is not None:
+                    self.delivery.unbind_session()
+                await self.outbound.put(json.dumps({"type": "status", "state": "passive_listening"}))
+            else:
+                if self.machine is not None:
+                    self.machine.on_bot_stopped()
+                if self.delivery is not None:
+                    self.delivery.notify_bot_stopped_speaking()
+                await self.outbound.put(json.dumps({"type": "status", "state": "active_listening"}))
         # Terminal sink: nothing downstream.
 
 
@@ -198,6 +216,7 @@ def _build_pipeline(config, stt: WhisperSTT, degraded_tts: bool,
                     latency: LatencyMasker | None = None):
     """Assemble a fresh per-session VoicePipeline: VAD → STT → router → TTS → transport-out."""
     session_state = SessionState(voice_session_id=str(uuid.uuid4()), state=SessionStateEnum.ACTIVE)
+    machine = SessionMachine(session_state)
     router = WaterfallRouter.from_config(config)
 
     stages = [
@@ -215,12 +234,13 @@ def _build_pipeline(config, stt: WhisperSTT, degraded_tts: bool,
             degraded_mode=degraded_tts,
             sample_rate=config.audio_out_sample_rate,
         ),
-        TransportOutputStage(outbound, serializer, delivery=delivery),
+        TransportOutputStage(outbound, serializer, delivery=delivery, machine=machine),
     ]
     pipeline = VoicePipeline(stages)
     # The TTS sink needs explicit teardown beyond pipeline.stop() (closes aiohttp)
     # and is the injection point for proactive (system-initiated) speech.
     pipeline.tts_stage = stages[-2]
+    pipeline.session_machine = machine
     return pipeline
 
 
@@ -239,6 +259,9 @@ async def _handle_control(text: str, pipeline: VoicePipeline, outbound: "asyncio
         # Session is live; a fresh turn may follow. Clear any prior interrupt arm
         # and let proactive deliveries flow (idle-gated) for this session.
         pipeline.interrupt_event.clear()
+        machine = getattr(pipeline, "session_machine", None)
+        if machine is not None:
+            machine.on_wake()   # passive → active (disarms any pending teardown)
         delivery.bind_session(inject)
         await outbound.put(json.dumps({"type": "status", "state": "active_listening"}))
         # Instant pre-rendered acknowledgement ("Yes?") — the only pre-rendered

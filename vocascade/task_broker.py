@@ -175,6 +175,11 @@ class TaskBroker:
         consumer = self._consumers.pop(task_id, None)
         if consumer is not None and not consumer.done():
             consumer.cancel()
+        # Unblock any live streaming turn still waiting on this run's sink (US5 STOP).
+        sink = self._live_sinks.pop(task_id, None)
+        if sink is not None:
+            sink.put_nowait(self.LIVE_DONE)
+        self._delta_streamed.discard(task_id)
         return True
 
     async def shutdown(self) -> None:

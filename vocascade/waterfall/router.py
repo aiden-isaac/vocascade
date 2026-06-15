@@ -9,24 +9,15 @@ from vocascade.waterfall.classifier import IntentClassifier
 from vocascade.waterfall.stages.high import HighStage
 from vocascade.waterfall.stages.medium import MediumStage
 from vocascade.waterfall.stages.hermes import HermesStage
+from vocascade.waterfall.stages.stop import StopStage
+from vocascade.waterfall.stages.converse import ConverseStage
 from vocascade.skills.registry import registry
 from vocascade.skills.context import SkillContext
 
 logger = logging.getLogger("vocascade.waterfall.router")
 
-# HIGH/MEDIUM are real (US2) and imported above. STOP/CONVERSE remain stubs that
-# report confidence 0.0 until US5 (T231/T232); from_config parks them above any
-# threshold so they never win in the meantime.
-
-class StopStage(WaterfallStage):
-    """STOP/system stage (always first). Stub until US5 (T231)."""
-    async def evaluate(self, utterance: str, ctx: SkillContext) -> ConfidenceResult:
-        return ConfidenceResult(stage=self.name, confidence=0.0)
-
-class ConverseStage(WaterfallStage):
-    """CONVERSE multi-turn claim stage. Stub until US5 (T232)."""
-    async def evaluate(self, utterance: str, ctx: SkillContext) -> ConfidenceResult:
-        return ConfidenceResult(stage=self.name, confidence=0.0)
+# STOP/CONVERSE/HIGH/MEDIUM/HERMES all live in stages/ now (US2/US3/US5).
+# SmalltalkStage stays here — it is the local-LLM floor (US1).
 
 class SmalltalkStage(WaterfallStage):
     """SMALLTALK floor fallback stage. Returns fixed 0.35 floor if smalltalk skill registered."""
@@ -76,9 +67,11 @@ def _threshold_for(name: str, thresholds: Dict[str, float]) -> float:
         # HERMES reports confidence 1.0; a 0.0 threshold guarantees it always
         # clears as the last-resort fallback.
         return 0.0
-    # stop/converse are stubs reporting 0.0 — park above 1.0 so they never win
-    # (a 0.0 threshold would make `0.0 >= 0.0` true and silently short-circuit).
-    return 1.1
+    if name in ("stop", "converse"):
+        # Real system stages (US5): report 1.0 on a deterministic match, 0.0
+        # otherwise. A 0.5 bar lets a match win without a no-match short-circuit.
+        return 0.5
+    return 1.1   # unknown stage — never wins
 
 
 def _ordered_stage_names(names: List[str]) -> List[str]:

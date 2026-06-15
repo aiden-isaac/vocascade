@@ -15,6 +15,7 @@ from vocascade.pipeline.pipeline import (
 from vocascade.skills.context import SkillContext, ToolBag
 from vocascade.skills.registry import registry
 from vocascade.session.state import SessionState
+from vocascade.session.teardown import contains_sentinel, strip_sentinel
 
 logger = logging.getLogger("vocascade.pipeline.router_stage")
 
@@ -49,6 +50,70 @@ class RouterStage(PipelineStage):
             if pcm:
                 await self._emit_clip(pcm)
 
+    async def _speak_result(self, called, utterance: str, context):
+        """Push a handler/resume result (str, coroutine, or async generator) to TTS.
+        Streamed (async-gen) results get progressive fillers; only real content
+        feeds the assistant_response message."""
+        try:
+            if inspect.isasyncgen(called):
+                spoken: list[str] = []
+                if self.latency is not None:
+                    async for chunk, is_filler in self.latency.with_progressive_fillers(
+                        called, utterance, context.local_llm
+                    ):
+                        if chunk:
+                            await super().push(TextFrame(text=chunk))
+                            if not is_filler:
+                                spoken.append(chunk)
+                else:
+                    async for chunk in called:
+                        if chunk:
+                            spoken.append(chunk)
+                            await super().push(TextFrame(text=chunk))
+                if spoken:
+                    await super().push(ControlMessageFrame(
+                        {"type": "assistant_response", "text": " ".join(spoken)}))
+            else:
+                res = await called
+                if isinstance(res, str):
+                    # A model-emitted ENDSESSION arms teardown; strip it so it is
+                    # never spoken or shown (US5 / FR-062).
+                    if contains_sentinel(res):
+                        if context.session is not None:
+                            context.session.teardown_armed = True
+                        res = strip_sentinel(res).strip()
+                    if res:
+                        await super().push(ControlMessageFrame({"type": "assistant_response", "text": res}))
+                        await super().push(TextFrame(text=res))
+                elif hasattr(res, "__aiter__"):
+                    async for chunk in res:
+                        if chunk:
+                            await super().push(TextFrame(text=chunk))
+        except Exception as e:
+            logger.error(f"Error speaking result: {e}", exc_info=True)
+
+    async def _handle_system(self, result, utterance: str, context):
+        """STOP / farewell system intents from the STOP stage (US5)."""
+        action = result.payload.get("action")
+        if action == "stop":
+            # Cancel in-flight Hermes runs for this session so they don't deliver
+            # later (the TTS/turn is already aborted by the client barge-in).
+            if self.task_broker is not None:
+                sid = context.session.voice_session_id
+                for task in list(self.task_broker.active_tasks()):
+                    if not sid or task.session_id == sid:
+                        await self.task_broker.cancel(task.task_id)
+            context.session.converse_claim = None     # STOP releases any claim (FR-081)
+            ack = "Okay."
+            await super().push(ControlMessageFrame({"type": "assistant_response", "text": ack}))
+            await super().push(TextFrame(text=ack))
+        elif action == "farewell":
+            # Arm teardown; the transport returns to passive after this is spoken.
+            context.session.teardown_armed = True
+            bye = "Goodbye."
+            await super().push(ControlMessageFrame({"type": "assistant_response", "text": bye}))
+            await super().push(TextFrame(text=bye))
+
     async def push(self, frame: Frame):
         if isinstance(frame, TranscriptionFrame):
             logger.info(f"RouterStage processing transcription: '{frame.text}'")
@@ -82,8 +147,25 @@ class RouterStage(PipelineStage):
             # 2. Resolve via WaterfallRouter
             result = await self.router.resolve(frame.text, context)
 
-            # 2b. Latency masking (US4): play a filler/opening before the result.
-            if self.latency is not None and result.skill_name:
+            # 2a. System intents (STOP / farewell) — handled before any skill so a
+            # bare "stop"/"goodbye" never dispatches a run (US5).
+            if result.stage == "stop":
+                await self._handle_system(result, frame.text, context)
+                return
+
+            # 2b. CONVERSE — a skill claimed this turn; route it to the claim's resume.
+            if result.payload.get("converse") and context.session.converse_claim is not None:
+                claim = context.session.converse_claim
+                context.session.converse_claim = None        # released on consumption
+                await self._speak_result(claim.resume(frame.text, context), frame.text, context)
+                return
+
+            if not result.skill_name:
+                logger.warning("No skill resolved for this transcription.")
+                return
+
+            # 2c. Latency masking (US4): play a filler/opening before the result.
+            if self.latency is not None:
                 try:
                     await self.latency.mask(
                         stage=result.stage,
@@ -95,55 +177,13 @@ class RouterStage(PipelineStage):
                 except Exception as e:
                     logger.error(f"Latency masking failed: {e}", exc_info=True)
 
-            # 3. Execute the winning skill
-            if result.skill_name:
-                skill_obj = registry.get_skill(result.skill_name)
-                if skill_obj:
-                    try:
-                        # A handler is either a coroutine returning the full
-                        # spoken text (str) or an async generator streaming text
-                        # chunks (e.g. the hermes skill). Don't await an async
-                        # generator — iterate it.
-                        called = skill_obj.handler(frame.text, {}, context)
-                        if inspect.isasyncgen(called):
-                            spoken: list[str] = []
-                            if self.latency is not None:
-                                # Inject progressive "still working" fillers during
-                                # the pre-content wait (US4); real content only is
-                                # accumulated for the assistant_response message.
-                                async for chunk, is_filler in self.latency.with_progressive_fillers(
-                                    called, frame.text, context.local_llm
-                                ):
-                                    if chunk:
-                                        await super().push(TextFrame(text=chunk))
-                                        if not is_filler:
-                                            spoken.append(chunk)
-                            else:
-                                async for chunk in called:
-                                    if chunk:
-                                        spoken.append(chunk)
-                                        await super().push(TextFrame(text=chunk))
-                            if spoken:
-                                await super().push(ControlMessageFrame(
-                                    {"type": "assistant_response", "text": " ".join(spoken)}))
-                        else:
-                            res = await called
-                            if isinstance(res, str):
-                                # Surface the full reply text (also the only signal
-                                # in degraded TTS mode, where no audio is made).
-                                await super().push(ControlMessageFrame({"type": "assistant_response", "text": res}))
-                                await super().push(TextFrame(text=res))
-                            elif hasattr(res, "__aiter__"):
-                                async for chunk in res:
-                                    if chunk:
-                                        await super().push(TextFrame(text=chunk))
-                    except Exception as e:
-                        logger.error(f"Error executing skill '{result.skill_name}': {e}", exc_info=True)
-                else:
-                    logger.error(f"Routed to skill '{result.skill_name}' but it is not registered.")
-            else:
-                logger.warning("No skill resolved for this transcription.")
-                
+            # 3. Execute the winning skill.
+            skill_obj = registry.get_skill(result.skill_name)
+            if skill_obj is None:
+                logger.error(f"Routed to skill '{result.skill_name}' but it is not registered.")
+                return
+            await self._speak_result(skill_obj.handler(frame.text, {}, context), frame.text, context)
+
         else:
             # Pass all other frames downstream
             await super().push(frame)

@@ -25,6 +25,15 @@ DEFAULT_PERSONALITY_PROMPT = """
 You are a helpful voice assistant. Keep your responses concise and brief.
 """.strip()
 
+# End-session sentinel: the deterministic farewell-phrase backstop (handled in
+# the STOP stage) is primary; this lets the model also end a session it judges
+# complete (US5 / FR-062).
+_ENDSESSION_INSTRUCTION = (
+    "\n\nOnly if the user clearly says goodbye or that they are finished, append the "
+    "single word ENDSESSION on its own line at the very end of your reply. "
+    "Never append it for greetings, questions, or ordinary messages."
+)
+
 @skill(name="smalltalk", confidence=lambda utterance: 0.35)
 async def handle_smalltalk(intent: str, entities: dict, ctx: SkillContext) -> str:
     """
@@ -39,8 +48,8 @@ async def handle_smalltalk(intent: str, entities: dict, ctx: SkillContext) -> st
     system_prompt = DEFAULT_PERSONALITY_PROMPT
     if str(character).lower() == "ordis":
         system_prompt = ORDIS_PERSONALITY_PROMPT
-        
-    messages = [{"role": "system", "content": system_prompt}]
+
+    messages = [{"role": "system", "content": system_prompt + _ENDSESSION_INSTRUCTION}]
     
     # Append history
     if hasattr(ctx, "history") and ctx.history:

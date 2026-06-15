@@ -263,13 +263,15 @@ class TestFromConfig(_RegistryIsolated, TestCase):
         self.assertEqual(by["smalltalk"], 0.35)
         self.assertEqual(by["hermes"], 0.0)
 
-    def test_stub_thresholds_parked_above_one(self):
+    def test_system_stage_thresholds(self):
+        # STOP/CONVERSE are real system stages (US5): they win on a deterministic
+        # 1.0 match against a 0.5 bar, and report 0.0 (no short-circuit) otherwise.
         router = WaterfallRouter.from_config(
             _FakeConfig(["stop", "converse", "smalltalk", "hermes"])
         )
         by = {s.name: s.threshold for s in router.stages}
-        self.assertGreater(by["stop"], 1.0)
-        self.assertGreater(by["converse"], 1.0)
+        self.assertEqual(by["stop"], 0.5)
+        self.assertEqual(by["converse"], 0.5)
 
     def test_disabled_stage_flag_respected(self):
         router = WaterfallRouter.from_config(

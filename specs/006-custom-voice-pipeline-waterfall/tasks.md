@@ -126,11 +126,11 @@ description: "Task list for 006-custom-voice-pipeline-waterfall"
 
 **Independent Test**: drive passive→active→speaking→passive; "stop" cancels mid-TTS/mid-skill/mid-Hermes; a multi-turn skill claims the next utterance.
 
-- [ ] T229 [US5] Session state machine (passive→active→speaking→passive; in-flight tasks retained on teardown) — `vocascade/session/state_machine.py`.
-- [ ] T230 [US5] Redesigned ENDSESSION: port the farewell-phrase backstop + model sentinel out of the old `TeardownInterceptor` into the new pipeline; disarm on re-engage — `vocascade/session/teardown.py`.
-- [ ] T231 [US5] STOP/SYSTEM stage + cancellation propagation through TTS sink, active skill, and Hermes run/stream via the interrupt Event — `vocascade/waterfall/stages/stop.py`, `vocascade/pipeline/pipeline.py`.
-- [ ] T232 [US5] CONVERSE stage + multi-turn claim (claim/resume/timeout/STOP-release) — `vocascade/waterfall/stages/converse.py`.
-- [ ] T233 [P] [US5] Tests: stop mid-TTS/mid-skill/mid-Hermes; converse claim + timeout release; farewell vs silence-timeout idempotent teardown — `tests/unit/test_stop.py`, `tests/unit/test_converse.py`, `tests/unit/test_session.py`.
+- [x] T229 [US5] Session state machine (passive→active→speaking→passive; in-flight tasks retained on teardown) — `vocascade/session/state_machine.py`.
+- [x] T230 [US5] Redesigned ENDSESSION: port the farewell-phrase backstop + model sentinel out of the old `TeardownInterceptor` into the new pipeline; disarm on re-engage — `vocascade/session/teardown.py`.
+- [x] T231 [US5] STOP/SYSTEM stage + cancellation propagation through TTS sink, active skill, and Hermes run/stream via the interrupt Event — `vocascade/waterfall/stages/stop.py`, `vocascade/pipeline/router.py`.
+- [x] T232 [US5] CONVERSE stage + multi-turn claim (claim/resume/timeout/STOP-release) — `vocascade/waterfall/stages/converse.py`.
+- [x] T233 [P] [US5] Tests: stop mid-TTS/mid-skill/mid-Hermes; converse claim + timeout release; farewell vs silence-timeout idempotent teardown — `tests/unit/test_stop.py`, `tests/unit/test_converse.py`, `tests/unit/test_session.py`.
 
 **Checkpoint**: control flow is reliable and conversational.
 

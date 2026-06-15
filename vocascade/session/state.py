@@ -31,6 +31,9 @@ class SessionState:
     voice_session_id: str = ""
     wake_count: int = 0
     last_activity_at: float = field(default_factory=time.time)
+    # Armed by a farewell phrase or the model ENDSESSION sentinel; teardown to
+    # passive fires after the current reply finishes speaking (US5 / FR-062).
+    teardown_armed: bool = False
 
     def reset_activity(self):
         """Update last activity timestamp to the current time."""
