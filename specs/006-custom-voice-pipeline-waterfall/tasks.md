@@ -201,8 +201,8 @@ description: "Task list for 006-custom-voice-pipeline-waterfall"
 
 **Independent Test**: after a locally-handled session, a summary POST is observed (when enabled); a failed POST never blocks teardown.
 
-- [ ] T246 [US10] Session-end summary generation (local-LLM gist) + best-effort, non-blocking POST to the memory service — `vocascade/session/summary.py` (reuse `vocascade/pre_fetch_cache.py`/context source).
-- [ ] T247 [P] [US10] Test: summary generated + POSTed on teardown; failure logged and non-blocking — `tests/unit/test_session_summary.py`.
+- [x] T246 [US10] Session-end summary generation (local-LLM gist) + best-effort, non-blocking POST to the memory service — `vocascade/session/summary.py` (reuse `vocascade/pre_fetch_cache.py`/context source).
+- [x] T247 [P] [US10] Test: summary generated + POSTed on teardown; failure logged and non-blocking — `tests/unit/test_session_summary.py`.
 
 **Checkpoint**: memory continuity preserved across local-only turns.
 

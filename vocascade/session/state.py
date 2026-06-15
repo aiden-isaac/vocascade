@@ -34,7 +34,15 @@ class SessionState:
     # Armed by a farewell phrase or the model ENDSESSION sentinel; teardown to
     # passive fires after the current reply finishes speaking (US5 / FR-062).
     teardown_armed: bool = False
+    # Per-session turn log (user utterance + spoken reply + winning stage) used to
+    # build the session-end memory gist (US10 / FR-090). Not a full transcript.
+    turns: list = field(default_factory=list)
 
     def reset_activity(self):
         """Update last activity timestamp to the current time."""
         self.last_activity_at = time.time()
+
+    def record_turn(self, user: str, assistant: str, stage: str = "") -> None:
+        """Append one user→assistant exchange for the end-of-session summary."""
+        if user and assistant:
+            self.turns.append({"user": user, "assistant": assistant, "stage": stage})

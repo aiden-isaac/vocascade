@@ -100,6 +100,9 @@ class AdapterConfig:
     identity_key_path: str = "~/.vocascade/identity.pem"
     authorized_keys_path: str | None = None
 
+    # Session-end memory gist write endpoint (US10; empty url = disabled).
+    memory_summary_url: str = ""
+
 
 def _parse_bool(val: str | None) -> bool:
     if not val:
@@ -263,4 +266,6 @@ def load_config() -> AdapterConfig:
         authorized_keys_path=(
             os.path.expanduser(os.getenv("AUTHORIZED_KEYS_PATH"))
             if os.getenv("AUTHORIZED_KEYS_PATH") else None),
+
+        memory_summary_url=os.getenv("MEMORY_SUMMARY_URL", ""),
     )

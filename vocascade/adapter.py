@@ -38,6 +38,8 @@ from vocascade.waterfall.router import WaterfallRouter
 from vocascade.skills.registry import registry
 from vocascade.session.state import SessionState, SessionStateEnum
 from vocascade.session.state_machine import SessionMachine
+from vocascade.session.summary import SessionSummarizer
+from vocascade.gateway.local_llm import LocalLLM
 from vocascade.transport.serializer import RawFrameSerializer
 from vocascade.transport.server import transport_auth_from_config
 from vocascade.hermes_run_client import HermesRunClient
@@ -189,6 +191,16 @@ async def lifespan(app_: FastAPI):
                 config.filler_mode, config.filler_interval_seconds, config.filler_max,
                 filler_engine.get_categories().get("acknowledge", 0))
 
+    # Session-end memory gist (US10): at teardown, summarize locally-handled turns
+    # and POST to the memory service so the agent's memory doesn't diverge. Sent
+    # best-effort in the background; disabled unless MEMORY_SUMMARY_URL is set.
+    summary_llm = LocalLLM(base_url=config.llm_base_url, api_key=config.llm_api_key,
+                           model=config.llm_model) if config.llm_base_url else None
+    app_.state.summarizer = SessionSummarizer(
+        config.memory_summary_url, summary_llm, peer=config.hermes_session_key)
+    app_.state.summary_tasks = set()
+    logger.info("Session summary %s", "enabled" if app_.state.summarizer.enabled else "disabled")
+
     # Warm Genie's synthesis models once at startup (background, off the critical
     # path) so the first reply doesn't pay the ~8s CN_HuBERT/speaker-verification
     # cold start. Best-effort; skipped in degraded/skip-Genie modes.
@@ -212,6 +224,9 @@ async def lifespan(app_: FastAPI):
     yield
 
     logger.info("Shutting down vocascade adapter...")
+    pending_summaries = list(getattr(app_.state, "summary_tasks", ()))
+    if pending_summaries:
+        await asyncio.gather(*pending_summaries, return_exceptions=True)
     if app_.state.warmup_task is not None and not app_.state.warmup_task.done():
         app_.state.warmup_task.cancel()
         try:
@@ -274,6 +289,7 @@ def _build_pipeline(config, stt: WhisperSTT, degraded_tts: bool,
     # and is the injection point for proactive (system-initiated) speech.
     pipeline.tts_stage = stages[-2]
     pipeline.session_machine = machine
+    pipeline.session_state = session_state
     return pipeline
 
 
@@ -402,6 +418,17 @@ async def websocket_endpoint(websocket: WebSocket):
             # Session ends: unbind delivery but DO NOT shut down the broker —
             # in-flight Hermes tasks are retained and delivered next session (FR-061).
             delivery.unbind_session()
+
+            # US10: fire the session-end memory gist in the background so the
+            # network POST never blocks teardown (FR-091).
+            summarizer: SessionSummarizer = app.state.summarizer
+            turns = list(getattr(pipeline, "session_state").turns)
+            if summarizer.enabled and turns:
+                task = asyncio.create_task(
+                    summarizer.summarize_and_send(turns, session_id=pipeline.session_state.voice_session_id))
+                app.state.summary_tasks.add(task)
+                task.add_done_callback(app.state.summary_tasks.discard)
+
             await pipeline.stop()
             await pipeline.tts_stage.close()
             sender_task.cancel()

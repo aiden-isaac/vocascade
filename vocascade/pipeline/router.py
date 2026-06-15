@@ -63,10 +63,12 @@ class RouterStage(PipelineStage):
             if pcm:
                 await self._emit_clip(pcm)
 
-    async def _speak_result(self, called, utterance: str, context):
+    async def _speak_result(self, called, utterance: str, context, stage: str = ""):
         """Push a handler/resume result (str, coroutine, or async generator) to TTS.
         Streamed (async-gen) results get progressive fillers; only real content
-        feeds the assistant_response message."""
+        feeds the assistant_response message. The spoken text is recorded on the
+        session for the end-of-session memory gist (US10)."""
+        spoken_text = ""
         try:
             if inspect.isasyncgen(called):
                 spoken: list[str] = []
@@ -84,8 +86,9 @@ class RouterStage(PipelineStage):
                             spoken.append(chunk)
                             await super().push(TextFrame(text=chunk))
                 if spoken:
+                    spoken_text = " ".join(spoken)
                     await super().push(ControlMessageFrame(
-                        {"type": "assistant_response", "text": " ".join(spoken)}))
+                        {"type": "assistant_response", "text": spoken_text}))
             else:
                 res = await called
                 if isinstance(res, str):
@@ -96,12 +99,19 @@ class RouterStage(PipelineStage):
                             context.session.teardown_armed = True
                         res = strip_sentinel(res).strip()
                     if res:
+                        spoken_text = res
                         await super().push(ControlMessageFrame({"type": "assistant_response", "text": res}))
                         await super().push(TextFrame(text=res))
                 elif hasattr(res, "__aiter__"):
+                    chunks: list[str] = []
                     async for chunk in res:
                         if chunk:
+                            chunks.append(chunk)
                             await super().push(TextFrame(text=chunk))
+                    spoken_text = " ".join(chunks)
+            # Record the completed exchange for the session-end gist (US10).
+            if context.session is not None and spoken_text:
+                context.session.record_turn(utterance, spoken_text, stage)
         except Exception as e:
             # FR-100: a handler/tool failure degrades to a spoken error — never a
             # silent drop.
@@ -151,7 +161,8 @@ class RouterStage(PipelineStage):
             if result.payload.get("converse") and context.session.converse_claim is not None:
                 claim = context.session.converse_claim
                 context.session.converse_claim = None        # released on consumption
-                await self._speak_result(claim.resume(frame.text, context), frame.text, context)
+                await self._speak_result(claim.resume(frame.text, context), frame.text, context,
+                                         stage="converse")
                 return
 
             if not result.skill_name:
@@ -179,7 +190,8 @@ class RouterStage(PipelineStage):
             # Stage payload (e.g. STOP's action, HIGH's matched keyword) flows to
             # the handler as `entities`.
             await self._speak_result(
-                skill_obj.handler(frame.text, result.payload, context), frame.text, context)
+                skill_obj.handler(frame.text, result.payload, context), frame.text, context,
+                stage=result.stage)
 
         else:
             # Pass all other frames downstream
