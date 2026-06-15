@@ -61,6 +61,20 @@ class GenieTTSStage(PipelineStage):
             await self._client.load_character()
             self._character_loaded = True
 
+    async def warmup(self):
+        """Preload the character and force Genie to load its synthesis models
+        (CN_HuBERT + speaker verification) with one throwaway synth, so the first
+        real reply doesn't pay the ~8s cold start. Best-effort; never raises."""
+        if self._client.degraded_mode:
+            return
+        try:
+            await self.start()                       # POST /load_character
+            async for _ in self._client.synthesize("Ready."):
+                pass                                  # discard audio; just warm the models
+            logger.info("GenieTTSStage warmup complete — TTS models preloaded.")
+        except Exception as e:
+            logger.warning("GenieTTSStage warmup failed (non-fatal): %s", e)
+
     async def stop(self):
         """Sends stop request to abort active playback/synthesis."""
         await self._client.stop()

@@ -189,9 +189,35 @@ async def lifespan(app_: FastAPI):
                 config.filler_mode, config.filler_interval_seconds, config.filler_max,
                 filler_engine.get_categories().get("acknowledge", 0))
 
+    # Warm Genie's synthesis models once at startup (background, off the critical
+    # path) so the first reply doesn't pay the ~8s CN_HuBERT/speaker-verification
+    # cold start. Best-effort; skipped in degraded/skip-Genie modes.
+    app_.state.warmup_task = None
+    if not app_.state.degraded_tts and not config.skip_genie_init:
+        warm_stage = GenieTTSStage(
+            tts_url=config.tts_url, character_name=config.tts_character_name,
+            onnx_model_dir=config.tts_onnx_model_dir, reference_audio=config.tts_reference_audio,
+            reference_text=config.tts_reference_text, language=config.tts_language,
+            degraded_mode=app_.state.degraded_tts, sample_rate=config.audio_out_sample_rate,
+        )
+
+        async def _warm_and_close():
+            try:
+                await warm_stage.warmup()
+            finally:
+                await warm_stage.close()
+
+        app_.state.warmup_task = asyncio.create_task(_warm_and_close())
+
     yield
 
     logger.info("Shutting down vocascade adapter...")
+    if app_.state.warmup_task is not None and not app_.state.warmup_task.done():
+        app_.state.warmup_task.cancel()
+        try:
+            await app_.state.warmup_task
+        except (asyncio.CancelledError, Exception):
+            pass
     await app_.state.task_broker.shutdown()
     try:
         await run_client.aclose()
