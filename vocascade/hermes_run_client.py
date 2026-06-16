@@ -123,6 +123,7 @@ class HermesRunClient:
         api_key: str | None = None,
         session_key: str | None = None,
         model: str = "hermes-agent",
+        instructions: str = "",
         http_client: httpx.AsyncClient | None = None,
         initial_backoff: float = 1.0,
         max_backoff: float = 60.0,
@@ -137,6 +138,8 @@ class HermesRunClient:
         self.api_key = api_key
         self.session_key = session_key
         self.model = model
+        # Optional ephemeral system prompt attached to every run (voice TTS shaping).
+        self.instructions = instructions
         self.initial_backoff = initial_backoff
         self.max_backoff = max_backoff
         self._client = http_client
@@ -203,10 +206,13 @@ class HermesRunClient:
     # ── runs API ─────────────────────────────────────────────────────────────
 
     async def start_run(self, prompt: str, *, session_id: str = "") -> RunHandle:
+        body = {"input": prompt, "model": self.model}
+        if self.instructions:
+            body["instructions"] = self.instructions
         try:
             resp = await self.client.post(
                 f"{self.base_url}/runs",
-                json={"input": prompt, "model": self.model},
+                json=body,
                 headers=self.headers(session_id),
             )
         except httpx.HTTPError as exc:

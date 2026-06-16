@@ -14,6 +14,15 @@ from dotenv import load_dotenv
 
 logger = logging.getLogger("vocascade.config")
 
+# Ephemeral per-run system prompt sent to Hermes on voice dispatches so the agent
+# emits speech-shaped replies (short, no markdown) WITHOUT changing its profile
+# config or reasoning. Voice-only: Telegram/CLI runs never carry this.
+DEFAULT_HERMES_VOICE_INSTRUCTIONS = (
+    "Reply for text-to-speech. Lead with the answer in 1-3 short spoken "
+    "sentences. No markdown, lists, headings, code, emoji, or URLs. Say symbols "
+    "as words. Keep it brief and conversational."
+)
+
 @dataclass(frozen=True)
 class AdapterConfig:
     # System role and authentication (from config.yaml)
@@ -102,6 +111,10 @@ class AdapterConfig:
 
     # Session-end memory gist write endpoint (US10; empty url = disabled).
     memory_summary_url: str = ""
+
+    # Ephemeral TTS-shaping system prompt sent with every voice run (does not
+    # touch the Hermes profile config / reasoning; voice-only).
+    hermes_voice_instructions: str = DEFAULT_HERMES_VOICE_INSTRUCTIONS
 
 
 def _parse_bool(val: str | None) -> bool:
@@ -224,6 +237,8 @@ def load_config() -> AdapterConfig:
         hermes_session_key=os.getenv("HERMES_SESSION_KEY", "voice-satellite"),
         hermes_context_source=os.getenv("HERMES_CONTEXT_SOURCE", "none"),
         hermes_context_poll_interval=int(os.getenv("HERMES_CONTEXT_POLL_INTERVAL", "30")),
+        hermes_voice_instructions=os.getenv(
+            "HERMES_VOICE_INSTRUCTIONS", DEFAULT_HERMES_VOICE_INSTRUCTIONS),
         context_token_budget=int(os.getenv("CONTEXT_TOKEN_BUDGET", "1200")),
         result_speech_budget=int(os.getenv("RESULT_SPEECH_BUDGET", "600")),
         task_journal_path=os.getenv("TASK_JOURNAL_PATH", default_journal_path),

@@ -152,18 +152,17 @@ class LatencyMasker:
                 await emit_text(text)
         return decision
 
-    async def with_progressive_fillers(self, stream, utterance: str, local_llm):
+    async def with_progressive_fillers(self, stream, utterance: str, local_llm, *,
+                                       opening: bool = False):
         """Wrap a streaming skill's output, injecting follow-up fillers during the
         pre-content wait. Yields ``(text, is_filler)``.
 
-        The stream is drained by a pump task; the read timeout cancels only the
-        queue ``get``, never the underlying run stream (so the broker live-sink
-        and `stream_hermes_reply` stay intact)."""
-        if self.max_fillers == 0 or self.interval <= 0:
-            async for chunk in stream:
-                yield chunk, False
-            return
-
+        The stream is drained by a pump task started **before** the opening filler
+        is generated, so a Hermes dispatch (which fires on the stream's first pull)
+        overlaps the opening's LLM+TTS instead of waiting behind it — a multi-second
+        head start (FR-043). The read timeout cancels only the queue ``get``, never
+        the underlying run stream (so the broker live-sink and `stream_hermes_reply`
+        stay intact)."""
         q: "asyncio.Queue" = asyncio.Queue()
 
         async def pump():
@@ -175,23 +174,31 @@ class LatencyMasker:
             finally:
                 await q.put(("done", None))
 
-        task = asyncio.create_task(pump())
+        task = asyncio.create_task(pump())   # dispatch fires here, before the opening
+        fillers_on = self.max_fillers != 0 and self.interval > 0
         idx = 0
         content_started = False
         interval = self.interval
         try:
+            if opening:
+                line = await self.provider.opening(utterance, local_llm)
+                if line:
+                    yield line, True
             while True:
-                try:
-                    kind, val = await asyncio.wait_for(q.get(), timeout=interval)
-                except asyncio.TimeoutError:
-                    if not content_started and (self.max_fillers < 0 or idx < self.max_fillers):
-                        line = await self.provider.followup(utterance, local_llm, idx)
-                        if line:
-                            yield line, True
-                        idx += 1
-                        if self.backoff:
-                            interval = self.interval * (1.6 ** idx)   # widen: 3 → ~5 → ~8s
-                    continue
+                if not fillers_on:
+                    kind, val = await q.get()
+                else:
+                    try:
+                        kind, val = await asyncio.wait_for(q.get(), timeout=interval)
+                    except asyncio.TimeoutError:
+                        if not content_started and (self.max_fillers < 0 or idx < self.max_fillers):
+                            line = await self.provider.followup(utterance, local_llm, idx)
+                            if line:
+                                yield line, True
+                            idx += 1
+                            if self.backoff:
+                                interval = self.interval * (1.6 ** idx)   # widen: 3 → ~5 → ~8s
+                        continue
                 if kind == "done":
                     break
                 if kind == "error":

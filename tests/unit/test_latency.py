@@ -171,6 +171,27 @@ class TestProgressiveFillers(IsolatedAsyncioTestCase):
         out = [x async for x in self._masker(max_fillers=3).with_progressive_fillers(stream(), "q", None)]
         self.assertEqual([t for t, f in out if not f], ["first.", "second."])
 
+    async def test_opening_dispatches_before_filler_generates(self):
+        """FR-043: the pump (which fires the run dispatch on first pull) must run
+        BEFORE the opening filler is generated. The opening provider here blocks on
+        an event the pump sets — so if it weren't parallel, this would deadlock."""
+        pump_started = asyncio.Event()
+
+        class Prov(FillerProvider):
+            async def opening(self, utterance, local_llm):
+                await asyncio.wait_for(pump_started.wait(), 1.0)  # proves pump ran first
+                return "On it."
+
+        async def stream():
+            pump_started.set()          # the dispatch happens on this first pull
+            yield "The answer."
+
+        masker = LatencyMasker(provider=Prov("pool"), interval=0.04, backoff=False, max_fillers=3)
+        out = [x async for x in masker.with_progressive_fillers(
+            stream(), "q", None, opening=True)]
+        self.assertEqual(out[0], ("On it.", True))          # opening first, as a filler
+        self.assertIn(("The answer.", False), out)          # content delivered
+
 
 if __name__ == "__main__":
     unittest.main()

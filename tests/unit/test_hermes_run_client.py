@@ -92,6 +92,28 @@ class TestDispatch(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(handle.run_id, "run_abc")
         self.assertEqual(handle.status, "started")
 
+    async def test_instructions_attached_when_set(self):
+        seen = {}
+
+        def handler(request):
+            seen["body"] = json.loads(request.content)
+            return httpx.Response(202, json={"run_id": "run_x", "status": "started"})
+
+        client = make_client(handler, instructions="speak briefly")
+        await client.start_run("hi")
+        self.assertEqual(seen["body"]["instructions"], "speak briefly")
+
+    async def test_instructions_omitted_when_empty(self):
+        seen = {}
+
+        def handler(request):
+            seen["body"] = json.loads(request.content)
+            return httpx.Response(202, json={"run_id": "run_x", "status": "started"})
+
+        client = make_client(handler)  # default instructions=""
+        await client.start_run("hi")
+        self.assertNotIn("instructions", seen["body"])
+
     async def test_non_202_raises_dispatch_error(self):
         def handler(request):
             return httpx.Response(429, json={"error": {"message": "too many runs"}})

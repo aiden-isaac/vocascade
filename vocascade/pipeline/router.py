@@ -63,18 +63,21 @@ class RouterStage(PipelineStage):
             if pcm:
                 await self._emit_clip(pcm)
 
-    async def _speak_result(self, called, utterance: str, context, stage: str = ""):
+    async def _speak_result(self, called, utterance: str, context, stage: str = "",
+                            opening: bool = False):
         """Push a handler/resume result (str, coroutine, or async generator) to TTS.
         Streamed (async-gen) results get progressive fillers; only real content
         feeds the assistant_response message. The spoken text is recorded on the
-        session for the end-of-session memory gist (US10)."""
+        session for the end-of-session memory gist (US10). ``opening`` folds the
+        masking opening into the stream wrapper so the run dispatch parallelizes
+        with it."""
         spoken_text = ""
         try:
             if inspect.isasyncgen(called):
                 spoken: list[str] = []
                 if self.latency is not None:
                     async for chunk, is_filler in self.latency.with_progressive_fillers(
-                        called, utterance, context.local_llm
+                        called, utterance, context.local_llm, opening=opening
                     ):
                         if chunk:
                             await super().push(TextFrame(text=chunk))
@@ -169,19 +172,6 @@ class RouterStage(PipelineStage):
                 logger.warning("No skill resolved for this transcription.")
                 return
 
-            # 2c. Latency masking (US4): play a filler/opening before the result.
-            if self.latency is not None:
-                try:
-                    await self.latency.mask(
-                        stage=result.stage,
-                        skill_config=config_dict.get(result.skill_name, {}),
-                        utterance=frame.text,
-                        local_llm=context.local_llm,
-                        emit_text=self._emit_text,
-                    )
-                except Exception as e:
-                    logger.error(f"Latency masking failed: {e}", exc_info=True)
-
             # 3. Execute the winning skill.
             skill_obj = registry.get_skill(result.skill_name)
             if skill_obj is None:
@@ -189,9 +179,32 @@ class RouterStage(PipelineStage):
                 return
             # Stage payload (e.g. STOP's action, HIGH's matched keyword) flows to
             # the handler as `entities`.
-            await self._speak_result(
-                skill_obj.handler(frame.text, result.payload, context), frame.text, context,
-                stage=result.stage)
+            called = skill_obj.handler(frame.text, result.payload, context)
+
+            # Latency masking (US4/FR-043). A streamed skill (e.g. Hermes) folds
+            # the opening filler into its stream wrapper so the dispatch starts in
+            # parallel with the filler's LLM+TTS; a non-streamed skill emits the
+            # opening up front, before its (awaited) result.
+            opening = False
+            if self.latency is not None and self.latency.policy.decide(
+                result.stage, config_dict.get(result.skill_name, {})
+            ).kind == "opening":
+                if inspect.isasyncgen(called):
+                    opening = True
+                else:
+                    try:
+                        await self.latency.mask(
+                            stage=result.stage,
+                            skill_config=config_dict.get(result.skill_name, {}),
+                            utterance=frame.text,
+                            local_llm=context.local_llm,
+                            emit_text=self._emit_text,
+                        )
+                    except Exception as e:
+                        logger.error(f"Latency masking failed: {e}", exc_info=True)
+
+            await self._speak_result(called, frame.text, context,
+                                     stage=result.stage, opening=opening)
 
         else:
             # Pass all other frames downstream

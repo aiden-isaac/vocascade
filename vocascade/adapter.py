@@ -170,6 +170,7 @@ async def lifespan(app_: FastAPI):
         api_key=config.hermes_api_key,
         session_key=config.hermes_session_key,
         model=config.hermes_model,
+        instructions=config.hermes_voice_instructions,
     )
     app_.state.run_client = run_client
     app_.state.delivery = DeliveryCoordinator(speech_budget=config.result_speech_budget)
