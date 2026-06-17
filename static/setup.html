@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Vocascade Setup</title>
+<style>
+:root{
+  --bg:#04090a;--panel:#080f11;--border:#1a3a42;--accent:#00c8e0;--accent2:#00e0a0;
+  --text:#c8eef5;--muted:#4a7a8a;--warn:#e06000;--danger:#e04040;
+  --radius:14px;--glow:0 0 24px rgba(0,200,224,0.10);
+}
+*{box-sizing:border-box}
+body{min-height:100vh;margin:0;background:var(--bg);color:var(--text);
+  font-family:'Inter',ui-sans-serif,system-ui,sans-serif;padding:24px;display:flex;justify-content:center}
+.panel{width:min(96vw,860px);background:var(--panel);border:1px solid var(--border);
+  border-radius:var(--radius);padding:24px 26px;box-shadow:var(--glow);height:fit-content}
+.header{display:flex;align-items:center;gap:14px;margin-bottom:18px}
+.logo{width:40px;height:40px;border-radius:50%;background:linear-gradient(135deg,var(--accent),var(--accent2));
+  display:grid;place-items:center;font-size:18px;flex-shrink:0}
+h1{font-size:1.2rem;font-weight:700;letter-spacing:.04em;color:var(--accent);margin:0}
+.subtitle{font-size:.76rem;color:var(--muted);margin-top:2px}
+.tabs{display:flex;flex-wrap:wrap;gap:6px;border-bottom:1px solid var(--border);margin-bottom:18px}
+.tabs button{background:none;border:none;color:var(--muted);padding:8px 14px;font-size:.85rem;
+  cursor:pointer;border-bottom:2px solid transparent;font-family:inherit}
+.tabs button.active{color:var(--accent2);border-bottom-color:var(--accent2)}
+.tab{display:none}.tab.active{display:block}
+.group{margin-bottom:18px}
+.group h3{font-size:.72rem;text-transform:uppercase;letter-spacing:.08em;color:var(--accent);margin:0 0 8px}
+.field{display:grid;grid-template-columns:200px 1fr;gap:10px;align-items:center;margin-bottom:8px}
+.field label{font-size:.82rem;color:var(--muted)}
+input,textarea,select{width:100%;background:#060e10;border:1px solid var(--border);color:var(--text);
+  border-radius:8px;padding:8px 10px;font-size:.85rem;font-family:inherit}
+textarea{resize:vertical;min-height:80px}
+textarea.code{font-family:ui-monospace,'SF Mono',Menlo,monospace;min-height:340px;white-space:pre;font-size:.8rem}
+.btn{background:linear-gradient(135deg,var(--accent),var(--accent2));color:#04090a;border:none;
+  border-radius:8px;padding:9px 18px;font-weight:700;font-size:.84rem;cursor:pointer;font-family:inherit}
+.btn.ghost{background:none;border:1px solid var(--border);color:var(--text)}
+.btn:disabled{opacity:.5;cursor:not-allowed}
+.row{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:14px}
+.note{font-size:.74rem;color:var(--muted);margin:4px 0 0}
+#toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);padding:10px 18px;border-radius:10px;
+  font-size:.84rem;opacity:0;transition:opacity .3s;pointer-events:none;border:1px solid}
+#toast.show{opacity:1}
+#toast.ok{background:rgba(0,224,160,.12);border-color:var(--accent2);color:var(--accent2)}
+#toast.err{background:rgba(224,64,64,.12);border-color:var(--danger);color:var(--danger)}
+ul.stages{list-style:none;padding:0;margin:0 0 14px}
+ul.stages li{background:#060e10;border:1px solid var(--border);border-radius:8px;padding:10px 14px;
+  margin-bottom:6px;cursor:grab;display:flex;align-items:center;gap:10px;font-size:.86rem}
+ul.stages li.drag{opacity:.4}
+ul.stages li .grip{color:var(--muted)}
+pre.log{background:#020607;border:1px solid var(--border);border-radius:8px;padding:12px;font-size:.76rem;
+  max-height:240px;overflow:auto;white-space:pre-wrap;color:var(--muted);margin-top:12px}
+.cat{margin-bottom:14px}
+.cat label{display:block;font-size:.8rem;color:var(--accent2);margin-bottom:4px}
+.badge{font-size:.66rem;text-transform:uppercase;letter-spacing:.05em;padding:2px 8px;border-radius:99px;border:1px solid var(--border);color:var(--muted)}
+.badge.user{color:var(--accent);border-color:var(--accent)}
+.badge.on{color:var(--accent2);border-color:var(--accent2)}
+.badge.off{color:var(--warn);border-color:var(--warn)}
+.skill{border:1px solid var(--border);border-radius:10px;padding:12px 14px;margin-bottom:10px;background:#060e10}
+.skill .top{display:flex;align-items:center;gap:8px;margin-bottom:6px}
+.skill strong{color:var(--accent2);font-size:.92rem}
+</style>
+</head>
+<body>
+<div class="panel">
+  <div class="header">
+    <div class="logo">⚙️</div>
+    <div><h1>Vocascade Setup</h1><div class="subtitle">configure the voice stack — .env · voice · fillers · waterfall</div></div>
+  </div>
+  <div class="tabs" id="tabs">
+    <button data-tab="service" class="active">Service</button>
+    <button data-tab="voice">Voice</button>
+    <button data-tab="fillers">Fillers</button>
+    <button data-tab="waterfall">Waterfall</button>
+    <button data-tab="skills">Skills</button>
+    <button data-tab="advanced">Advanced</button>
+  </div>
+
+  <div class="tab active" id="tab-service">
+    <div id="service-fields"></div>
+    <div class="row"><button class="btn" onclick="saveService()">Save .env</button></div>
+  </div>
+
+  <div class="tab" id="tab-voice">
+    <div class="group">
+      <h3>Profile</h3>
+      <div class="field"><label>Genie profile</label><select id="voice-select"></select></div>
+      <div id="voice-fields"></div>
+      <p class="note">The ONNX model is produced by Genie separately — this only points at <code>genie_profiles/&lt;name&gt;/export/</code>.</p>
+    </div>
+    <div class="group">
+      <h3>Import reference audio</h3>
+      <div class="field"><label>Upload .wav</label><input type="file" id="voice-file" accept=".wav"></div>
+      <div class="row"><button class="btn ghost" onclick="uploadVoice()">Upload to profile</button></div>
+    </div>
+    <div class="row"><button class="btn" onclick="saveVoice()">Save voice config</button></div>
+  </div>
+
+  <div class="tab" id="tab-fillers">
+    <div id="filler-cats"></div>
+    <div class="row">
+      <input id="new-cat" placeholder="new category name" style="width:200px">
+      <button class="btn ghost" onclick="addCat()">Add category</button>
+    </div>
+    <div class="row">
+      <button class="btn" onclick="saveFillers()">Save fillers.json</button>
+      <button class="btn ghost" id="regen-btn" onclick="regen()">Regenerate audio (needs Genie)</button>
+    </div>
+    <pre class="log" id="regen-log" style="display:none"></pre>
+  </div>
+
+  <div class="tab" id="tab-waterfall">
+    <div class="group">
+      <h3>Stage order — drag to rearrange the queue</h3>
+      <ul class="stages" id="stage-list"></ul>
+    </div>
+    <div class="group">
+      <h3>Thresholds</h3>
+      <div id="threshold-fields"></div>
+    </div>
+    <div class="row"><button class="btn" onclick="saveWaterfall()">Save waterfall</button></div>
+  </div>
+
+  <div class="tab" id="tab-skills">
+    <p class="note" style="margin-bottom:12px">Read-only — discovered live from <code>vocascade/skills/base_skills/</code> and <code>user_skills/</code>. Your custom (user) skills show first and are highlighted. Enable/disable and fillers come from <code>config.yaml</code>.</p>
+    <div id="skill-list"></div>
+  </div>
+
+  <div class="tab" id="tab-advanced">
+    <p class="note" style="margin-bottom:8px">Raw <code>config.yaml</code> — validated (must keep <code>system</code>/<code>waterfall</code>/<code>skills</code>) before writing. Comments preserved.</p>
+    <textarea class="code" id="yaml-text" spellcheck="false"></textarea>
+    <div class="row"><button class="btn" onclick="saveYaml()">Save config.yaml</button></div>
+  </div>
+</div>
+<div id="toast"></div>
+
+<script>
+const loaded = {};
+async function api(method, path, body, raw){
+  const opt = {method, headers:{}};
+  if(body !== undefined){ opt.headers['Content-Type']='application/json'; opt.body=JSON.stringify(body); }
+  const res = await fetch(path, opt);
+  const t = await res.text();
+  if(raw) return {ok:res.ok, text:t};
+  let data; try{ data = t ? JSON.parse(t) : null; }catch{ data = t; }
+  if(!res.ok) throw new Error((data && data.detail) || data || res.statusText);
+  return data;
+}
+function toast(msg, ok=true){
+  const el = document.getElementById('toast');
+  el.textContent = msg; el.className = 'show ' + (ok ? 'ok' : 'err');
+  setTimeout(()=>el.className = el.className.replace('show','').trim(), 2600);
+}
+const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+// --- tabs ---
+document.getElementById('tabs').addEventListener('click', e => {
+  const t = e.target.dataset.tab; if(!t) return;
+  document.querySelectorAll('.tabs button').forEach(b => b.classList.toggle('active', b.dataset.tab===t));
+  document.querySelectorAll('.tab').forEach(p => p.classList.toggle('active', p.id==='tab-'+t));
+  load(t);
+});
+function load(tab){ if(loaded[tab]) return; loaded[tab]=true; ({service:loadService,voice:loadVoice,fillers:loadFillers,waterfall:loadWaterfall,skills:loadSkills,advanced:loadYaml}[tab]||(()=>{}))(); }
+
+function fieldRow(f){
+  const type = f.secret ? 'password' : 'text';
+  return `<div class="field"><label title="${f.key}">${f.key}</label>`+
+    `<input data-key="${f.key}" type="${type}" value="${esc(f.value ?? '')}" placeholder="${esc(f.default)}"></div>`;
+}
+function collect(container){
+  const out = {};
+  container.querySelectorAll('input[data-key],textarea[data-key]').forEach(i => out[i.dataset.key]=i.value);
+  return out;
+}
+
+// --- service ---
+async function loadService(){
+  const d = await api('GET','/api/env');
+  let html = '';
+  for(const [g, fields] of Object.entries(d.groups))
+    html += `<div class="group"><h3>${g}</h3>${fields.map(fieldRow).join('')}</div>`;
+  document.getElementById('service-fields').innerHTML = html;
+}
+async function saveService(){
+  try{ await api('POST','/api/env',{values:collect(document.getElementById('service-fields'))}); toast('.env saved'); }
+  catch(e){ toast(e.message,false); }
+}
+
+// --- voice ---
+async function loadVoice(){
+  const env = await api('GET','/api/env');
+  document.getElementById('voice-fields').innerHTML = env.voice.map(f =>
+    f.key==='GENIE_REFERENCE_TEXT'
+      ? `<div class="field"><label>${f.key}</label><textarea data-key="${f.key}" style="min-height:60px">${esc(f.value??'')}</textarea></div>`
+      : fieldRow(f)).join('');
+  const {voices} = await api('GET','/api/voices');
+  const sel = document.getElementById('voice-select');
+  sel.innerHTML = '<option value="">— select —</option>' +
+    voices.map(v => `<option value="${esc(v.name)}" data-export="${esc(v.export_dir||'')}" data-wav="${esc((v.wavs[0]||''))}">${esc(v.name)}${v.export_dir?'':' (no export/)'}</option>`).join('');
+  sel.onchange = () => {
+    const o = sel.selectedOptions[0]; if(!o.value) return;
+    setField('GENIE_CHARACTER_NAME', o.value);
+    if(o.dataset.export) setField('GENIE_ONNX_MODEL_DIR', o.dataset.export);
+    if(o.dataset.wav) setField('GENIE_REFERENCE_AUDIO', o.dataset.wav);
+  };
+}
+function setField(key, val){ const el = document.querySelector(`[data-key="${key}"]`); if(el) el.value = val; }
+async function uploadVoice(){
+  const file = document.getElementById('voice-file').files[0];
+  const name = document.querySelector('[data-key="GENIE_CHARACTER_NAME"]').value || 'default';
+  if(!file) return toast('pick a .wav first', false);
+  try{
+    const res = await fetch(`/api/voice/upload?name=${encodeURIComponent(name)}&filename=${encodeURIComponent(file.name)}`,
+      {method:'POST', body:file});
+    if(!res.ok) throw new Error((await res.json()).detail);
+    setField('GENIE_REFERENCE_AUDIO', (await res.json()).path);
+    toast('uploaded — remember to Save');
+  }catch(e){ toast(e.message,false); }
+}
+async function saveVoice(){
+  try{ await api('POST','/api/env',{values:collect(document.getElementById('tab-voice'))}); toast('voice config saved'); }
+  catch(e){ toast(e.message,false); }
+}
+
+// --- fillers ---
+async function loadFillers(){ renderCats(await api('GET','/api/fillers')); }
+function renderCats(obj){
+  document.getElementById('filler-cats').innerHTML = Object.entries(obj).map(([cat, phrases]) =>
+    `<div class="cat"><label>${esc(cat)}</label><textarea data-cat="${esc(cat)}">${esc(phrases.join('\n'))}</textarea></div>`).join('');
+}
+function addCat(){
+  const name = document.getElementById('new-cat').value.trim(); if(!name) return;
+  document.getElementById('filler-cats').insertAdjacentHTML('beforeend',
+    `<div class="cat"><label>${esc(name)}</label><textarea data-cat="${esc(name)}"></textarea></div>`);
+  document.getElementById('new-cat').value='';
+}
+function fillerObj(){
+  const out = {};
+  document.querySelectorAll('[data-cat]').forEach(t => {
+    out[t.dataset.cat] = t.value.split('\n').map(s=>s.trim()).filter(Boolean);
+  });
+  return out;
+}
+async function saveFillers(){
+  try{ await api('POST','/api/fillers', fillerObj()); toast('fillers.json saved'); }
+  catch(e){ toast(e.message,false); }
+}
+async function regen(){
+  const btn = document.getElementById('regen-btn'), log = document.getElementById('regen-log');
+  btn.disabled = true; log.style.display='block'; log.textContent='Running generate_fillers.py …';
+  try{
+    const {ok, text} = await api('POST','/api/fillers/regenerate', undefined, true);
+    log.textContent = text; toast(ok?'audio regenerated':'regenerate failed — see log', ok);
+  }catch(e){ log.textContent = e.message; toast('regenerate failed', false); }
+  finally{ btn.disabled = false; }
+}
+
+// --- waterfall ---
+let dragEl = null;
+async function loadWaterfall(){
+  const {stages, thresholds} = await api('GET','/api/waterfall');
+  const ul = document.getElementById('stage-list');
+  ul.innerHTML = stages.map(s => `<li draggable="true" data-stage="${esc(s)}"><span class="grip">⠿</span>${esc(s)}</li>`).join('');
+  document.getElementById('threshold-fields').innerHTML = Object.entries(thresholds).map(([k,v]) =>
+    `<div class="field"><label>${esc(k)}</label><input data-thr="${esc(k)}" type="number" step="0.01" min="0" max="1" value="${esc(v)}"></div>`).join('');
+  ul.ondragstart = e => { dragEl = e.target.closest('li'); dragEl.classList.add('drag'); };
+  ul.ondragend = () => dragEl && dragEl.classList.remove('drag');
+  ul.ondragover = e => {
+    e.preventDefault();
+    const after = [...ul.querySelectorAll('li:not(.drag)')].find(li => e.clientY < li.getBoundingClientRect().top + li.offsetHeight/2);
+    after ? ul.insertBefore(dragEl, after) : ul.appendChild(dragEl);
+  };
+}
+async function saveWaterfall(){
+  const stages = [...document.querySelectorAll('#stage-list li')].map(li => li.dataset.stage);
+  const thresholds = {};
+  document.querySelectorAll('[data-thr]').forEach(i => thresholds[i.dataset.thr] = parseFloat(i.value));
+  try{ await api('POST','/api/waterfall',{stages, thresholds}); toast('waterfall saved'); }
+  catch(e){ toast(e.message,false); }
+}
+
+// --- skills (read-only) ---
+async function loadSkills(){
+  const {skills} = await api('GET','/api/skills');
+  document.getElementById('skill-list').innerHTML = skills.length ? skills.map(s => `
+    <div class="skill">
+      <div class="top">
+        <strong>${esc(s.name)}</strong>
+        <span class="badge ${s.source==='user'?'user':''}">${esc(s.source)}</span>
+        <span class="badge ${s.enabled?'on':'off'}">${s.enabled?'enabled':'disabled'}</span>
+        ${s.filler ? `<span class="badge">filler: ${esc(s.filler)}</span>` : ''}
+      </div>
+      ${s.examples.length ? `<div class="note">e.g. ${s.examples.map(esc).join('  ·  ')}</div>` : ''}
+      ${s.keywords.length ? `<div class="note">keywords: ${s.keywords.map(esc).join(', ')}</div>` : ''}
+    </div>`).join('') : '<p class="note">No skills discovered.</p>';
+}
+
+// --- advanced ---
+async function loadYaml(){ document.getElementById('yaml-text').value = (await api('GET','/api/config-yaml', undefined, true)).text; }
+async function saveYaml(){
+  try{ await api('POST','/api/config-yaml',{text:document.getElementById('yaml-text').value}); toast('config.yaml saved'); }
+  catch(e){ toast(e.message,false); }
+}
+
+loadService();
+</script>
+</body>
+</html>
