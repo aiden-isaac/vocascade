@@ -13,7 +13,6 @@ static/fillers/**/*.pcm
 
 # Agent/Environment specifics
 .opencode/
-clean_files.py
 
 # OS / editor
 .DS_Store

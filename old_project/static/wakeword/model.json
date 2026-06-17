@@ -1,6 +1,0 @@
-{
-  "file": "model.onnx",
-  "name": "Hey Ordus",
-  "sample_rate": 16000,
-  "threshold": 0.5
-}

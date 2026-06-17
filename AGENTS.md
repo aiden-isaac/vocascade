@@ -1,7 +1,8 @@
 # vocascade — Agent Instructions
 
-> For the full architecture, runtime topology, and the gotchas that bite, read
-> [`CLAUDE.md`](CLAUDE.md). This file is the quick map.
+The single source of truth for working in this repo: layout, commands,
+architecture, and the gotchas that bite. (`CLAUDE.md` is a symlink to this file
+so Claude Code auto-loads it.) End-user setup lives in [`README.md`](README.md).
 
 ## Repo layout
 
@@ -26,10 +27,29 @@ user_skills/               # User-provided skills, auto-discovered at startup
 static/                    # index.html (browser client), fillers/, wakeword/
 scripts/                   # run_voice_stack.sh, generate_fillers.py, etc.
 tests/                     # unit/, integration/, contract/
-old_project/               # Legacy code — do not modify
 ```
 
-Entry points: `python -m vocascade` (server) and `python -m vocascade.edge` (edge client).
+Entry points: `python -m vocascade` (server), `python -m vocascade.edge` (edge
+client), `python -m vocascade.setup_server` (localhost config GUI, :8099).
+
+## Architecture (the moving parts)
+
+Edge client (mic, wake word, VAD) or browser ↔ server over one WebSocket `/ws`.
+Each utterance flows through an ordered **confidence waterfall** — the first
+stage to clear its threshold wins:
+
+```
+STOP → CONVERSE → HIGH (keyword skills) → MEDIUM (local-LLM classifier) → SMALLTALK → HERMES
+```
+
+**Two-brain dispatch.** The local LLM ("fast brain") answers smalltalk and runs
+the medium classifier directly. Anything needing real data or external actions
+falls through to **HERMES** ("heavy brain"), which **dispatches asynchronously**
+(`task_broker.py`) and returns immediately with a short spoken handoff; the real
+result arrives seconds-to-minutes later and is spoken **proactively** via
+`delivery.py` (an idle-gated FIFO — nothing speaks while the user/bot is talking).
+Tasks outlive voice sessions. `hermes_run_client.py` is the only thing that
+speaks HTTP to Hermes (async runs API, reconcile-on-reconnect).
 
 ## Commands
 
