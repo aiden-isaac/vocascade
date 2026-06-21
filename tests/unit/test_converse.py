@@ -89,7 +89,8 @@ class TestRouterConverse(IsolatedAsyncioTestCase):
         self.assertEqual(captured["utterance"], "five minutes")
         self.assertIsNone(session.converse_claim)   # released on consumption
         spoken = [f.text for f in sink.frames if isinstance(f, TextFrame)]
-        self.assertEqual(spoken, ["You said five minutes"])
+        # Reply is streamed through the speech chunker (terminating period added).
+        self.assertEqual(spoken, ["You said five minutes."])
 
 
 if __name__ == "__main__":
