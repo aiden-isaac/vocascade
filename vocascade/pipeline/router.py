@@ -15,6 +15,7 @@ from vocascade.pipeline.pipeline import (
 )
 from vocascade.skills.context import SkillContext, ToolBag
 from vocascade.skills.registry import registry
+from vocascade.tts.chunker import split_for_speech
 from vocascade.session.state import SessionState
 from vocascade.session.teardown import contains_sentinel, strip_sentinel
 
@@ -104,7 +105,11 @@ class RouterStage(PipelineStage):
                     if res:
                         spoken_text = res
                         await super().push(ControlMessageFrame({"type": "assistant_response", "text": res}))
-                        await super().push(TextFrame(text=res))
+                        # Stream the reply to TTS sentence-by-sentence (like Hermes)
+                        # so a long skill answer starts speaking on the first chunk
+                        # instead of buffering the whole paragraph.
+                        for chunk in split_for_speech(res):
+                            await super().push(TextFrame(text=chunk))
                 elif hasattr(res, "__aiter__"):
                     chunks: list[str] = []
                     async for chunk in res:
