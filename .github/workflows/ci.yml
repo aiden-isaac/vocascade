@@ -1,0 +1,22 @@
+name: CI
+on: [push, pull_request]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      # ponytail: full install (silero-vad pulls torch, slow first run); pip cache
+      # amortizes it. Trim to a requirements-ci.txt only if it stays annoying.
+      - run: pip install -r requirements.txt pytest
+      # Only the hermetic unit suite. Empty LLM_BASE_URL/HERMES_BASE_URL stop
+      # config.py (which otherwise defaults LLM_BASE_URL to a live public endpoint)
+      # from making real network calls on the runner. integration/contract/
+      # routing_eval need a live STT/LLM/Hermes, so they're out of CI.
+      - run: PYTHONPATH=. python -m pytest tests/unit -q
+        env:
+          LLM_BASE_URL: ""
+          HERMES_BASE_URL: ""
