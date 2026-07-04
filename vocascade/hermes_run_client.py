@@ -1,7 +1,7 @@
 """
 HermesRunClient — the only component that speaks HTTP to the Hermes Agent
 api_server (spec 005). Wraps the async runs API pinned in
-specs/005-hermes-agent-backend/contracts/hermes-api.md:
+docs/legacy-specs/005-hermes-agent-backend/contracts/hermes-api.md:
 
     POST /v1/runs                    dispatch, 202 + run_id
     GET  /v1/runs/{id}               snapshot (reconciliation)

@@ -1,0 +1,19 @@
+schema: spec-driven
+
+context: |
+  Project: vocascade — a self-hosted voice assistant satellite (Python 3.11+, asyncio)
+  Stack: FastAPI WebSocket server, faster-whisper STT, custom GenieTTS (voice cloning), asyncio pipeline,
+         confidence waterfall router, skill registry, Ed25519 transport auth, local LLM + Hermes fallback.
+  Entry points: `python -m vocascade` (server), `python -m vocascade.edge` (edge/mic client).
+  Tests: `PYTHONPATH=. .venv/bin/python -m pytest tests/ -q` (always use project .venv, not system python).
+  Config: config.yaml (structure/tunables) + .env (secrets/endpoints). Fail fast on missing required values.
+  Commits: conventional commit messages (feat:, fix:, docs:, refactor:, test:). PRs required.
+  Architecture principles:
+    - Hardware agnostic: no hardcoded device indices, paths, or arch-specific code.
+    - Config-driven: every tunable in config.yaml or .env; no personal paths in source.
+    - Modular: each module (STT, TTS, gateway, VAD) independently importable and testable.
+    - Async-first: no blocking I/O on the event loop; CPU-bound work offloaded to thread/process pool.
+    - Degraded-mode: TTS offline → text-only fallback; network drops handled with retry + backoff.
+    - Docstrings on all public modules/classes/functions (purpose, params, return, side effects).
+  Target hardware: any Linux host (x86_64 or aarch64), Python 3.11+, ALSA/PulseAudio/PipeWire.
+  No GPU required: inference must run on CPU; GPU acceleration optional.

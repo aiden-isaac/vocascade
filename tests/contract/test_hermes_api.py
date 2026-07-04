@@ -1,7 +1,7 @@
 """Live contract test for the Hermes Agent api_server (spec 005, T101).
 
 Pins the subset of the Hermes API consumed by the voice adapter, as
-documented in specs/005-hermes-agent-backend/contracts/hermes-api.md.
+documented in docs/legacy-specs/005-hermes-agent-backend/contracts/hermes-api.md.
 
 The whole module is SKIPPED unless a Hermes server is reachable at
 HERMES_BASE_URL (read from the environment, falling back to the repo .env).
