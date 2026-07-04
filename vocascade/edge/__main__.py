@@ -115,6 +115,7 @@ class SatelliteClient:
         self.stream_out = None
         self.oww_model = None
 
+        self.wake_word_threshold = config.get("wake_word_threshold", 0.5)
         self.ws_url = config.get("ws_url", "ws://localhost:8000/ws")
         self.last_audio_time = time.time()
 
@@ -264,7 +265,7 @@ class SatelliteClient:
                         self.oww_model.predict(audio_data)
                         for mdl in self.oww_model.prediction_buffer.keys():
                             scores = list(self.oww_model.prediction_buffer[mdl])
-                            if scores and scores[-1] > 0.5:
+                            if scores and scores[-1] > self.wake_word_threshold:
                                 self.oww_model.reset()
                                 await self.handle_wake_word_detected()
                                 break
@@ -297,6 +298,7 @@ def _load_edge_config() -> dict:
     return {
         "ws_url": os.getenv("WS_URL", "ws://localhost:8000/ws"),
         "wake_word_model": os.getenv("WAKE_WORD_MODEL", "static/wakeword/eden_wakeword.onnx"),
+        "wake_word_threshold": float(os.getenv("WAKE_WORD_THRESHOLD", "0.5")),
         "audio_in_rate": int(os.getenv("AUDIO_IN_SAMPLE_RATE", "16000")),
         "audio_out_rate": int(os.getenv("AUDIO_OUT_SAMPLE_RATE", "32000")),
         "transport_auth_mode": auth_mode,

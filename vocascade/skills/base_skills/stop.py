@@ -7,7 +7,21 @@ in-flight Hermes runs and releases any multi-turn claim; a farewell arms the
 teardown so the session returns to passive after the sign-off is spoken.
 """
 
+import logging
+
 from vocascade.skills import skill, SkillContext
+
+logger = logging.getLogger("vocascade.skills.base_skills.stop")
+
+# Hooks fired on an explicit "stop" so a skill can silence something it started
+# outside the conversation (e.g. a user alarm/rain-noise subprocess). Each hook
+# is a zero-arg callable returning truthy if it actually stopped something. A
+# no-op when nothing registers — keeps STOP decoupled from optional user skills.
+_STOP_HOOKS = []  # ponytail: process-wide list; alarm skill registers stop_all here
+
+
+def register_stop_hook(fn):
+    _STOP_HOOKS.append(fn)
 
 
 @skill(name="stop")
@@ -30,4 +44,13 @@ async def handle_stop(intent: str, entities: dict, ctx: SkillContext) -> str:
                 await broker.cancel(task.task_id)
     if ctx.session is not None:
         ctx.session.converse_claim = None   # STOP releases any claim (FR-081)
-    return "Okay."
+
+    # Silence anything a skill is playing outside the conversation (e.g. a ringing
+    # alarm). Returns "Stopped." if a hook actually killed something.
+    silenced = False
+    for hook in _STOP_HOOKS:
+        try:
+            silenced = bool(hook()) or silenced
+        except Exception as exc:
+            logger.error("Stop hook failed: %s", exc)
+    return "Stopped." if silenced else "Okay."

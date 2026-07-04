@@ -16,7 +16,7 @@ from vocascade.pipeline.pipeline import (
     BotStoppedSpeakingFrame
 )
 from vocascade.tts.genie_client import GenieTTSClient
-from vocascade.audio.effects import apply_effect_chain, get_character_effects_config
+from vocascade.audio.effects import apply_effect_chain, apply_gain, get_character_effects_config
 
 logger = logging.getLogger("vocascade.pipeline.tts")
 
@@ -36,12 +36,14 @@ class GenieTTSStage(PipelineStage):
         reference_text: str | None = None,
         language: str = "en",
         degraded_mode: bool = False,
-        sample_rate: int = 32000
+        sample_rate: int = 32000,
+        volume: float = 1.0
     ):
         super().__init__()
         self.tts_url = tts_url
         self.character_name = character_name
         self.sample_rate = sample_rate
+        self.volume = volume
         
         self._client = GenieTTSClient(
             tts_url=tts_url,
@@ -117,7 +119,9 @@ class GenieTTSStage(PipelineStage):
                         # Apply effects chain if character effects configured
                         if effects_config:
                             chunk = apply_effect_chain(chunk, effects_config)
-                        
+                        if self.volume != 1.0:
+                            chunk = apply_gain(chunk, self.volume)
+
                         if chunk:
                             await super().push(AudioFrame(
                                 audio=chunk,

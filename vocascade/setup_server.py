@@ -64,7 +64,26 @@ VOICE_KEYS: list[tuple[str, str]] = [
     ("GENIE_REFERENCE_TEXT", ""),
     ("GENIE_LANGUAGE", "en"),
 ]
-KNOWN_KEYS = {k for grp in ENV_GROUPS.values() for k, _ in grp} | {k for k, _ in VOICE_KEYS}
+# Sensitivity/tuning knobs (issue #171) — env-driven, each with a plain-english
+# blurb shown on its own tab. Defaults mirror config.py / edge/__main__.py.
+TUNING_KEYS: list[tuple[str, str, str]] = [
+    ("WAKE_WORD_THRESHOLD", "0.5",
+     "Wake-word sensitivity (0–1) — lower triggers more easily but with more false alarms."),
+    ("VAD_THRESHOLD", "0.5",
+     "Speech-detection sensitivity (0–1) when server VAD is on — lower hears quieter speech but also more noise."),
+    ("VAD_MIN_SILENCE_MS", "250",
+     "How long you pause (milliseconds) before it decides you've stopped talking — higher is more patient."),
+    ("VAD_SPEECH_PAD_MS", "50",
+     "Extra audio (milliseconds) kept around each utterance so the first/last words aren't clipped."),
+    ("WHISPER_BEAM_SIZE", "1",
+     "Transcription search width — higher is a little more accurate but slower; 1 is fastest."),
+    ("WHISPER_VAD_FILTER", "false",
+     "Let the transcriber skip silent/non-speech audio (true/false)."),
+    ("TTS_VOLUME", "1.0",
+     "Output loudness multiplier — 1.0 is normal, 2.0 is twice as loud, 0.5 is half."),
+]
+KNOWN_KEYS = ({k for grp in ENV_GROUPS.values() for k, _ in grp}
+              | {k for k, _ in VOICE_KEYS} | {k for k, _, _ in TUNING_KEYS})
 
 
 def _is_secret(key: str) -> bool:
@@ -135,17 +154,19 @@ async def index() -> HTMLResponse:
 async def get_env() -> dict:
     current = dotenv_values(ENV_PATH) if ENV_PATH.exists() else {}
 
-    def field(key: str, default: str) -> dict:
+    def field(key: str, default: str, blurb: str = "") -> dict:
         return {
             "key": key,
             "value": current.get(key) if current.get(key) is not None else default,
             "default": default,
             "secret": _is_secret(key),
+            "blurb": blurb,
         }
 
     return {
         "groups": {g: [field(k, d) for k, d in fields] for g, fields in ENV_GROUPS.items()},
         "voice": [field(k, d) for k, d in VOICE_KEYS],
+        "tuning": [field(k, d, b) for k, d, b in TUNING_KEYS],
     }
 
 
