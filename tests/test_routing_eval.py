@@ -62,6 +62,7 @@ class _DetConfig:
         "stop": {"enabled": True},
     }
     tts_character_name = "default"
+    hermes_base_url = "http://hermes.test/v1"  # configured → hermes stage kept (D2)
     llm_base_url = ""
     llm_api_key = None
     llm_model = "x"

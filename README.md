@@ -1,21 +1,25 @@
 # vocascade
 
-A local voice frontend for your **Hermes agent**. Talk to it out loud, and it
-talks back in a cloned voice. It runs wake-word detection and transcription on
-your own machine, answers chit-chat and simple commands instantly with a small
-local model, and hands anything that needs real data or actions to your Hermes
-agent — speaking the answer the moment it comes back.
+A self-hosted voice assistant you point at **your own LLM**. Talk to it out
+loud, and it talks back in a cloned voice. It runs wake-word detection and
+transcription on your own machine, answers chit-chat and simple commands
+instantly, and can optionally hand anything that needs real data or actions to
+a **Hermes agent** — speaking the answer the moment it comes back.
 
 No cloud STT/TTS, no third-party voice framework in the path.
 
 ## What you need
 
 - **Python 3.11** and the project virtualenv (`.venv`).
-- A reachable **Hermes agent** endpoint (`HERMES_BASE_URL`) — the "heavy brain".
-- An OpenAI-compatible **local LLM** endpoint (`LLM_BASE_URL`) — the "fast brain"
-  for smalltalk and intent routing. Any local server (LiteLLM, vLLM, Ollama's
-  OpenAI shim, …) works.
+- An OpenAI-compatible **LLM** endpoint (`LLM_BASE_URL` + `LLM_MODEL`) — the
+  "fast brain" for smalltalk and intent routing. Bring your own: a local server
+  (Ollama, llama.cpp-server, vLLM, LiteLLM, …) or a cloud key (OpenRouter,
+  Gemini's OpenAI-compatible endpoint, …). Same config either way — it's just a
+  base URL, an optional key, and a model name. **Required** — the server won't
+  start without it.
 - A **microphone** (to run the edge client) or just a **browser**.
+- *(Optional)* A **Hermes agent** endpoint (`HERMES_BASE_URL`) — the "heavy
+  brain" for real data and external actions. Leave it unset to run local-only.
 - *(Optional)* **Genie TTS** for the cloned voice. Without it, vocascade still
   runs and replies as text — voice degrades gracefully, it doesn't break.
 
@@ -37,15 +41,22 @@ The easy way — a localhost web GUI that writes your config files for you:
 .venv/bin/python -m vocascade.setup_server     # -> http://127.0.0.1:8099
 ```
 
-Or by hand — copy the templates and set the two endpoints that matter
-(`HERMES_BASE_URL` and `LLM_BASE_URL`):
+Use the **Test connection** button on the LLM fields to verify your endpoint
+and key before saving.
+
+Or by hand — copy the templates and set the endpoint that matters
+(`LLM_BASE_URL` + `LLM_MODEL`; `HERMES_BASE_URL` is optional):
 
 ```bash
 cp .env.example .env                 # secrets + endpoints
 cp config.yaml.example config.yaml   # waterfall, skills, latency
 ```
 
-Missing or malformed required values fail fast at startup with a located message.
+Missing or malformed required values fail fast at startup with a located
+message. On startup the health report probes your endpoints and prints a
+verdict (OK / auth rejected / unreachable) — and if the assistant can't reach
+its language model mid-session, it says so out loud instead of failing
+silently.
 
 ## Run
 
@@ -82,7 +93,9 @@ STOP → CONVERSE → HIGH (keywords) → MEDIUM (local-LLM classifier) → SMAL
 - **SMALLTALK** — the local LLM answers chit-chat in persona, and *abstains* for
   anything needing real data so it falls through to…
 - **HERMES** — the always-async agent. It dispatches a run, streams the reply
-  into TTS sentence-by-sentence, and delivers late results proactively.
+  into TTS sentence-by-sentence, and delivers late results proactively. With no
+  `HERMES_BASE_URL` configured this stage is dropped (local-only mode) and the
+  assistant says it can't help with requests nothing else handled.
 
 ```mermaid
 graph TD

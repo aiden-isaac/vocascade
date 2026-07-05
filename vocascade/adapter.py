@@ -167,17 +167,25 @@ async def lifespan(app_: FastAPI):
     # Hermes backend (US3): one run client + broker + delivery coordinator for
     # the app's lifetime — tasks outlive voice sessions (FR-061). No startup
     # network probe; the broker probes capabilities lazily on first dispatch.
-    run_client = HermesRunClient(
-        base_url=config.hermes_base_url,
-        api_key=config.hermes_api_key,
-        session_key=config.hermes_session_key,
-        model=config.hermes_model,
-        instructions=config.hermes_voice_instructions,
-    )
-    app_.state.run_client = run_client
+    # HERMES_BASE_URL empty ⇒ local-only mode (D2): no run client, no broker,
+    # and the waterfall drops its hermes stage. Delivery stays — it's a generic
+    # spoken-notice FIFO other components may use.
     app_.state.delivery = DeliveryCoordinator(speech_budget=config.result_speech_budget)
-    app_.state.task_broker = TaskBroker(run_client, app_.state.delivery)
-    logger.info("Hermes broker ready (backend %s)", config.hermes_base_url)
+    run_client = None
+    if config.hermes_base_url:
+        run_client = HermesRunClient(
+            base_url=config.hermes_base_url,
+            api_key=config.hermes_api_key,
+            session_key=config.hermes_session_key,
+            model=config.hermes_model,
+            instructions=config.hermes_voice_instructions,
+        )
+        app_.state.task_broker = TaskBroker(run_client, app_.state.delivery)
+        logger.info("Hermes broker ready (backend %s)", config.hermes_base_url)
+    else:
+        app_.state.task_broker = None
+        logger.info("HERMES_BASE_URL not set — local-only mode (skills + smalltalk only)")
+    app_.state.run_client = run_client
 
     # Latency masking (US4): dynamic spoken fillers + progressive follow-ups.
     # Pre-rendered clips are used ONLY for the wakeword acknowledge.
@@ -235,11 +243,13 @@ async def lifespan(app_: FastAPI):
             await app_.state.warmup_task
         except (asyncio.CancelledError, Exception):
             pass
-    await app_.state.task_broker.shutdown()
-    try:
-        await run_client.aclose()
-    except Exception:  # best-effort; client may never have opened a connection
-        pass
+    if app_.state.task_broker is not None:
+        await app_.state.task_broker.shutdown()
+    if run_client is not None:
+        try:
+            await run_client.aclose()
+        except Exception:  # best-effort; client may never have opened a connection
+            pass
     app_.state.stt.close()
 
 

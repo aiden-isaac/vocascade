@@ -74,9 +74,17 @@ No `conftest.py`/`pytest.ini`; flat discovery under `tests/`.
 - **Config split (OQ-4)**: `config.yaml` = structure (waterfall order/thresholds,
   per-skill settings, latency, role, transport auth); `.env` = secrets/endpoints.
   Missing required values fail fast with a located message.
-- **Two brains**: the local LLM (`LLM_BASE_URL`) handles smalltalk + the medium
-  classifier + the smalltalk gate; Hermes (`HERMES_BASE_URL`) is the always-async
-  fallback. The local LLM is never given tool schemas.
+- **Two brains, one required**: the LLM (`LLM_BASE_URL` + `LLM_MODEL`, BYOK —
+  any OpenAI-compatible endpoint, no defaults, fail-fast) handles smalltalk +
+  the medium classifier + the smalltalk gate; Hermes (`HERMES_BASE_URL`) is the
+  always-async fallback and is OPTIONAL — empty means local-only mode (hermes
+  stage dropped, waterfall exhaustion speaks a can't-help notice). The local
+  LLM is never given tool schemas.
+- **LLM failure UX**: `LocalLLM` classifies failures (`LLMAuthError` /
+  `LLMUnreachableError`); the first classified failure per session is spoken
+  specifically ("I can't reach my language model…"), later ones use the generic
+  fallback. Startup health report probes both endpoints (3s timeout, never
+  blocks startup).
 - **Smalltalk gate (FR-033)**: smalltalk abstains for data/action utterances so
   they fall through to Hermes. Toggle with `skills.smalltalk.gate`.
 - **Transport auth (OQ-3)**: `transport_auth_mode` MUST be explicit

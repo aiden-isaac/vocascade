@@ -34,6 +34,9 @@ class SessionState:
     # Armed by a farewell phrase or the model ENDSESSION sentinel; teardown to
     # passive fires after the current reply finishes speaking (US5 / FR-062).
     teardown_armed: bool = False
+    # D4: the specific "can't reach my language model" notice is spoken at most
+    # once per session; later classified LLM failures use the generic fallback.
+    llm_failure_notified: bool = False
     # Per-session turn log (user utterance + spoken reply + winning stage) used to
     # build the session-end memory gist (US10 / FR-090). Not a full transcript.
     turns: list = field(default_factory=list)

@@ -111,14 +111,49 @@ class RouteHarness:
         )
 
 
+def _pct(values: list[float], p: float) -> float:
+    s = sorted(values)
+    return s[min(len(s) - 1, int(len(s) * p))]
+
+
+async def _timed_runs(harness: "RouteHarness", utterance: str, n: int):
+    """D8 (measure-only): repeat the classification path N times, collecting
+    total and per-stage wall time from the trace. Changes nothing."""
+    import time
+    totals: list[float] = []
+    per_stage: dict[str, list[float]] = {}
+    decision = None
+    for _ in range(n):
+        t0 = time.perf_counter()
+        decision = await harness.route(utterance)
+        totals.append((time.perf_counter() - t0) * 1000.0)
+        for rec in decision.trace:
+            if "ms" in rec:
+                per_stage.setdefault(rec["stage"], []).append(rec["ms"])
+    return totals, per_stage, decision
+
+
 def main(argv: list[str] | None = None) -> int:
     logging.basicConfig(level=logging.WARNING)
     argv = argv if argv is not None else sys.argv[1:]
     if not argv:
-        print('usage: python -m vocascade.eval.route_harness "<utterance>"', file=sys.stderr)
+        print('usage: python -m vocascade.eval.route_harness [--time N] "<utterance>"',
+              file=sys.stderr)
         return 2
 
     from vocascade.config import load_config
+
+    if argv[0] == "--time":
+        n, utterance = int(argv[1]), " ".join(argv[2:])
+        harness = RouteHarness(load_config())
+        totals, per_stage, decision = asyncio.run(_timed_runs(harness, utterance, n))
+        print(f"utterance={utterance!r}  runs={n}  winner={decision.winning_stage}"
+              f"  skill={decision.skill}")
+        print(f"{'total':<10} p50={_pct(totals, .5):7.1f}ms  p95={_pct(totals, .95):7.1f}ms")
+        for stage, vals in per_stage.items():
+            print(f"{stage:<10} p50={_pct(vals, .5):7.1f}ms  p95={_pct(vals, .95):7.1f}ms")
+        return 0
+
     harness = RouteHarness(load_config())
     decision = asyncio.run(harness.route(" ".join(argv)))
     print(decision)

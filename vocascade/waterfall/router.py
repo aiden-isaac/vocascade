@@ -3,6 +3,7 @@ vocascade/waterfall/router.py — Confidence waterfall router and stage implemen
 """
 
 import logging
+import time
 from typing import List, Dict
 from vocascade.waterfall.types import WaterfallStage, ConfidenceResult
 from vocascade.waterfall.classifier import IntentClassifier
@@ -165,13 +166,15 @@ class WaterfallRouter:
                 continue
 
             try:
+                t0 = time.perf_counter()
                 result = await stage.evaluate(utterance, ctx)
                 threshold = stage.threshold
                 won = result.confidence >= threshold
                 logger.debug(f"Stage '{stage.name}' evaluated with confidence {result.confidence} (threshold {threshold})")
                 if trace is not None:
                     trace.append({"stage": stage.name, "confidence": result.confidence,
-                                  "threshold": threshold, "won": won, "skill": result.skill_name})
+                                  "threshold": threshold, "won": won, "skill": result.skill_name,
+                                  "ms": (time.perf_counter() - t0) * 1000.0})
 
                 if won:
                     logger.info(f"WaterfallRouter: stage '{stage.name}' won (confidence: {result.confidence}, skill: {result.skill_name})")
@@ -181,11 +184,20 @@ class WaterfallRouter:
                 if trace is not None:
                     trace.append({"stage": stage.name, "error": str(e), "won": False})
 
-        logger.warning("WaterfallRouter: no stage met its threshold. Falling back to hermes.")
+        # Exhaustion fallback: hermes catches everything — but only when it is
+        # actually configured (D2/D6). Local-only mode returns a no-winner
+        # result so the pipeline can speak a can't-help notice, never silence.
+        if any(s.name == "hermes" for s in self.stages):
+            logger.warning("WaterfallRouter: no stage met its threshold. Falling back to hermes.")
+            if trace is not None:
+                trace.append({"stage": "hermes", "confidence": 1.0, "threshold": 0.0,
+                              "won": True, "skill": "hermes", "fallback": True})
+            return ConfidenceResult(stage="hermes", confidence=1.0, skill_name="hermes")
+        logger.warning("WaterfallRouter: no stage met its threshold and no hermes stage (local-only).")
         if trace is not None:
-            trace.append({"stage": "hermes", "confidence": 1.0, "threshold": 0.0,
-                          "won": True, "skill": "hermes", "fallback": True})
-        return ConfidenceResult(stage="hermes", confidence=1.0, skill_name="hermes")
+            trace.append({"stage": "none", "confidence": 0.0, "threshold": 0.0,
+                          "won": False, "skill": None, "exhausted": True})
+        return ConfidenceResult(stage="none", confidence=0.0, skill_name=None)
 
     @classmethod
     def from_config(cls, config) -> "WaterfallRouter":
@@ -216,6 +228,12 @@ class WaterfallRouter:
 
         stages: List[WaterfallStage] = []
         for name in stages_list:
+            # HERMES_BASE_URL empty ⇒ local-only mode (D2): a configured hermes
+            # stage is dropped with a log line, not an error, so the shipped
+            # example config works without a Hermes agent.
+            if name == "hermes" and not getattr(config, "hermes_base_url", ""):
+                logger.info("Dropping 'hermes' waterfall stage — HERMES_BASE_URL not set (local-only mode)")
+                continue
             enabled = config.skills_config.get(name, {}).get("enabled", True)
             threshold = _threshold_for(name, thresholds)
 

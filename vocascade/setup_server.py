@@ -30,29 +30,38 @@ FILLERS_PATH = ROOT / "static" / "fillers.json"
 SETUP_HTML = ROOT / "static" / "setup.html"
 PROFILES_DIR = ROOT / "genie_profiles"
 
-# Env vars a human actually sets, grouped for the UI. Names/defaults mirror the
-# os.getenv(...) calls in vocascade/config.py — that file is the source of truth.
-ENV_GROUPS: dict[str, list[tuple[str, str]]] = {
+# Env vars a human actually sets, grouped for the UI: (key, default, blurb).
+# Names/defaults mirror the os.getenv(...) calls in vocascade/config.py — that
+# file is the source of truth. BYOK (D1/D7): the LLM group is the first-run
+# essential and ships with NO defaults; Hermes is optional (empty = local-only).
+ENV_GROUPS: dict[str, list[tuple[str, str, str]]] = {
+    "LLM (required)": [
+        ("LLM_BASE_URL", "",
+         "Any OpenAI-compatible endpoint, including /v1. Local: http://localhost:11434/v1 "
+         "(Ollama), http://localhost:8080/v1 (llama.cpp-server). Cloud: "
+         "https://openrouter.ai/api/v1, https://generativelanguage.googleapis.com/v1beta/openai."),
+        ("LLM_API_KEY", "",
+         "API key for the endpoint above. Leave empty for local endpoints that need none."),
+        ("LLM_MODEL", "",
+         "Model name to request, e.g. llama3.2 (Ollama) or anthropic/claude-haiku-4-5 (OpenRouter)."),
+    ],
+    "Hermes agent (optional)": [
+        ("HERMES_BASE_URL", "",
+         "Hermes agent endpoint including /v1. Leave empty to run local-only "
+         "(skills + smalltalk, no agent fallback)."),
+        ("HERMES_API_KEY", "", ""),
+        ("HERMES_MODEL", "hermes-agent", ""),
+        ("HERMES_SESSION_KEY", "voice-satellite", ""),
+    ],
     "Service": [
-        ("HOST", "0.0.0.0"),
-        ("PORT", "8000"),
-        ("AUDIO_IN_SAMPLE_RATE", "16000"),
-        ("AUDIO_OUT_SAMPLE_RATE", "32000"),
-    ],
-    "Local LLM": [
-        ("LLM_BASE_URL", "https://llm.frizzt.com/v1"),
-        ("LLM_API_KEY", ""),
-        ("LLM_MODEL", "qwen-moe-coder-fast"),
-    ],
-    "Hermes agent": [
-        ("HERMES_BASE_URL", "http://localhost:8642/v1"),
-        ("HERMES_API_KEY", ""),
-        ("HERMES_MODEL", "hermes-agent"),
-        ("HERMES_SESSION_KEY", "voice-satellite"),
+        ("HOST", "0.0.0.0", ""),
+        ("PORT", "8000", ""),
+        ("AUDIO_IN_SAMPLE_RATE", "16000", ""),
+        ("AUDIO_OUT_SAMPLE_RATE", "32000", ""),
     ],
     "Speech-to-text": [
-        ("WHISPER_MODEL", "tiny.en"),
-        ("WHISPER_LANGUAGE", "en"),
+        ("WHISPER_MODEL", "tiny.en", ""),
+        ("WHISPER_LANGUAGE", "en", ""),
     ],
 }
 # Voice/TTS keys live on their own tab.
@@ -82,7 +91,7 @@ TUNING_KEYS: list[tuple[str, str, str]] = [
     ("TTS_VOLUME", "1.0",
      "Output loudness multiplier — 1.0 is normal, 2.0 is twice as loud, 0.5 is half."),
 ]
-KNOWN_KEYS = ({k for grp in ENV_GROUPS.values() for k, _ in grp}
+KNOWN_KEYS = ({k for grp in ENV_GROUPS.values() for k, _, _ in grp}
               | {k for k, _ in VOICE_KEYS} | {k for k, _, _ in TUNING_KEYS})
 
 
@@ -164,7 +173,7 @@ async def get_env() -> dict:
         }
 
     return {
-        "groups": {g: [field(k, d) for k, d in fields] for g, fields in ENV_GROUPS.items()},
+        "groups": {g: [field(k, d, b) for k, d, b in fields] for g, fields in ENV_GROUPS.items()},
         "voice": [field(k, d) for k, d in VOICE_KEYS],
         "tuning": [field(k, d, b) for k, d, b in TUNING_KEYS],
     }
@@ -182,6 +191,62 @@ async def set_env(request: Request) -> dict:
         set_key(str(ENV_PATH), key, str(val), quote_mode="auto")
         written.append(key)
     return {"ok": True, "written": written}
+
+
+# --- connection tests (D7): probe a candidate config WITHOUT writing .env ---
+
+@app.post("/api/test-llm")
+async def test_llm(request: Request) -> dict:
+    """Verdicts: ok | auth | unreachable | error (+detail). Bounded timeout."""
+    from vocascade.gateway.local_llm import LocalLLM, LLMAuthError, LLMUnreachableError
+
+    body = await request.json()
+    base_url = (body.get("base_url") or "").strip()
+    model = (body.get("model") or "").strip()
+    if not base_url or not model:
+        raise HTTPException(400, "base_url and model are required")
+    llm = LocalLLM(base_url=base_url, model=model,
+                   api_key=(body.get("api_key") or "").strip() or None, timeout=5.0)
+    try:
+        await llm.chat([{"role": "user", "content": "ping"}], max_tokens=1)
+        return {"verdict": "ok"}
+    except LLMAuthError as e:
+        return {"verdict": "auth", "detail": str(e)}
+    except LLMUnreachableError as e:
+        return {"verdict": "unreachable", "detail": str(e)}
+    except Exception as e:
+        return {"verdict": "error", "detail": str(e)}
+
+
+@app.post("/api/test-hermes")
+async def test_hermes(request: Request) -> dict:
+    """Probe a Hermes /v1/capabilities directly so auth is distinguishable."""
+    import httpx
+
+    body = await request.json()
+    base_url = (body.get("base_url") or "").strip().rstrip("/")
+    if not base_url:
+        raise HTTPException(400, "base_url is required")
+    if not base_url.endswith("/v1"):
+        base_url += "/v1"
+    headers = {}
+    api_key = (body.get("api_key") or "").strip()
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            resp = await client.get(f"{base_url}/capabilities", headers=headers)
+    except httpx.TransportError as e:
+        return {"verdict": "unreachable", "detail": str(e)}
+    if resp.status_code in (401, 403):
+        return {"verdict": "auth", "detail": f"HTTP {resp.status_code}"}
+    if resp.status_code != 200:
+        return {"verdict": "error", "detail": f"HTTP {resp.status_code}"}
+    try:
+        features = resp.json().get("features", {})
+    except ValueError:
+        return {"verdict": "error", "detail": "endpoint answered but not with Hermes capabilities"}
+    return {"verdict": "ok", "runs_api": bool(features.get("run_submission"))}
 
 
 # --- voices ---

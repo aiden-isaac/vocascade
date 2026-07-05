@@ -218,6 +218,21 @@ def load_config() -> AdapterConfig:
             "Genie TTS will run in degraded mode (text responses only, no voice cloning)."
         )
 
+    # BYOK fast brain (D1): required, no baked-in default — fail fast with the fix.
+    llm_base_url = (os.getenv("LLM_BASE_URL") or "").strip()
+    llm_model = (os.getenv("LLM_MODEL") or "").strip()
+    for key, val in (("LLM_BASE_URL", llm_base_url), ("LLM_MODEL", llm_model)):
+        if not val:
+            raise ValueError(
+                f"{key} is not set. Point it at any OpenAI-compatible endpoint "
+                "(Ollama, llama.cpp-server, OpenRouter, ...) in .env, or run the "
+                "setup GUI: python -m vocascade.setup_server"
+            )
+
+    # Hermes heavy brain (D2): optional — empty/unset means local-only mode
+    # (no hermes stage, no task broker).
+    hermes_base_url = (os.getenv("HERMES_BASE_URL") or "").strip()
+
     # Resolve default paths
     default_offline_queue = os.path.expanduser("~/.hermes/offline_queue.json")
     default_journal_path = os.path.expanduser("~/.vocascade/tasks.json")
@@ -236,11 +251,11 @@ def load_config() -> AdapterConfig:
         audio_in_sample_rate=int(os.getenv("AUDIO_IN_SAMPLE_RATE", "16000")),
         audio_out_sample_rate=int(os.getenv("AUDIO_OUT_SAMPLE_RATE", "32000")),
 
-        llm_base_url=os.getenv("LLM_BASE_URL", "https://llm.frizzt.com/v1"),
+        llm_base_url=llm_base_url,
         llm_api_key=os.getenv("LLM_API_KEY"),
-        llm_model=os.getenv("LLM_MODEL", "qwen-moe-coder-fast"),
+        llm_model=llm_model,
 
-        hermes_base_url=os.getenv("HERMES_BASE_URL", "http://localhost:8642/v1"),
+        hermes_base_url=hermes_base_url,
         hermes_api_key=os.getenv("HERMES_API_KEY"),
         hermes_model=os.getenv("HERMES_MODEL", "hermes-agent"),
         hermes_session_key=os.getenv("HERMES_SESSION_KEY", "voice-satellite"),

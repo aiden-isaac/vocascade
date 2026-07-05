@@ -174,7 +174,12 @@ class RouterStage(PipelineStage):
                 return
 
             if not result.skill_name:
+                # D6: waterfall exhausted with no hermes catch-all (local-only
+                # mode) — say so out loud, never end the turn in silence.
                 logger.warning("No skill resolved for this transcription.")
+                msg = "Sorry, I can't help with that — I don't have an agent backend configured."
+                await super().push(ControlMessageFrame({"type": "assistant_response", "text": msg}))
+                await super().push(TextFrame(text=msg))
                 return
 
             # 3. Execute the winning skill.

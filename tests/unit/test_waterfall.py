@@ -226,6 +226,7 @@ class _FakeConfig:
         self.waterfall_stages = stages
         self.waterfall_thresholds = {"high": 0.95, "medium": 0.65, "low": 0.35}
         self.skills_config = {}
+        self.hermes_base_url = "http://hermes.test/v1"  # configured unless a test clears it
         self.llm_base_url = ""  # no classifier LLM built (no network)
         self.llm_api_key = None
         self.llm_model = "x"
@@ -252,6 +253,14 @@ class TestFromConfig(_RegistryIsolated, TestCase):
         names = [s.name for s in router.stages]
         self.assertEqual(names[0], "stop")
         self.assertEqual(names[-1], "hermes")
+
+    def test_hermes_stage_dropped_without_url(self):
+        # D2: HERMES_BASE_URL empty ⇒ local-only mode; a configured hermes
+        # stage is dropped with a log line, not an error.
+        router = WaterfallRouter.from_config(
+            _FakeConfig(["stop", "high", "smalltalk", "hermes"], hermes_base_url="")
+        )
+        self.assertEqual([s.name for s in router.stages], ["stop", "high", "smalltalk"])
 
     def test_thresholds_from_config(self):
         router = WaterfallRouter.from_config(

@@ -17,7 +17,8 @@ import subprocess
 
 from openai import OpenAI
 
-REPO = os.getenv("GH_REPO", "aiden-isaac/vocascade")
+# GH_REPO wins; CI provides GITHUB_REPOSITORY automatically.
+REPO = os.getenv("GH_REPO") or os.getenv("GITHUB_REPOSITORY", "")
 MARKER = "<!-- qwen-summary -->"
 DIFF_BUDGET = 12000  # chars of diff sent to the model
 PROMPT = (
@@ -80,11 +81,13 @@ def main():
         print("selftest ok")
         return
 
+    base_url, model = os.getenv("LLM_BASE_URL"), os.getenv("LLM_MODEL")
+    if not base_url or not model or not REPO:
+        raise SystemExit("LLM_BASE_URL, LLM_MODEL and GH_REPO/GITHUB_REPOSITORY must be set")
     client = OpenAI(
-        base_url=os.getenv("LLM_BASE_URL", "https://llm.frizzt.com/v1"),
+        base_url=base_url,
         api_key=os.getenv("LLM_API_KEY") or "none",
     )
-    model = os.getenv("LLM_MODEL", "qwen-moe-coder-fast")
 
     if args.pr:
         run(args.pr, client, model, args.dry_run)
