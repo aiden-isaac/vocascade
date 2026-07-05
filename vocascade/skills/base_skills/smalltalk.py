@@ -25,6 +25,17 @@ DEFAULT_PERSONALITY_PROMPT = """
 You are a helpful voice assistant. Keep your responses concise and brief.
 """.strip()
 
+# TTS-shaping: the local LLM reply is spoken by Genie, which gets its pacing and
+# intonation from punctuation. Force prose with commas/periods (pause cues) and
+# ban markdown/lists/symbols that the voice mangles or rushes through.
+_TTS_SHAPING = (
+    "\n\nThis reply will be spoken aloud by a text-to-speech voice. Write only in "
+    "full sentences as flowing prose. Never use lists, bullets, numbering, "
+    "headings, markdown, code, emoji, or URLs. Use commas for natural pauses and "
+    "end every sentence with a full stop or question mark so the voice paces "
+    "itself. Spell out symbols, numbers, and abbreviations as spoken words."
+)
+
 # End-session sentinel: the deterministic farewell-phrase backstop (handled in
 # the STOP stage) is primary; this lets the model also end a session it judges
 # complete (US5 / FR-062).
@@ -49,7 +60,7 @@ async def handle_smalltalk(intent: str, entities: dict, ctx: SkillContext) -> st
     if str(character).lower() == "ordis":
         system_prompt = ORDIS_PERSONALITY_PROMPT
 
-    messages = [{"role": "system", "content": system_prompt + _ENDSESSION_INSTRUCTION}]
+    messages = [{"role": "system", "content": system_prompt + _TTS_SHAPING + _ENDSESSION_INSTRUCTION}]
     
     # Append history
     if hasattr(ctx, "history") and ctx.history:

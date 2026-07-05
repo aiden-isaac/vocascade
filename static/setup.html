@@ -71,6 +71,7 @@ pre.log{background:#020607;border:1px solid var(--border);border-radius:8px;padd
   <div class="tabs" id="tabs">
     <button data-tab="service" class="active">Service</button>
     <button data-tab="voice">Voice</button>
+    <button data-tab="tuning">Tuning</button>
     <button data-tab="fillers">Fillers</button>
     <button data-tab="waterfall">Waterfall</button>
     <button data-tab="skills">Skills</button>
@@ -95,6 +96,12 @@ pre.log{background:#020607;border:1px solid var(--border);border-radius:8px;padd
       <div class="row"><button class="btn ghost" onclick="uploadVoice()">Upload to profile</button></div>
     </div>
     <div class="row"><button class="btn" onclick="saveVoice()">Save voice config</button></div>
+  </div>
+
+  <div class="tab" id="tab-tuning">
+    <p class="note" style="margin-bottom:12px">Sensitivity knobs for wake-word, speech detection, transcription, and output volume. Saved to <code>.env</code>; takes effect on next restart.</p>
+    <div id="tuning-fields"></div>
+    <div class="row"><button class="btn" onclick="saveTuning()">Save tuning</button></div>
   </div>
 
   <div class="tab" id="tab-fillers">
@@ -161,7 +168,7 @@ document.getElementById('tabs').addEventListener('click', e => {
   document.querySelectorAll('.tab').forEach(p => p.classList.toggle('active', p.id==='tab-'+t));
   load(t);
 });
-function load(tab){ if(loaded[tab]) return; loaded[tab]=true; ({service:loadService,voice:loadVoice,fillers:loadFillers,waterfall:loadWaterfall,skills:loadSkills,advanced:loadYaml}[tab]||(()=>{}))(); }
+function load(tab){ if(loaded[tab]) return; loaded[tab]=true; ({service:loadService,voice:loadVoice,tuning:loadTuning,fillers:loadFillers,waterfall:loadWaterfall,skills:loadSkills,advanced:loadYaml}[tab]||(()=>{}))(); }
 
 function fieldRow(f){
   const type = f.secret ? 'password' : 'text';
@@ -220,6 +227,19 @@ async function uploadVoice(){
 }
 async function saveVoice(){
   try{ await api('POST','/api/env',{values:collect(document.getElementById('tab-voice'))}); toast('voice config saved'); }
+  catch(e){ toast(e.message,false); }
+}
+
+// --- tuning ---
+async function loadTuning(){
+  const d = await api('GET','/api/env');
+  document.getElementById('tuning-fields').innerHTML = d.tuning.map(f =>
+    `<div class="field"><label title="${f.key}">${f.key}</label>`+
+    `<input data-key="${f.key}" type="text" value="${esc(f.value ?? '')}" placeholder="${esc(f.default)}"></div>`+
+    `<p class="note" style="margin:0 0 12px">${esc(f.blurb)}</p>`).join('');
+}
+async function saveTuning(){
+  try{ await api('POST','/api/env',{values:collect(document.getElementById('tuning-fields'))}); toast('tuning saved'); }
   catch(e){ toast(e.message,false); }
 }
 

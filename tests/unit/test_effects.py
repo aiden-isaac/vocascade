@@ -6,6 +6,7 @@ from vocascade.audio.effects import (
     apply_overdrive,
     apply_bitcrush,
     apply_stutter,
+    apply_gain,
     apply_effect_chain,
 )
 
@@ -79,6 +80,22 @@ class TestAudioEffects(unittest.TestCase):
             out_stutter[stutter_samples : stutter_samples * 2],
             out_stutter[stutter_samples * 2 : stutter_samples * 3]
         )
+
+    def test_gain(self):
+        pcm = self.sine_wave.tobytes()
+        # Unity gain is a no-op (and returns the same bytes object cheaply)
+        self.assertEqual(apply_gain(pcm, 1.0), pcm)
+        # Doubling raises amplitude
+        louder = np.frombuffer(apply_gain(pcm, 2.0), dtype=np.int16)
+        self.assertGreater(np.max(np.abs(louder)), np.max(np.abs(self.sine_wave)))
+        # Halving lowers it
+        quieter = np.frombuffer(apply_gain(pcm, 0.5), dtype=np.int16)
+        self.assertLess(np.max(np.abs(quieter)), np.max(np.abs(self.sine_wave)))
+        # Extreme gain clips instead of wrapping around
+        clipped = np.frombuffer(apply_gain(pcm, 100.0), dtype=np.int16)
+        self.assertTrue(np.any(clipped == 32767) or np.any(clipped == -32768))
+        self.assertLessEqual(np.max(clipped), 32767)
+        self.assertGreaterEqual(np.min(clipped), -32768)
 
     def test_effect_chain(self):
         pcm_bytes = self.sine_wave.tobytes()

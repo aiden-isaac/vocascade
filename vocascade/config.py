@@ -116,6 +116,15 @@ class AdapterConfig:
     # touch the Hermes profile config / reasoning; voice-only).
     hermes_voice_instructions: str = DEFAULT_HERMES_VOICE_INSTRUCTIONS
 
+    # Sensitivity/tuning knobs (issue #171), all env-driven like the other
+    # device/model settings. Edge wake-word threshold lives in edge/_load_edge_config.
+    vad_threshold: float = 0.5          # server Silero VAD speech probability cutoff
+    vad_min_silence_ms: int = 250       # silence held before speech is declared ended
+    vad_speech_pad_ms: int = 50         # padding kept around each detected utterance
+    whisper_beam_size: int = 1          # Whisper beam search width (1 = fastest)
+    whisper_vad_filter: bool = False    # let Whisper drop non-speech before transcribing
+    tts_volume: float = 1.0             # software gain on TTS PCM (1.0 = unchanged)
+
 
 def _parse_bool(val: str | None) -> bool:
     if not val:
@@ -252,6 +261,13 @@ def load_config() -> AdapterConfig:
 
         whisper_model=os.getenv("WHISPER_MODEL", "tiny.en"),
         whisper_language=os.getenv("WHISPER_LANGUAGE", "en"),
+        whisper_beam_size=int(os.getenv("WHISPER_BEAM_SIZE", "1")),
+        whisper_vad_filter=_parse_bool(os.getenv("WHISPER_VAD_FILTER", "false")),
+
+        vad_threshold=float(os.getenv("VAD_THRESHOLD", "0.5")),
+        vad_min_silence_ms=int(os.getenv("VAD_MIN_SILENCE_MS", "250")),
+        vad_speech_pad_ms=int(os.getenv("VAD_SPEECH_PAD_MS", "50")),
+        tts_volume=float(os.getenv("TTS_VOLUME", "1.0")),
 
         filler_dir=Path(os.getenv("FILLER_DIR", "static/fillers")),
 

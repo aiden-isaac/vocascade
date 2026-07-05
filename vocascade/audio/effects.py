@@ -72,6 +72,17 @@ def apply_stutter(pcm: np.ndarray, chunk_ms: float, repeats: int) -> np.ndarray:
             pcm[insert_idx : insert_idx + stutter_samples] = stutter_chunk
     return pcm
 
+def apply_gain(pcm_bytes: bytes, gain: float) -> bytes:
+    """Scale loudness of raw int16 PCM bytes by `gain` (1.0 = unchanged), clipping
+    to avoid wraparound. Genie has no volume param, so this is the volume knob."""
+    if gain == 1.0 or not pcm_bytes:
+        return pcm_bytes
+    if len(pcm_bytes) % 2 != 0:
+        pcm_bytes = pcm_bytes[:-1]
+    arr = np.frombuffer(pcm_bytes, dtype=np.int16).astype(np.float32) * gain
+    return np.clip(arr, -32768, 32767).astype(np.int16).tobytes()
+
+
 def apply_effect_chain(pcm_bytes: bytes, effects_config: dict) -> bytes:
     """
     De-serialize raw PCM bytes to numpy int16 array, compose multiple effects from a config dict,

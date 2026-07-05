@@ -145,7 +145,9 @@ async def lifespan(app_: FastAPI):
     app_.state.transport_auth = transport_auth_from_config(config)
 
     logger.info("Loading Whisper STT model '%s' (%s)...", config.whisper_model, config.whisper_language)
-    app_.state.stt = WhisperSTT(model_name=config.whisper_model, language=config.whisper_language)
+    app_.state.stt = WhisperSTT(
+        model_name=config.whisper_model, language=config.whisper_language,
+        beam_size=config.whisper_beam_size, vad_filter=config.whisper_vad_filter)
 
     # Register bundled + user skills, then apply config (drop disabled, US6).
     registry.discover_bundled_skills()
@@ -268,7 +270,9 @@ def _build_pipeline(config, stt: WhisperSTT, degraded_tts: bool,
     router = WaterfallRouter.from_config(config)
 
     stages = [
-        VADStage(server_vad_enabled=config.server_vad_enabled, sample_rate=config.audio_in_sample_rate),
+        VADStage(server_vad_enabled=config.server_vad_enabled, sample_rate=config.audio_in_sample_rate,
+                 threshold=config.vad_threshold, min_silence_duration_ms=config.vad_min_silence_ms,
+                 speech_pad_ms=config.vad_speech_pad_ms),
         STTStage(whisper_stt=stt),
         RouterStage(router=router, session_state=session_state, config=config,
                     task_broker=task_broker, latency=latency, delivery=delivery),
@@ -281,6 +285,7 @@ def _build_pipeline(config, stt: WhisperSTT, degraded_tts: bool,
             language=config.tts_language,
             degraded_mode=degraded_tts,
             sample_rate=config.audio_out_sample_rate,
+            volume=config.tts_volume,
         ),
         TransportOutputStage(outbound, serializer, delivery=delivery, machine=machine),
     ]

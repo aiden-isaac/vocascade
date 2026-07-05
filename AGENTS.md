@@ -91,11 +91,23 @@ No `conftest.py`/`pytest.ini`; flat discovery under `tests/`.
 
 ## Spec workflow
 
-This repo uses the **Speckit** workflow; design artifacts live in `specs/<NNN-name>/`
-(`spec.md` → `plan.md` → `tasks.md`). Read the relevant spec before changing a feature.
+This repo uses the **OpenSpec** workflow; active changes live in `openspec/`
+(propose → apply → archive). Read the relevant spec before changing a feature.
 
-<!-- SPECKIT START -->
-**Active feature**: [`006-custom-voice-pipeline-waterfall`](specs/006-custom-voice-pipeline-waterfall/plan.md)
+Historical Spec-Kit design docs are archived read-only under
+`docs/legacy-specs/<NNN-name>/` (`spec.md` → `plan.md` → `tasks.md`). The most
+recent is [`006-custom-voice-pipeline-waterfall`](docs/legacy-specs/006-custom-voice-pipeline-waterfall/plan.md)
 — the custom asyncio `VoicePipeline` + OVOS-style confidence waterfall, consolidated
 into the single `vocascade` package. Supersedes 001–004; extends 005 (Hermes runs API).
-<!-- SPECKIT END -->
+
+## graphify
+
+This project has a local knowledge graph at `graphify-out/` (git-ignored; run
+`graphify` to generate). When present, prefer it over raw grep for codebase
+questions:
+
+- `graphify query "<question>"` returns a scoped subgraph; `graphify path "<A>" "<B>"`
+  for relationships; `graphify explain "<concept>"` for one concept.
+- `graphify-out/wiki/index.md` for broad navigation; `graphify-out/GRAPH_REPORT.md`
+  only for whole-architecture review.
+- After modifying code, run `graphify update .` (AST-only, no API cost).

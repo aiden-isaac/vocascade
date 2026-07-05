@@ -17,9 +17,12 @@ class WhisperSTT:
     Wrapper around faster-whisper to handle voice transcribing on a background executor.
     Uses an asyncio.Lock to serialize transcription requests.
     """
-    def __init__(self, model_name: str, language: str) -> None:
+    def __init__(self, model_name: str, language: str,
+                 beam_size: int = 1, vad_filter: bool = False) -> None:
         self.model_name = model_name
         self.language = language
+        self.beam_size = beam_size
+        self.vad_filter = vad_filter
         self.lock = asyncio.Lock()
         self.executor = ThreadPoolExecutor(max_workers=1)
         
@@ -58,9 +61,9 @@ class WhisperSTT:
         
         segments, _info = self.model.transcribe(
             audio,
-            beam_size=1,
+            beam_size=self.beam_size,
             language=self.language,
-            vad_filter=False,
+            vad_filter=self.vad_filter,
             condition_on_previous_text=False,
             initial_prompt="A user asks a question or gives a command.",
         )

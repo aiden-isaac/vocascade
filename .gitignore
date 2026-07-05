@@ -13,6 +13,10 @@ static/fillers/**/*.pcm
 
 # Agent/Environment specifics
 .opencode/
+graphify-out/
+
+# User-provided skills are local drop-ins (keep the dir, not its contents)
+user_skills/*.py
 
 # OS / editor
 .DS_Store

@@ -103,4 +103,4 @@ worked example.
 ## More
 
 - Architecture, commands, and gotchas for contributors: [`AGENTS.md`](AGENTS.md).
-- Full walkthrough: [`specs/006-custom-voice-pipeline-waterfall/quickstart.md`](specs/006-custom-voice-pipeline-waterfall/quickstart.md).
+- Full walkthrough: [`docs/legacy-specs/006-custom-voice-pipeline-waterfall/quickstart.md`](docs/legacy-specs/006-custom-voice-pipeline-waterfall/quickstart.md).

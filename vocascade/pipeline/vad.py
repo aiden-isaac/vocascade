@@ -24,11 +24,15 @@ class VADStage(PipelineStage):
     Otherwise, assumes edge VAD is authoritative and brackets each incoming AudioFrame.
     """
 
-    def __init__(self, server_vad_enabled: bool = False, threshold: float = 0.5, sample_rate: int = 16000):
+    def __init__(self, server_vad_enabled: bool = False, threshold: float = 0.5,
+                 sample_rate: int = 16000, min_silence_duration_ms: int = 250,
+                 speech_pad_ms: int = 50):
         super().__init__()
         self.server_vad_enabled = server_vad_enabled
         self.threshold = threshold
         self.sample_rate = sample_rate
+        self.min_silence_duration_ms = min_silence_duration_ms
+        self.speech_pad_ms = speech_pad_ms
 
         self.model = None
         self.vad_iterator = None
@@ -55,8 +59,8 @@ class VADStage(PipelineStage):
                     model=self.model,
                     threshold=self.threshold,
                     sampling_rate=self.sample_rate,
-                    min_silence_duration_ms=250, # Wait 250ms of silence before ending speech
-                    speech_pad_ms=50
+                    min_silence_duration_ms=self.min_silence_duration_ms,
+                    speech_pad_ms=self.speech_pad_ms
                 )
                 self.audio_buffer.clear()
                 self.is_speaking = False
