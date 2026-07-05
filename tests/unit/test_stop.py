@@ -118,11 +118,15 @@ class TestRouterStop(IsolatedAsyncioTestCase):
         self.assertEqual(_spoken(sink), ["Goodbye."])
 
     async def test_normal_utterance_is_not_system(self):
-        # A non-stop, non-farewell utterance falls through (no skill here → nothing spoken).
+        # A non-stop, non-farewell utterance falls through. With no hermes stage
+        # in this fixture the waterfall exhausts, which now speaks a can't-help
+        # notice (D6) instead of staying silent — but STOP must not intercept.
         session = SessionState(voice_session_id="s1")
         sink = await _route("set a timer", session, broker=_FakeBroker([]))
         self.assertFalse(session.teardown_armed)
-        self.assertEqual(_spoken(sink), [])
+        spoken = _spoken(sink)
+        self.assertEqual(len(spoken), 1)
+        self.assertIn("can't help", spoken[0])
 
 
 class _FakePipeline:

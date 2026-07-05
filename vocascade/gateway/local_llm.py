@@ -8,12 +8,26 @@ from typing import List, Dict, Any, Optional
 
 logger = logging.getLogger("vocascade.gateway.local_llm")
 
+
+class LLMError(Exception):
+    """Base for classified fast-brain failures (D3). Callers that catch broadly
+    keep working; reporting surfaces key off the subclasses."""
+
+
+class LLMAuthError(LLMError):
+    """The endpoint rejected the API key (HTTP 401/403)."""
+
+
+class LLMUnreachableError(LLMError):
+    """The endpoint is unreachable: connect error, timeout, or 5xx."""
+
+
 class LocalLLM:
     """
     Lightweight async client for calling the local LLM chat/completions endpoint.
     Used for smalltalk generation and medium-stage classification.
     """
-    def __init__(self, base_url: str, api_key: Optional[str] = None, model: str = "qwen-moe-coder-fast",
+    def __init__(self, base_url: str, model: str, api_key: Optional[str] = None,
                  timeout: float = 15.0):
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
@@ -45,15 +59,26 @@ class LocalLLM:
         }
 
         async with httpx.AsyncClient() as client:
+            url = f"{self.base_url}/chat/completions"
+            logger.debug(f"Sending request to local LLM: {url} with model {self.model}")
             try:
-                url = f"{self.base_url}/chat/completions"
-                logger.debug(f"Sending request to local LLM: {url} with model {self.model}")
                 response = await client.post(
                     url,
                     json=payload,
                     headers=headers,
                     timeout=self.timeout
                 )
+            except httpx.TransportError as e:
+                # Connect refused, DNS failure, timeout — the endpoint is down/wrong.
+                logger.error(f"Local LLM unreachable at {url}: {e}")
+                raise LLMUnreachableError(f"cannot reach {self.base_url}: {e}") from e
+            if response.status_code in (401, 403):
+                logger.error(f"Local LLM rejected the API key (HTTP {response.status_code})")
+                raise LLMAuthError(f"{self.base_url} rejected the API key (HTTP {response.status_code})")
+            if response.status_code >= 500:
+                logger.error(f"Local LLM server error (HTTP {response.status_code})")
+                raise LLMUnreachableError(f"{self.base_url} server error (HTTP {response.status_code})")
+            try:
                 response.raise_for_status()
                 data = response.json()
                 content = data["choices"][0]["message"]["content"]

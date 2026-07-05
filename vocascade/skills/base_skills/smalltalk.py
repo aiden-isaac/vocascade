@@ -5,6 +5,7 @@ vocascade/skills/base_skills/smalltalk.py — Smalltalk and Hermes mockup skills
 import os
 import logging
 from vocascade.skills import skill, SkillContext
+from vocascade.gateway.local_llm import LLMError, LLMAuthError
 
 logger = logging.getLogger("vocascade.skills.base_skills.smalltalk")
 
@@ -76,6 +77,21 @@ async def handle_smalltalk(intent: str, entities: dict, ctx: SkillContext) -> st
             logger.info("Calling local LLM for smalltalk response...")
             response = await ctx.local_llm.chat(messages, temperature=0.7, max_tokens=150)
             return response
+        except LLMError as e:
+            # D4: name the problem class out loud, once per session, so a bad
+            # key or dead endpoint is diagnosable instead of a generic shrug.
+            logger.error(f"Failed to generate smalltalk response from local LLM: {e}")
+            session = getattr(ctx, "session", None)
+            if session is not None and not session.llm_failure_notified:
+                session.llm_failure_notified = True
+                if isinstance(e, LLMAuthError):
+                    return ("I can't reach my language model — it rejected the API key. "
+                            "Please check your setup.")
+                return ("I can't reach my language model right now. "
+                        "Please check that your endpoint is running.")
+            if str(character).lower() == "ordis":
+                return "Ordis is <glitch>— BROKEN —</glitch> unable to reply at this moment, Operator."
+            return "I'm sorry, I'm having trouble responding right now."
         except Exception as e:
             logger.error(f"Failed to generate smalltalk response from local LLM: {e}")
             # Degraded fallback response

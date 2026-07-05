@@ -21,6 +21,9 @@ from vocascade.waterfall.classifier import IntentClassifier
 from vocascade.delivery import DeliveryCoordinator
 from vocascade.task_broker import TaskBroker
 from vocascade.hermes_run_client import RunDispatchError, Capabilities
+from vocascade.gateway.local_llm import (
+    LocalLLM, LLMAuthError, LLMUnreachableError,
+)
 
 
 class _Cfg:
@@ -143,6 +146,41 @@ class TestHermesUnreachable(IsolatedAsyncioTestCase):
         self.assertEqual(out, [])   # no in-turn speech; proactive notice covers it, no crash
 
 
+# --- D6: waterfall exhaustion in local-only mode is never silent --------------
+
+class TestLocalOnlyExhaustion(IsolatedAsyncioTestCase):
+    def setUp(self):
+        registry.clear()
+
+    def tearDown(self):
+        registry.clear()
+
+    async def test_no_winner_without_hermes_returns_no_skill(self):
+        router = WaterfallRouter([HighStage(name="high", threshold=0.95)], {})
+        result = await router.resolve("what's the weather", _ctx())
+        self.assertIsNone(result.skill_name)
+        self.assertEqual(result.stage, "none")
+
+    async def test_no_winner_with_hermes_still_falls_back(self):
+        from vocascade.waterfall.stages.hermes import HermesStage
+        router = WaterfallRouter(
+            [HighStage(name="high", threshold=0.95),
+             HermesStage(name="hermes", threshold=0.0, enabled=False)], {})
+        result = await router.resolve("what's the weather", _ctx())
+        self.assertEqual(result.skill_name, "hermes")
+
+    async def test_exhaustion_speaks_cant_help_notice(self):
+        router = WaterfallRouter([HighStage(name="high", threshold=0.95)], {})
+        rs = RouterStage(router, SessionState(voice_session_id="s1"), _Cfg(), latency=None)
+        sink = _Sink()
+        rs.next_stage = sink
+
+        await rs.push(TranscriptionFrame(text="what's the weather"))
+        spoken = _spoken(sink)
+        self.assertEqual(len(spoken), 1)
+        self.assertIn("can't help", spoken[0])
+
+
 # --- smalltalk LLM down → spoken fallback ------------------------------------
 
 class TestSmalltalkDegrades(IsolatedAsyncioTestCase):
@@ -152,6 +190,100 @@ class TestSmalltalkDegrades(IsolatedAsyncioTestCase):
                            config={"tts_character_name": "default"})
         out = await handle_smalltalk("how are you", {}, ctx)
         self.assertIn("trouble responding", out.lower())
+
+
+# --- D3/D4: classified LLM failures are diagnosed out loud, once per session --
+
+class _AuthFailLLM:
+    async def chat(self, messages, **kwargs):
+        raise LLMAuthError("endpoint rejected the API key (HTTP 401)")
+
+
+class _UnreachableLLM:
+    async def chat(self, messages, **kwargs):
+        raise LLMUnreachableError("cannot reach http://localhost:9/v1")
+
+
+class TestLLMFailureNotice(IsolatedAsyncioTestCase):
+    def _ctx(self, llm, session=None):
+        return SkillContext(tools=ToolBag(), session=session or SessionState(),
+                            local_llm=llm, config={"tts_character_name": "default"})
+
+    async def test_auth_failure_names_the_key(self):
+        from vocascade.skills.base_skills.smalltalk import handle_smalltalk
+        out = await handle_smalltalk("hi", {}, self._ctx(_AuthFailLLM()))
+        self.assertIn("api key", out.lower())
+
+    async def test_unreachable_names_the_endpoint_problem(self):
+        from vocascade.skills.base_skills.smalltalk import handle_smalltalk
+        out = await handle_smalltalk("hi", {}, self._ctx(_UnreachableLLM()))
+        self.assertIn("can't reach my language model", out.lower())
+
+    async def test_notice_spoken_once_per_session(self):
+        from vocascade.skills.base_skills.smalltalk import handle_smalltalk
+        session = SessionState()
+        first = await handle_smalltalk("hi", {}, self._ctx(_UnreachableLLM(), session))
+        second = await handle_smalltalk("hi again", {}, self._ctx(_UnreachableLLM(), session))
+        self.assertIn("language model", first.lower())
+        self.assertIn("trouble responding", second.lower())
+
+    async def test_new_session_resets_notice(self):
+        from vocascade.skills.base_skills.smalltalk import handle_smalltalk
+        s1, s2 = SessionState(), SessionState()
+        await handle_smalltalk("hi", {}, self._ctx(_UnreachableLLM(), s1))
+        out = await handle_smalltalk("hi", {}, self._ctx(_UnreachableLLM(), s2))
+        self.assertIn("language model", out.lower())
+
+
+class TestLLMErrorTaxonomy(IsolatedAsyncioTestCase):
+    """D3: LocalLLM.chat classifies auth (401/403) vs unreachable (transport/5xx)."""
+
+    def _llm_answering(self, handler):
+        import httpx
+        from unittest.mock import patch
+        llm = LocalLLM(base_url="http://test/v1", model="m")
+        real_client = httpx.AsyncClient  # patching the module attr; keep the class
+        transport = httpx.MockTransport(handler)
+        patcher = patch("vocascade.gateway.local_llm.httpx.AsyncClient",
+                        lambda *a, **kw: real_client(transport=transport))
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        return llm
+
+    async def test_401_raises_auth_error(self):
+        import httpx
+        llm = self._llm_answering(lambda req: httpx.Response(401))
+        with self.assertRaises(LLMAuthError):
+            await llm.chat([{"role": "user", "content": "x"}])
+
+    async def test_403_raises_auth_error(self):
+        import httpx
+        llm = self._llm_answering(lambda req: httpx.Response(403))
+        with self.assertRaises(LLMAuthError):
+            await llm.chat([{"role": "user", "content": "x"}])
+
+    async def test_500_raises_unreachable(self):
+        import httpx
+        llm = self._llm_answering(lambda req: httpx.Response(500))
+        with self.assertRaises(LLMUnreachableError):
+            await llm.chat([{"role": "user", "content": "x"}])
+
+    async def test_connect_error_raises_unreachable(self):
+        import httpx
+
+        def boom(req):
+            raise httpx.ConnectError("connection refused")
+
+        llm = self._llm_answering(boom)
+        with self.assertRaises(LLMUnreachableError):
+            await llm.chat([{"role": "user", "content": "x"}])
+
+    async def test_ok_returns_content(self):
+        import httpx
+        llm = self._llm_answering(lambda req: httpx.Response(
+            200, json={"choices": [{"message": {"content": "pong"}}]}))
+        out = await llm.chat([{"role": "user", "content": "ping"}])
+        self.assertEqual(out, "pong")
 
 
 if __name__ == "__main__":

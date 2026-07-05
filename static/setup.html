@@ -173,7 +173,8 @@ function load(tab){ if(loaded[tab]) return; loaded[tab]=true; ({service:loadServ
 function fieldRow(f){
   const type = f.secret ? 'password' : 'text';
   return `<div class="field"><label title="${f.key}">${f.key}</label>`+
-    `<input data-key="${f.key}" type="${type}" value="${esc(f.value ?? '')}" placeholder="${esc(f.default)}"></div>`;
+    `<input data-key="${f.key}" type="${type}" value="${esc(f.value ?? '')}" placeholder="${esc(f.default)}"></div>`+
+    (f.blurb ? `<p class="note" style="margin:0 0 12px">${esc(f.blurb)}</p>` : '');
 }
 function collect(container){
   const out = {};
@@ -185,9 +186,29 @@ function collect(container){
 async function loadService(){
   const d = await api('GET','/api/env');
   let html = '';
-  for(const [g, fields] of Object.entries(d.groups))
-    html += `<div class="group"><h3>${g}</h3>${fields.map(fieldRow).join('')}</div>`;
+  for(const [g, fields] of Object.entries(d.groups)){
+    html += `<div class="group"><h3>${g}</h3>${fields.map(fieldRow).join('')}`;
+    // D7: probe a candidate config (nothing is written) before saving.
+    if(g.startsWith('LLM'))
+      html += `<button type="button" onclick="testConn('llm','LLM')">Test connection</button> <span id="verdict-llm" class="note"></span>`;
+    if(g.startsWith('Hermes'))
+      html += `<button type="button" onclick="testConn('hermes','HERMES')">Test connection</button> <span id="verdict-hermes" class="note"></span>`;
+    html += `</div>`;
+  }
   document.getElementById('service-fields').innerHTML = html;
+}
+async function testConn(kind, prefix){
+  const el = document.getElementById('verdict-'+kind);
+  el.textContent = 'testing…';
+  const v = collect(document.getElementById('service-fields'));
+  const body = {base_url: v[prefix+'_BASE_URL'], api_key: v[prefix+'_API_KEY'], model: v[prefix+'_MODEL']};
+  try{
+    const r = await api('POST','/api/test-'+kind, body);
+    const msg = {ok:'✓ reachable', auth:'✗ endpoint rejected the API key',
+                 unreachable:'✗ unreachable — check the URL / that it is running',
+                 error:'✗ error'}[r.verdict] || r.verdict;
+    el.textContent = msg + (r.detail && r.verdict==='error' ? ' — '+r.detail : '');
+  }catch(e){ el.textContent = '✗ ' + e.message; }
 }
 async function saveService(){
   try{ await api('POST','/api/env',{values:collect(document.getElementById('service-fields'))}); toast('.env saved'); }

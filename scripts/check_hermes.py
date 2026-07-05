@@ -7,7 +7,7 @@ Checks, in order:
   3. auth enforcement               — request WITHOUT bearer must be rejected
   4. one trivial round-trip run     — dispatch → SSE events → snapshot agree
 
-Configuration (env or repo .env): HERMES_BASE_URL (e.g. http://jarlaxle:8642/v1),
+Configuration (env or repo .env): HERMES_BASE_URL (e.g. http://your-host:8642/v1),
 HERMES_API_KEY, optional HERMES_SESSION_KEY.
 
 Exit code 0 when everything passes, 1 otherwise.

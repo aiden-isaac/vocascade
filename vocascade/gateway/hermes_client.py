@@ -23,7 +23,7 @@ class HermesClient(GatewayClient):
         api_key: str | None = None,
         session_key: str | None = None,
     ) -> None:
-        # Contract (005): the base URL carries /v1, e.g. http://jarlaxle:8642/v1
+        # Contract (005): the base URL carries /v1, e.g. http://your-host:8642/v1
         self.base_url = base_url.rstrip("/")
         if not self.base_url.endswith("/v1"):
             logger.warning(

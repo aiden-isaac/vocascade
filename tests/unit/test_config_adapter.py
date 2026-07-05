@@ -3,10 +3,15 @@ import os
 from unittest.mock import patch
 from vocascade.config import load_config, AdapterConfig
 
+# BYOK (D1): LLM_BASE_URL/LLM_MODEL have no defaults — every test that expects
+# load_config() to succeed must provide them (and not depend on a local .env).
+LLM_ENV = {"LLM_BASE_URL": "http://localhost:11434/v1", "LLM_MODEL": "test-model"}
+
 class TestAdapterConfig(unittest.TestCase):
     def test_default_config_loading(self):
         # Ensure we run in a clean environment for these keys
         env_vars = {
+            **LLM_ENV,
             "HOST": "127.0.0.1",
             "PORT": "9000",
             "AUDIO_IN_SAMPLE_RATE": "16000",
@@ -15,7 +20,7 @@ class TestAdapterConfig(unittest.TestCase):
             "HERMES_API_KEY": "secret-key",
             "HERMES_MODEL": "test-qwen",
             "HERMES_SESSION_KEY": "test-session-key",
-            "HERMES_CONTEXT_SOURCE": "ssh://aiden@jarlaxle/home/aiden/.hermes",
+            "HERMES_CONTEXT_SOURCE": "ssh://user@example-host/home/user/.hermes",
             "HERMES_CONTEXT_POLL_INTERVAL": "45",
             "CONTEXT_TOKEN_BUDGET": "900",
             "RESULT_SPEECH_BUDGET": "500",
@@ -47,7 +52,7 @@ class TestAdapterConfig(unittest.TestCase):
             self.assertEqual(config.hermes_api_key, "secret-key")
             self.assertEqual(config.hermes_model, "test-qwen")
             self.assertEqual(config.hermes_session_key, "test-session-key")
-            self.assertEqual(config.hermes_context_source, "ssh://aiden@jarlaxle/home/aiden/.hermes")
+            self.assertEqual(config.hermes_context_source, "ssh://user@example-host/home/user/.hermes")
             self.assertEqual(config.hermes_context_poll_interval, 45)
             self.assertEqual(config.context_token_budget, 900)
             self.assertEqual(config.result_speech_budget, 500)
@@ -75,7 +80,8 @@ class TestAdapterConfig(unittest.TestCase):
 
     def test_005_defaults(self):
         # Clean environment + no .env so the documented defaults apply
-        with patch.dict(os.environ, {}, clear=True):
+        # (LLM values are required — provided, but everything else defaults)
+        with patch.dict(os.environ, LLM_ENV, clear=True):
             with patch("vocascade.config.load_dotenv"):
                 config = load_config()
                 self.assertEqual(config.hermes_session_key, "voice-satellite")
@@ -100,6 +106,7 @@ class TestAdapterConfig(unittest.TestCase):
     def test_missing_genie_config_warnings(self):
         # Remove genie-specific values to trigger warning
         env_vars = {
+            **LLM_ENV,
             "GENIE_ONNX_MODEL_DIR": "",
             "GENIE_REFERENCE_AUDIO": "",
             "GENIE_REFERENCE_TEXT": ""
@@ -144,4 +151,39 @@ class TestAdapterConfig(unittest.TestCase):
                 self.assertIn("missing required section: 'system'", str(ctx.exception))
         finally:
             os.unlink(f_path)
+
+
+class TestByokRequirements(unittest.TestCase):
+    """D1/D2: LLM connection required (fail fast, located message); Hermes optional."""
+
+    def _load(self, env):
+        with patch.dict(os.environ, env, clear=True):
+            with patch("vocascade.config.load_dotenv"):
+                return load_config()
+
+    def test_missing_llm_base_url_fails_fast_with_located_message(self):
+        with self.assertRaises(ValueError) as ctx:
+            self._load({"LLM_MODEL": "test-model"})
+        msg = str(ctx.exception)
+        self.assertIn("LLM_BASE_URL", msg)
+        self.assertIn("setup_server", msg)  # points at the setup GUI
+
+    def test_missing_llm_model_fails_fast(self):
+        with self.assertRaises(ValueError) as ctx:
+            self._load({"LLM_BASE_URL": "http://localhost:11434/v1"})
+        self.assertIn("LLM_MODEL", str(ctx.exception))
+
+    def test_empty_llm_api_key_accepted(self):
+        config = self._load({**LLM_ENV, "LLM_API_KEY": ""})
+        self.assertEqual(config.llm_base_url, LLM_ENV["LLM_BASE_URL"])
+        self.assertEqual(config.llm_model, LLM_ENV["LLM_MODEL"])
+
+    def test_empty_hermes_base_url_accepted_local_only(self):
+        config = self._load({**LLM_ENV, "HERMES_BASE_URL": ""})
+        self.assertEqual(config.hermes_base_url, "")
+
+    def test_no_personal_defaults(self):
+        config = self._load(LLM_ENV)
+        self.assertEqual(config.hermes_base_url, "")
+        self.assertNotIn("frizzt", config.llm_base_url)
 
