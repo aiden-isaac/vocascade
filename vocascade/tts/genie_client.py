@@ -35,6 +35,7 @@ class GenieTTSClient:
         self.language = language
         self.degraded_mode = degraded_mode
         self.initialized = False
+        self.sample_rate = 32000  # GPT-SoVITS native output rate (TTSBackend protocol)
         self._session: aiohttp.ClientSession | None = None
 
     def _get_session(self) -> aiohttp.ClientSession:
@@ -93,6 +94,9 @@ class GenieTTSClient:
         except Exception as e:
             logger.warning(f"Genie TTS server unreachable during character load: {e}. Degrading gracefully.")
             self.degraded_mode = True
+
+    # TTSBackend protocol lifecycle name; Genie's voice load keeps its own name.
+    start = load_character
 
     async def synthesize(self, text: str, *, session: str = "") -> AsyncIterator[bytes]:
         """

@@ -65,13 +65,21 @@ ENV_GROUPS: dict[str, list[tuple[str, str, str]]] = {
     ],
 }
 # Voice/TTS keys live on their own tab.
-VOICE_KEYS: list[tuple[str, str]] = [
-    ("GENIE_TTS_URL", "http://127.0.0.1:8000"),
-    ("GENIE_CHARACTER_NAME", "default"),
-    ("GENIE_ONNX_MODEL_DIR", ""),
-    ("GENIE_REFERENCE_AUDIO", ""),
-    ("GENIE_REFERENCE_TEXT", ""),
-    ("GENIE_LANGUAGE", "en"),
+VOICE_KEYS: list[tuple[str, str, str]] = [
+    ("TTS_BACKEND", "piper",
+     "piper = built-in CPU voice, zero setup (stock voice auto-downloads). "
+     "genie = custom voice cloning via a Genie server (GENIE_* fields below)."),
+    ("TTS_VOICE", "",
+     "Piper voice: female | male (stock), or any piper voice id "
+     "(e.g. en_GB-alan-medium). Empty = female."),
+    ("TTS_MODELS_DIR", "",
+     "Where piper voice files download to. Empty = ~/.local/share/vocascade/piper."),
+    ("GENIE_TTS_URL", "http://127.0.0.1:8000", "genie backend only."),
+    ("GENIE_CHARACTER_NAME", "default", "genie backend only."),
+    ("GENIE_ONNX_MODEL_DIR", "", "genie backend only."),
+    ("GENIE_REFERENCE_AUDIO", "", "genie backend only."),
+    ("GENIE_REFERENCE_TEXT", "", "genie backend only."),
+    ("GENIE_LANGUAGE", "en", "genie backend only."),
 ]
 # Sensitivity/tuning knobs (issue #171) — env-driven, each with a plain-english
 # blurb shown on its own tab. Defaults mirror config.py / edge/__main__.py.
@@ -92,7 +100,7 @@ TUNING_KEYS: list[tuple[str, str, str]] = [
      "Output loudness multiplier — 1.0 is normal, 2.0 is twice as loud, 0.5 is half."),
 ]
 KNOWN_KEYS = ({k for grp in ENV_GROUPS.values() for k, _, _ in grp}
-              | {k for k, _ in VOICE_KEYS} | {k for k, _, _ in TUNING_KEYS})
+              | {k for k, _, _ in VOICE_KEYS} | {k for k, _, _ in TUNING_KEYS})
 
 
 def _is_secret(key: str) -> bool:
@@ -172,9 +180,12 @@ async def get_env() -> dict:
             "blurb": blurb,
         }
 
+    from vocascade.tts.protocol import REGISTRY
+
     return {
         "groups": {g: [field(k, d, b) for k, d, b in fields] for g, fields in ENV_GROUPS.items()},
-        "voice": [field(k, d) for k, d in VOICE_KEYS],
+        "voice": [field(k, d, b) for k, d, b in VOICE_KEYS],
+        "tts_backends": sorted(REGISTRY),
         "tuning": [field(k, d, b) for k, d, b in TUNING_KEYS],
     }
 

@@ -1,8 +1,10 @@
 """
-generate_fillers.py -- Batch-render filler audio via the Genie TTS server.
+generate_fillers.py -- Batch-render filler audio via the configured TTS backend.
 
-Connects to Genie TTS server, synthesizes each filler phrase using the configured voice,
-and saves raw PCM files to static/fillers/<category>/<slug>.pcm.
+Builds the TTS client from the registry (TTS_BACKEND: piper by default, genie
+for voice cloning), synthesizes each filler phrase with the configured voice,
+and saves raw PCM files (at AUDIO_OUT_SAMPLE_RATE) to
+static/fillers/<category>/<slug>.pcm.
 """
 
 import argparse
@@ -19,8 +21,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 # Prevent load_config from failing on missing key environment variables
 os.environ.setdefault("OPENCLAW_GATEWAY_TOKEN", "dummy_token")
 
+from vocascade.audio.effects import resample_pcm
 from vocascade.config import load_config
-from vocascade.tts.genie_client import GenieTTSClient
+from vocascade.tts.protocol import make_tts_client
 
 def phrase_to_slug(phrase: str) -> str:
     """'Let me check the weave.' -> 'let_me_check_the_weave'"""
@@ -39,8 +42,13 @@ async def main() -> None:
     args = parser.parse_args()
 
     config = load_config()
-    print(f"Genie TTS URL : {config.tts_url}")
-    print(f"Character     : {config.tts_character_name}")
+    print(f"TTS backend   : {config.tts_backend}")
+    if config.tts_backend == "genie":
+        print(f"Genie TTS URL : {config.tts_url}")
+        print(f"Character     : {config.tts_character_name}")
+    else:
+        print(f"Voice         : {config.tts_voice or 'female (default)'}")
+    print(f"Output rate   : {config.audio_out_sample_rate} Hz")
     print(f"Output dir    : {config.filler_dir}")
     print(f"Fillers Config: {args.config}")
     print()
@@ -62,17 +70,16 @@ async def main() -> None:
 
     config.filler_dir.mkdir(parents=True, exist_ok=True)
 
-    # Initialize Genie client. Set degraded_mode to False initially so it attempts initialization.
-    tts_client = GenieTTSClient(
-        tts_url=config.tts_url,
-        character_name=config.tts_character_name,
-        onnx_model_dir=config.tts_onnx_model_dir,
-        reference_audio=config.tts_reference_audio,
-        reference_text=config.tts_reference_text,
-        language=config.tts_language,
-        degraded_mode=False
-    )
-    
+    # Build the configured backend via the registry so fillers match the
+    # active voice. Fail up-front if the voice can't load — every phrase
+    # would error anyway.
+    tts_client = make_tts_client(config)
+    await tts_client.start()
+    if tts_client.degraded_mode:
+        print("Error: TTS backend entered degraded mode (see log above). Aborting.")
+        sys.exit(1)
+
+
     total_ok = 0
     total_err = 0
 
@@ -107,7 +114,10 @@ async def main() -> None:
                 pcm = b"".join(pcm_bytes_list)
                 if len(pcm) % 2 != 0:
                     pcm = pcm[:-1]
-                
+
+                # Fillers are played back at the wire rate — normalize now.
+                pcm = resample_pcm(pcm, tts_client.sample_rate, config.audio_out_sample_rate)
+
                 out_path.write_bytes(pcm)
                 print(f"    OK  {phrase!r:40s} -> {out_path.name} ({len(pcm):,} bytes)")
                 total_ok += 1

@@ -62,13 +62,22 @@ from vocascade.pipeline.pipeline import (
 from vocascade.pipeline.vad import VADStage
 from vocascade.pipeline.stt import STTStage
 from vocascade.pipeline.router import RouterStage
-from vocascade.pipeline.tts import GenieTTSStage
+from vocascade.pipeline.tts import TTSStage
+from vocascade.tts.protocol import make_tts_client
 
 logger = logging.getLogger("vocascade.adapter")
 
 # At most one active WS session at a time (single-user voice device); concurrent
 # connects are rejected with close code 1008.
 _session_lock = asyncio.Lock()
+
+
+def _tts_voice_name(config) -> str:
+    """Effects/persona key for the TTS stage: genie keys effects off the cloned
+    character name; other backends use the configured voice alias."""
+    if config.tts_backend == "genie":
+        return config.tts_character_name
+    return config.tts_voice or "female"
 
 
 class TransportOutputStage(PipelineStage):
@@ -155,7 +164,9 @@ async def lifespan(app_: FastAPI):
     registry.configure(config.skills_config)     # disabled-skill exclusion + per-skill config
     logger.info("Registered skills: %s", [s.name for s in registry.get_all_skills()])
 
-    app_.state.degraded_tts = not (
+    # Config-time degradation is a genie-only concern (missing voice-clone env);
+    # piper degrades at start() if its voice can't be loaded/downloaded.
+    app_.state.degraded_tts = config.tts_backend == "genie" and not (
         config.tts_onnx_model_dir and config.tts_reference_audio and config.tts_reference_text
     )
     if app_.state.degraded_tts:
@@ -216,11 +227,10 @@ async def lifespan(app_: FastAPI):
     # cold start. Best-effort; skipped in degraded/skip-Genie modes.
     app_.state.warmup_task = None
     if not app_.state.degraded_tts and not config.skip_genie_init:
-        warm_stage = GenieTTSStage(
-            tts_url=config.tts_url, character_name=config.tts_character_name,
-            onnx_model_dir=config.tts_onnx_model_dir, reference_audio=config.tts_reference_audio,
-            reference_text=config.tts_reference_text, language=config.tts_language,
-            degraded_mode=app_.state.degraded_tts, sample_rate=config.audio_out_sample_rate,
+        warm_stage = TTSStage(
+            make_tts_client(config, degraded_mode=app_.state.degraded_tts),
+            out_sample_rate=config.audio_out_sample_rate,
+            voice_name=_tts_voice_name(config),
         )
 
         async def _warm_and_close():
@@ -286,16 +296,11 @@ def _build_pipeline(config, stt: WhisperSTT, degraded_tts: bool,
         STTStage(whisper_stt=stt),
         RouterStage(router=router, session_state=session_state, config=config,
                     task_broker=task_broker, latency=latency, delivery=delivery),
-        GenieTTSStage(
-            tts_url=config.tts_url,
-            character_name=config.tts_character_name,
-            onnx_model_dir=config.tts_onnx_model_dir,
-            reference_audio=config.tts_reference_audio,
-            reference_text=config.tts_reference_text,
-            language=config.tts_language,
-            degraded_mode=degraded_tts,
-            sample_rate=config.audio_out_sample_rate,
+        TTSStage(
+            make_tts_client(config, degraded_mode=degraded_tts),
+            out_sample_rate=config.audio_out_sample_rate,
             volume=config.tts_volume,
+            voice_name=_tts_voice_name(config),
         ),
         TransportOutputStage(outbound, serializer, delivery=delivery, machine=machine),
     ]

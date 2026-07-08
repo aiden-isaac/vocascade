@@ -61,7 +61,7 @@ class AdapterConfig:
     result_speech_budget: int           # chars before result condensation
     task_journal_path: str              # persisted task journal
 
-    # Genie TTS
+    # Genie TTS (read only when tts_backend == "genie")
     tts_url: str
     tts_character_name: str
     tts_onnx_model_dir: str | None
@@ -124,6 +124,12 @@ class AdapterConfig:
     whisper_beam_size: int = 1          # Whisper beam search width (1 = fastest)
     whisper_vad_filter: bool = False    # let Whisper drop non-speech before transcribing
     tts_volume: float = 1.0             # software gain on TTS PCM (1.0 = unchanged)
+
+    # Pluggable TTS backend (vocascade/tts/protocol.py). Piper is the
+    # zero-setup default; "genie" selects the custom voice-cloning path.
+    tts_backend: str = "piper"
+    tts_voice: str = ""                 # friendly alias (female/male) or raw piper voice id; "" = backend default
+    tts_models_dir: str = ""            # piper voice files; "" = ~/.local/share/vocascade/piper
 
 
 def _parse_bool(val: str | None) -> bool:
@@ -198,25 +204,30 @@ def load_config() -> AdapterConfig:
     filler_backoff = bool(latency_cfg.get("filler_backoff", True))
     filler_max = int(latency_cfg.get("filler_max", 3))
 
-    # Optional TTS keys — warn and degrade
-    tts_onnx_model_dir = os.getenv("GENIE_ONNX_MODEL_DIR")
-    tts_reference_audio = os.getenv("GENIE_REFERENCE_AUDIO")
-    tts_reference_text = os.getenv("GENIE_REFERENCE_TEXT")
-
-    tts_missing = []
-    if not tts_onnx_model_dir:
-        tts_missing.append("GENIE_ONNX_MODEL_DIR")
-        tts_onnx_model_dir = None
-    if not tts_reference_audio:
-        tts_reference_audio = None
-    if not tts_reference_text:
-        tts_reference_text = None
-
-    if tts_missing:
-        logger.warning(
-            f"TTS Configuration incomplete. Missing: {', '.join(tts_missing)}. "
-            "Genie TTS will run in degraded mode (text responses only, no voice cloning)."
+    # TTS backend selection: piper (zero-setup default) or genie (voice cloning).
+    # Validated against the registry so a typo fails startup with the fix.
+    tts_backend = (os.getenv("TTS_BACKEND") or "piper").strip().lower()
+    from vocascade.tts.protocol import REGISTRY  # function-level: avoids config↔protocol import cycle
+    if tts_backend not in REGISTRY:
+        raise ValueError(
+            f"TTS_BACKEND '{tts_backend}' is not a registered TTS backend "
+            f"(registered: {', '.join(sorted(REGISTRY))}). Fix it in .env or run "
+            "the setup GUI: python -m vocascade.setup_server"
         )
+
+    # Genie-only voice-cloning keys — consulted (and warned about) only when
+    # the genie backend is selected; piper installs need none of them.
+    tts_onnx_model_dir = tts_reference_audio = tts_reference_text = None
+    if tts_backend == "genie":
+        tts_onnx_model_dir = os.getenv("GENIE_ONNX_MODEL_DIR") or None
+        tts_reference_audio = os.getenv("GENIE_REFERENCE_AUDIO") or None
+        tts_reference_text = os.getenv("GENIE_REFERENCE_TEXT") or None
+
+        if not tts_onnx_model_dir:
+            logger.warning(
+                "TTS Configuration incomplete. Missing: GENIE_ONNX_MODEL_DIR. "
+                "Genie TTS will run in degraded mode (text responses only, no voice cloning)."
+            )
 
     # BYOK fast brain (D1): required, no baked-in default — fail fast with the fix.
     llm_base_url = (os.getenv("LLM_BASE_URL") or "").strip()
@@ -273,6 +284,9 @@ def load_config() -> AdapterConfig:
         tts_reference_audio=tts_reference_audio,
         tts_reference_text=tts_reference_text,
         tts_language=os.getenv("GENIE_LANGUAGE", "en"),
+        tts_backend=tts_backend,
+        tts_voice=(os.getenv("TTS_VOICE") or "").strip(),
+        tts_models_dir=(os.getenv("TTS_MODELS_DIR") or "").strip(),
 
         whisper_model=os.getenv("WHISPER_MODEL", "tiny.en"),
         whisper_language=os.getenv("WHISPER_LANGUAGE", "en"),

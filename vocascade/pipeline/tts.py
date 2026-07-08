@@ -1,6 +1,7 @@
 """
 vocascade/pipeline/tts.py — Text-to-Speech stage.
-Wraps GenieTTSClient and applies resolved character audio effects.
+Backend-agnostic: synthesizes TextFrames through an injected ``TTSBackend``
+client (vocascade/tts/protocol.py) and applies resolved character effects.
 """
 
 import asyncio
@@ -15,67 +16,58 @@ from vocascade.pipeline.pipeline import (
     BotStartedSpeakingFrame,
     BotStoppedSpeakingFrame
 )
-from vocascade.tts.genie_client import GenieTTSClient
-from vocascade.audio.effects import apply_effect_chain, apply_gain, get_character_effects_config
+from vocascade.tts.protocol import TTSBackend
+from vocascade.audio.effects import (
+    apply_effect_chain,
+    apply_gain,
+    get_character_effects_config,
+    resample_pcm,
+)
 
 logger = logging.getLogger("vocascade.pipeline.tts")
 
-class GenieTTSStage(PipelineStage):
+class TTSStage(PipelineStage):
     """
     TTS pipeline stage.
-    Synthesizes incoming TextFrame content using Genie TTS,
+    Synthesizes incoming TextFrame content through the injected TTS backend,
     applies character effects, and pushes AudioFrame chunks downstream.
     """
 
     def __init__(
         self,
-        tts_url: str,
-        character_name: str,
-        onnx_model_dir: str | None = None,
-        reference_audio: str | None = None,
-        reference_text: str | None = None,
-        language: str = "en",
-        degraded_mode: bool = False,
-        sample_rate: int = 32000,
-        volume: float = 1.0
+        client: TTSBackend,
+        out_sample_rate: int = 32000,
+        volume: float = 1.0,
+        voice_name: str = "default",
     ):
         super().__init__()
-        self.tts_url = tts_url
-        self.character_name = character_name
-        self.sample_rate = sample_rate
+        self._client = client
+        self.sample_rate = out_sample_rate
         self.volume = volume
-        
-        self._client = GenieTTSClient(
-            tts_url=tts_url,
-            character_name=character_name,
-            onnx_model_dir=onnx_model_dir,
-            reference_audio=reference_audio,
-            reference_text=reference_text,
-            language=language,
-            degraded_mode=degraded_mode
-        )
-        self._character_loaded = False
+        self.voice_name = voice_name
+        self._voice_loaded = False
 
     async def start(self):
-        """Preloads the character model on pipeline start."""
-        if not self._character_loaded:
-            logger.info(f"GenieTTSStage preloading character '{self.character_name}'...")
-            await self._client.load_character()
-            self._character_loaded = True
+        """Preloads the backend voice on pipeline start."""
+        if not self._voice_loaded:
+            logger.info(f"TTSStage preloading voice '{self.voice_name}'...")
+            await self._client.start()
+            self._voice_loaded = True
 
     async def warmup(self):
-        """Preload the character and force Genie to load its synthesis models
-        (CN_HuBERT + speaker verification) with one throwaway synth, so the first
-        real reply doesn't pay the ~8s cold start. Best-effort; never raises."""
+        """Preload the voice and force the backend to load its synthesis models
+        with one throwaway synth, so the first real reply doesn't pay the cold
+        start (~8s for Genie's CN_HuBERT + speaker verification). Best-effort;
+        never raises."""
         if self._client.degraded_mode:
             return
         try:
-            await self.start()                       # POST /load_character
+            await self.start()                       # load the configured voice
             async for _ in self._client.synthesize("Ready."):
                 pass                                  # discard audio; just warm the models
-            logger.info("GenieTTSStage warmup complete — TTS models preloaded.")
+            logger.info("TTSStage warmup complete — TTS models preloaded.")
         except Exception as e:
-            logger.warning("GenieTTSStage warmup failed (non-fatal): %s", e)
+            logger.warning("TTSStage warmup failed (non-fatal): %s", e)
 
     async def stop(self):
         """Sends stop request to abort active playback/synthesis."""
@@ -90,7 +82,7 @@ class GenieTTSStage(PipelineStage):
         if isinstance(frame, TextFrame):
             # Authoritative check: do not synthesize if pipeline is already interrupted
             if self.pipeline and self.pipeline.interrupt_event.is_set():
-                logger.info("GenieTTSStage: pipeline is interrupted, skipping synthesis.")
+                logger.info("TTSStage: pipeline is interrupted, skipping synthesis.")
                 return
 
             # Clean/strip the sentinel termination string
@@ -98,24 +90,29 @@ class GenieTTSStage(PipelineStage):
             if not text:
                 return
 
-            logger.info(f"GenieTTSStage synthesizing text: '{text}'")
-            
+            logger.info(f"TTSStage synthesizing text: '{text}'")
+
             # Fire BotStartedSpeakingFrame downstream
             await super().push(BotStartedSpeakingFrame())
 
             # Get randomized character effects config if applicable
-            effects_config = get_character_effects_config(self.character_name)
+            effects_config = get_character_effects_config(self.voice_name)
 
             try:
                 # Stream PCM chunks from client
                 async for chunk in self._client.synthesize(text):
                     # Check for barge-in / interrupt during streaming
                     if self.pipeline and self.pipeline.interrupt_event.is_set():
-                        logger.info("GenieTTSStage: synthesis interrupted by pipeline event!")
+                        logger.info("TTSStage: synthesis interrupted by pipeline event!")
                         await self._client.stop()
                         break
 
                     if chunk:
+                        # Normalize the backend's native rate to the wire rate
+                        # first — effects assume TTS_SAMPLE_RATE-domain audio.
+                        src_rate = self._client.sample_rate
+                        if src_rate != self.sample_rate:
+                            chunk = resample_pcm(chunk, src_rate, self.sample_rate)
                         # Apply effects chain if character effects configured
                         if effects_config:
                             chunk = apply_effect_chain(chunk, effects_config)
@@ -130,17 +127,17 @@ class GenieTTSStage(PipelineStage):
                             ))
 
             except asyncio.CancelledError:
-                logger.info("GenieTTSStage: synthesis task cancelled.")
+                logger.info("TTSStage: synthesis task cancelled.")
                 await self._client.stop()
                 raise
             except Exception as e:
-                logger.error(f"GenieTTSStage error during synthesis: {e}", exc_info=True)
+                logger.error(f"TTSStage error during synthesis: {e}", exc_info=True)
             finally:
                 # Fire BotStoppedSpeakingFrame downstream
                 await super().push(BotStoppedSpeakingFrame())
 
         elif isinstance(frame, InterruptionFrame):
-            logger.info("GenieTTSStage received InterruptionFrame. Stopping synthesis.")
+            logger.info("TTSStage received InterruptionFrame. Stopping synthesis.")
             await self._client.stop()
             await super().push(frame)
         else:

@@ -20,7 +20,7 @@ from vocascade.pipeline.pipeline import (
 from vocascade.pipeline.vad import VADStage
 from vocascade.pipeline.stt import STTStage
 from vocascade.pipeline.router import RouterStage
-from vocascade.pipeline.tts import GenieTTSStage
+from vocascade.pipeline.tts import TTSStage
 from vocascade.waterfall.router import WaterfallRouter
 from vocascade.skills.registry import registry
 from vocascade.session.state import SessionState
@@ -54,10 +54,9 @@ class TestPipelineRoundtrip(unittest.IsolatedAsyncioTestCase):
     def tearDown(self):
         registry.clear()
 
-    @patch("vocascade.pipeline.tts.GenieTTSClient")
     @patch("vocascade.stt.whisper.WhisperSTT")
     @patch("vocascade.gateway.local_llm.LocalLLM")
-    async def test_smalltalk_roundtrip(self, mock_llm_cls, mock_stt_cls, mock_tts_client_cls):
+    async def test_smalltalk_roundtrip(self, mock_llm_cls, mock_stt_cls):
         # 1. Setup Mock STT
         mock_stt = MagicMock()
         mock_stt.transcribe = AsyncMock(return_value="what is the meaning of life")
@@ -68,16 +67,17 @@ class TestPipelineRoundtrip(unittest.IsolatedAsyncioTestCase):
         mock_llm.chat = AsyncMock(return_value="Ordis is happy to help.")
         mock_llm_cls.return_value = mock_llm
 
-        # 3. Setup Mock Genie TTS Client
+        # 3. Setup Mock TTS backend client (injected into the stage directly)
         mock_tts_client = MagicMock()
-        mock_tts_client.load_character = AsyncMock()
+        mock_tts_client.sample_rate = 32000
+        mock_tts_client.degraded_mode = True
+        mock_tts_client.start = AsyncMock()
         mock_tts_client.stop = AsyncMock()
         mock_tts_client.close = AsyncMock()
         async def mock_synthesize(text):
             yield b"\x01\x02"
             yield b"\x03\x04"
         mock_tts_client.synthesize = MagicMock(side_effect=mock_synthesize)
-        mock_tts_client_cls.return_value = mock_tts_client
 
         # 4. Create dummy config
         dummy_config = AdapterConfig(
@@ -134,10 +134,9 @@ class TestPipelineRoundtrip(unittest.IsolatedAsyncioTestCase):
         vad_stage = VADStage(server_vad_enabled=False)
         stt_stage = STTStage(whisper_stt=mock_stt)
         router_stage = RouterStage(router=router, session_state=session_state, config=dummy_config)
-        tts_stage = GenieTTSStage(
-            tts_url=dummy_config.tts_url,
-            character_name=dummy_config.tts_character_name,
-            degraded_mode=True
+        tts_stage = TTSStage(
+            mock_tts_client,
+            voice_name=dummy_config.tts_character_name,
         )
         speaker_stage = MockSpeakerStage()
 
@@ -188,24 +187,24 @@ class TestPipelineRoundtrip(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(len(synthesized_audio) > 0)
 
 
-    @patch("vocascade.pipeline.tts.GenieTTSClient")
     @patch("vocascade.stt.whisper.WhisperSTT")
-    async def test_hermes_fallback_roundtrip(self, mock_stt_cls, mock_tts_client_cls):
+    async def test_hermes_fallback_roundtrip(self, mock_stt_cls):
         # 1. Setup Mock STT
         mock_stt = MagicMock()
         mock_stt.transcribe = AsyncMock(return_value="tell me a joke")
         mock_stt_cls.return_value = mock_stt
 
-        # 2. Setup Mock Genie TTS Client
+        # 2. Setup Mock TTS backend client (injected into the stage directly)
         mock_tts_client = MagicMock()
-        mock_tts_client.load_character = AsyncMock()
+        mock_tts_client.sample_rate = 32000
+        mock_tts_client.degraded_mode = True
+        mock_tts_client.start = AsyncMock()
         mock_tts_client.stop = AsyncMock()
         mock_tts_client.close = AsyncMock()
         async def mock_synthesize(text):
             yield b"\x01\x02"
             yield b"\x03\x04"
         mock_tts_client.synthesize = MagicMock(side_effect=mock_synthesize)
-        mock_tts_client_cls.return_value = mock_tts_client
 
         # 3. Create config with smalltalk stage disabled so it falls through to Hermes
         dummy_config = AdapterConfig(
@@ -258,10 +257,9 @@ class TestPipelineRoundtrip(unittest.IsolatedAsyncioTestCase):
         vad_stage = VADStage(server_vad_enabled=False)
         stt_stage = STTStage(whisper_stt=mock_stt)
         router_stage = RouterStage(router=router, session_state=session_state, config=dummy_config)
-        tts_stage = GenieTTSStage(
-            tts_url=dummy_config.tts_url,
-            character_name=dummy_config.tts_character_name,
-            degraded_mode=True
+        tts_stage = TTSStage(
+            mock_tts_client,
+            voice_name=dummy_config.tts_character_name,
         )
         speaker_stage = MockSpeakerStage()
 
