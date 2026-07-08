@@ -39,6 +39,7 @@ from vocascade.session.state import SessionState, SessionStateEnum
 from vocascade.session.state_machine import SessionMachine
 from vocascade.session.summary import SessionSummarizer
 from vocascade.gateway.local_llm import LocalLLM
+from vocascade.transport import PROTOCOL_VERSION
 from vocascade.transport.serializer import RawFrameSerializer
 from vocascade.transport.server import transport_auth_from_config
 from vocascade.hermes_run_client import HermesRunClient
@@ -363,12 +364,16 @@ async def websocket_endpoint(websocket: WebSocket):
     if _session_lock.locked():
         logger.warning("Rejecting connection: a session is already active")
         await websocket.accept()
+        # hello is the first frame on EVERY accepted connection (ws-protocol
+        # spec), even ones about to be rejected — clients key off it uniformly.
+        await websocket.send_json({"type": "hello", "protocol_version": PROTOCOL_VERSION})
         await websocket.send_json({"type": "error", "message": "Session already active. Please wait."})
         await websocket.close(code=1008)
         return
 
     async with _session_lock:
         await websocket.accept()
+        await websocket.send_json({"type": "hello", "protocol_version": PROTOCOL_VERSION})
 
         # Transport auth gate (US8 / OQ-3): trust-network passes through; in
         # device-identity mode the client must complete the Ed25519 handshake
