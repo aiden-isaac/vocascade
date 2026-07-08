@@ -50,7 +50,7 @@
 - [x] 4.2 Write `docker-compose.yaml`: port 8005, `env_file: .env`, bind-mount
       `config.yaml`, named volume for model caches (TTS_MODELS_DIR + whisper
       cache), host-gateway note for reaching a host-side `LLM_BASE_URL`
-- [ ] 4.3 Build and run the image; verify an edge client on the same machine
+- [x] 4.3 Build and run the image; verify an edge client on the same machine
       connects through the published port and models persist across
       `docker compose down && up`
 - [x] 4.4 Add `deploy/vocascade-edge.service` systemd user unit + README
@@ -69,9 +69,9 @@
 
 ## 6. Verification
 
-- [ ] 6.1 Full test suite green in a clean venv installed only via
+- [x] 6.1 Full test suite green in a clean venv installed only via
       `pip install -e .[edge]`
-- [ ] 6.2 Stranger-path dry run on this machine: fresh clone → quickstart
+- [x] 6.2 Stranger-path dry run on this machine: fresh clone → quickstart
       commands only → wake word ("hey jarvis") → spoken answer; fix any
       undocumented step it surfaces
 - [ ] 6.3 Get OQ1 (license) confirmed by the owner before merge
