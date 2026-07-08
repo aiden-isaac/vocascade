@@ -72,6 +72,30 @@ def apply_stutter(pcm: np.ndarray, chunk_ms: float, repeats: int) -> np.ndarray:
             pcm[insert_idx : insert_idx + stutter_samples] = stutter_chunk
     return pcm
 
+def resample_pcm(pcm_bytes: bytes, src_rate: int, dst_rate: int) -> bytes:
+    """Linear-resample mono s16le PCM bytes from src_rate to dst_rate Hz.
+    Used to normalize a TTS backend's native rate (e.g. Piper's 22050) to the
+    wire rate before effects/transport."""
+    # ponytail: per-chunk linear interpolation — inaudible for speech upsampling;
+    # switch to soxr/scipy with cross-chunk state if quality ever matters.
+    if src_rate == dst_rate or not pcm_bytes:
+        return pcm_bytes
+    if len(pcm_bytes) % 2 != 0:
+        pcm_bytes = pcm_bytes[:-1]
+    samples = np.frombuffer(pcm_bytes, dtype=np.int16)
+    if len(samples) < 2:
+        return pcm_bytes
+    n_out = int(round(len(samples) * dst_rate / src_rate))
+    if n_out <= 0:
+        return b""
+    positions = np.linspace(0, len(samples) - 1, n_out)
+    floor = np.floor(positions).astype(int)
+    ceil = np.minimum(floor + 1, len(samples) - 1)
+    weight = positions - floor
+    out = samples[floor] * (1.0 - weight) + samples[ceil] * weight
+    return out.astype(np.int16).tobytes()
+
+
 def apply_gain(pcm_bytes: bytes, gain: float) -> bytes:
     """Scale loudness of raw int16 PCM bytes by `gain` (1.0 = unchanged), clipping
     to avoid wraparound. Genie has no volume param, so this is the volume knob."""

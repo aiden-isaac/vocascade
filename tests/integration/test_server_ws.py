@@ -66,9 +66,11 @@ class TestServerWebSocket(unittest.TestCase):
         mock_llm = MagicMock()
         mock_llm.chat = AsyncMock(return_value="Hi, I am here.")
 
-        # Mock Genie client (no network, no audio).
+        # Mock TTS backend client (no network, no audio).
         mock_tts_client = MagicMock()
-        mock_tts_client.load_character = AsyncMock()
+        mock_tts_client.sample_rate = 32000
+        mock_tts_client.degraded_mode = True
+        mock_tts_client.start = AsyncMock()
         mock_tts_client.stop = AsyncMock()
         mock_tts_client.close = AsyncMock()
         mock_tts_client.synthesize = MagicMock(side_effect=_empty_synth)
@@ -76,7 +78,7 @@ class TestServerWebSocket(unittest.TestCase):
         with patch("vocascade.adapter.load_config", return_value=_config_with_smalltalk_enabled()), \
              patch("vocascade.adapter.WhisperSTT", return_value=mock_stt), \
              patch("vocascade.gateway.local_llm.LocalLLM", return_value=mock_llm), \
-             patch("vocascade.pipeline.tts.GenieTTSClient", return_value=mock_tts_client):
+             patch("vocascade.adapter.make_tts_client", return_value=mock_tts_client):
             from vocascade.adapter import app
 
             with TestClient(app) as client:
@@ -109,13 +111,15 @@ class TestServerWebSocket(unittest.TestCase):
         mock_stt.close = MagicMock()
 
         mock_tts_client = MagicMock()
-        mock_tts_client.load_character = AsyncMock()
+        mock_tts_client.sample_rate = 32000
+        mock_tts_client.degraded_mode = True
+        mock_tts_client.start = AsyncMock()
         mock_tts_client.stop = AsyncMock()
         mock_tts_client.close = AsyncMock()
         mock_tts_client.synthesize = MagicMock(side_effect=_empty_synth)
 
         with patch("vocascade.adapter.WhisperSTT", return_value=mock_stt), \
-             patch("vocascade.pipeline.tts.GenieTTSClient", return_value=mock_tts_client):
+             patch("vocascade.adapter.make_tts_client", return_value=mock_tts_client):
             from vocascade.adapter import app
 
             with TestClient(app) as client:

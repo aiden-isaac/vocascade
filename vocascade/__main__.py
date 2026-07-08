@@ -63,11 +63,39 @@ def probe_hermes(config) -> str:
     return asyncio.run(_probe())
 
 
+def probe_tts(config) -> str:
+    """Selected-backend TTS verdict: piper → are the voice files present,
+    genie → is the TTS server reachable. Diagnostic only, never blocks startup."""
+    if config.tts_backend == "piper":
+        from vocascade.tts.piper_client import PiperTTS
+
+        client = PiperTTS(voice=config.tts_voice or "female",
+                          models_dir=config.tts_models_dir)
+        if client.model_path().exists():
+            return f"OK (voice '{client.voice_id}' cached)"
+        return (f"voice '{client.voice_id}' not downloaded yet — fetched "
+                "automatically on first start (needs network once)")
+
+    import aiohttp
+
+    async def _probe():
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(config.tts_url,
+                                       timeout=aiohttp.ClientTimeout(total=PROBE_TIMEOUT_S)):
+                    return "OK (reachable)"
+        except Exception:
+            return "UNREACHABLE — check GENIE_TTS_URL / that Genie TTS is running"
+
+    return asyncio.run(_probe())
+
+
 def print_health_report(config):
     """Prints a health report summarizing the loaded configuration, including
-    live probe verdicts for the LLM and Hermes endpoints (never blocking)."""
+    live probe verdicts for the LLM, Hermes, and TTS endpoints (never blocking)."""
     llm_verdict = probe_llm(config)
     hermes_verdict = probe_hermes(config)
+    tts_verdict = probe_tts(config)
     print("=" * 60)
     print("  VOCASCADE VOICE SERVER HEALTH REPORT")
     print("=" * 60)
@@ -79,8 +107,12 @@ def print_health_report(config):
     print(f"Hermes Model:       {config.hermes_model}")
     print(f"Hermes Session Key: {config.hermes_session_key}")
     print(f"Context Source:     {config.hermes_context_source} (poll: {config.hermes_context_poll_interval}s, budget: {config.context_token_budget} tokens)")
-    print(f"Genie TTS URL:      {config.tts_url}")
-    print(f"Genie Character:    {config.tts_character_name}")
+    print(f"TTS Backend:        {config.tts_backend} [{tts_verdict}]")
+    if config.tts_backend == "genie":
+        print(f"Genie TTS URL:      {config.tts_url}")
+        print(f"Genie Character:    {config.tts_character_name}")
+    else:
+        print(f"TTS Voice:          {config.tts_voice or 'female (default)'}")
     print(f"Whisper STT:        {config.whisper_model} ({config.whisper_language}, beam={config.whisper_beam_size}, vad_filter={config.whisper_vad_filter})")
     print(f"VAD Tuning:         threshold={config.vad_threshold}, min_silence={config.vad_min_silence_ms}ms, pad={config.vad_speech_pad_ms}ms")
     print(f"TTS Volume:         {config.tts_volume}x")

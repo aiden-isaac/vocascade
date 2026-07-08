@@ -25,6 +25,7 @@ class TestAdapterConfig(unittest.TestCase):
             "CONTEXT_TOKEN_BUDGET": "900",
             "RESULT_SPEECH_BUDGET": "500",
             "TASK_JOURNAL_PATH": "/path/to/tasks.json",
+            "TTS_BACKEND": "genie",
             "GENIE_TTS_URL": "http://genie-tts:8000",
             "GENIE_CHARACTER_NAME": "test-character",
             "GENIE_ONNX_MODEL_DIR": "/models/genie",
@@ -104,9 +105,11 @@ class TestAdapterConfig(unittest.TestCase):
 
 
     def test_missing_genie_config_warnings(self):
-        # Remove genie-specific values to trigger warning
+        # Remove genie-specific values to trigger warning (genie selected —
+        # under the default piper backend these keys are never consulted)
         env_vars = {
             **LLM_ENV,
+            "TTS_BACKEND": "genie",
             "GENIE_ONNX_MODEL_DIR": "",
             "GENIE_REFERENCE_AUDIO": "",
             "GENIE_REFERENCE_TEXT": ""
@@ -186,4 +189,53 @@ class TestByokRequirements(unittest.TestCase):
         config = self._load(LLM_ENV)
         self.assertEqual(config.hermes_base_url, "")
         self.assertNotIn("frizzt", config.llm_base_url)
+
+
+class TestTtsBackendSelection(unittest.TestCase):
+    """Pluggable TTS: piper is the zero-setup default; unknown names fail fast."""
+
+    def _load(self, env):
+        with patch.dict(os.environ, env, clear=True):
+            with patch("vocascade.config.load_dotenv"):
+                return load_config()
+
+    def test_piper_is_default_with_no_tts_config(self):
+        config = self._load(LLM_ENV)
+        self.assertEqual(config.tts_backend, "piper")
+        self.assertEqual(config.tts_voice, "")
+        self.assertEqual(config.tts_models_dir, "")
+
+    def test_genie_keys_ignored_under_piper(self):
+        # A leftover genie env must not resurrect the old degraded-mode warning.
+        with patch("vocascade.config.logger.warning") as mock_warn:
+            config = self._load({**LLM_ENV, "GENIE_ONNX_MODEL_DIR": "/models/genie"})
+        self.assertIsNone(config.tts_onnx_model_dir)
+        for call in mock_warn.call_args_list:
+            self.assertNotIn("TTS Configuration incomplete", call[0][0])
+
+    def test_genie_backend_reads_genie_keys(self):
+        config = self._load({
+            **LLM_ENV,
+            "TTS_BACKEND": "genie",
+            "GENIE_ONNX_MODEL_DIR": "/models/genie",
+            "GENIE_REFERENCE_AUDIO": "/audio/ref.wav",
+            "GENIE_REFERENCE_TEXT": "Reference sentence",
+        })
+        self.assertEqual(config.tts_backend, "genie")
+        self.assertEqual(config.tts_onnx_model_dir, "/models/genie")
+
+    def test_unknown_backend_fails_fast_with_located_message(self):
+        with self.assertRaises(ValueError) as ctx:
+            self._load({**LLM_ENV, "TTS_BACKEND": "espeak"})
+        msg = str(ctx.exception)
+        self.assertIn("espeak", msg)
+        self.assertIn("piper", msg)
+        self.assertIn("genie", msg)
+        self.assertIn("setup_server", msg)  # points at the setup GUI
+
+    def test_voice_and_models_dir_from_env(self):
+        config = self._load({**LLM_ENV, "TTS_VOICE": "male",
+                             "TTS_MODELS_DIR": "/opt/voices"})
+        self.assertEqual(config.tts_voice, "male")
+        self.assertEqual(config.tts_models_dir, "/opt/voices")
 

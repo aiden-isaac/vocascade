@@ -20,8 +20,12 @@ No cloud STT/TTS, no third-party voice framework in the path.
 - A **microphone** (to run the edge client) or just a **browser**.
 - *(Optional)* A **Hermes agent** endpoint (`HERMES_BASE_URL`) — the "heavy
   brain" for real data and external actions. Leave it unset to run local-only.
-- *(Optional)* **Genie TTS** for the cloned voice. Without it, vocascade still
-  runs and replies as text — voice degrades gracefully, it doesn't break.
+- **A voice is included**: the default TTS backend is **Piper** — in-process,
+  CPU-only, zero setup. The stock voice (~60 MB) downloads automatically on
+  first start (set `TTS_VOICE=male` for the male voice). *(Optional)*
+  **Genie TTS** (`TTS_BACKEND=genie`) swaps in a custom cloned voice. If the
+  selected backend can't load, vocascade still runs and replies as text —
+  voice degrades gracefully, it doesn't break.
 
 ## Setup (one-time)
 
@@ -29,9 +33,13 @@ No cloud STT/TTS, no third-party voice framework in the path.
 python3.11 -m venv .venv
 .venv/bin/pip install -r requirements.txt
 
-# Optional: set up the voice-cloning TTS in its own venv
+# Optional: only for the custom-voice (genie) backend — set up voice-cloning
+# TTS in its own venv. The default piper voice needs nothing here.
 bash scripts/setup_genie.sh
 ```
+
+> **Upgrading from a Genie-voice install?** The default TTS backend is now
+> `piper`. Add `TTS_BACKEND=genie` to your `.env` to keep your cloned voice.
 
 ## Configure
 
@@ -60,8 +68,14 @@ silently.
 
 ## Run
 
-One command brings up the full local stack — Genie TTS, then the vocascade server
-(Ctrl-C stops both):
+With the default piper voice, the server alone is the whole stack:
+
+```bash
+.venv/bin/python -m vocascade
+```
+
+With the genie backend, one command brings up Genie TTS, then the vocascade
+server (Ctrl-C stops both):
 
 ```bash
 bash scripts/run_voice_stack.sh

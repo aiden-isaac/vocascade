@@ -10,7 +10,7 @@ from unittest.mock import patch
 
 import httpx
 
-from vocascade.__main__ import probe_llm, probe_hermes
+from vocascade.__main__ import probe_llm, probe_hermes, probe_tts
 
 
 class _Cfg:
@@ -51,6 +51,36 @@ class TestProbeLLM(unittest.TestCase):
 class TestProbeHermes(unittest.TestCase):
     def test_not_configured_is_local_only(self):
         self.assertIn("local-only", probe_hermes(_Cfg()))
+
+
+class TestProbeTTS(unittest.TestCase):
+    def _piper_cfg(self, models_dir):
+        cfg = _Cfg()
+        cfg.tts_backend = "piper"
+        cfg.tts_voice = ""
+        cfg.tts_models_dir = models_dir
+        return cfg
+
+    def test_piper_voice_not_downloaded(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            verdict = probe_tts(self._piper_cfg(tmp))
+        self.assertIn("not downloaded", verdict)
+        self.assertIn("en_US-lessac-medium", verdict)
+
+    def test_piper_voice_cached(self):
+        import tempfile
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "en_US-lessac-medium.onnx").touch()
+            verdict = probe_tts(self._piper_cfg(tmp))
+        self.assertIn("OK", verdict)
+
+    def test_genie_unreachable(self):
+        cfg = _Cfg()
+        cfg.tts_backend = "genie"
+        cfg.tts_url = "http://127.0.0.1:1"  # nothing listens on port 1
+        self.assertIn("UNREACHABLE", probe_tts(cfg))
 
 
 if __name__ == "__main__":

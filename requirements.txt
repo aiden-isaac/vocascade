@@ -12,3 +12,4 @@ silero-vad
 PyYAML
 watchdog
 asyncssh
+piper-tts  # default TTS backend (pin/extras strategy: packaging-deploy)

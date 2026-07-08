@@ -219,7 +219,11 @@ async function saveService(){
 async function loadVoice(){
   const env = await api('GET','/api/env');
   document.getElementById('voice-fields').innerHTML = env.voice.map(f =>
-    f.key==='GENIE_REFERENCE_TEXT'
+    f.key==='TTS_BACKEND'
+      ? `<div class="field"><label>${f.key}</label><select data-key="${f.key}">`+
+        (env.tts_backends||['piper','genie']).map(b=>`<option value="${b}"${b===(f.value||f.default)?' selected':''}>${b}</option>`).join('')+
+        `</select></div>`+(f.blurb?`<p class="note" style="margin:0 0 12px">${esc(f.blurb)}</p>`:'')
+      : f.key==='GENIE_REFERENCE_TEXT'
       ? `<div class="field"><label>${f.key}</label><textarea data-key="${f.key}" style="min-height:60px">${esc(f.value??'')}</textarea></div>`
       : fieldRow(f)).join('');
   const {voices} = await api('GET','/api/voices');

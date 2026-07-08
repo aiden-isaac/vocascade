@@ -17,7 +17,7 @@ vocascade/                 # The single application package (no third-party voic
 ├── session/              # state, state_machine, teardown, summary (session-end memory gist)
 ├── gateway/               # local_llm (fast brain), auth (Ed25519), hermes_client (chat fallback)
 ├── stt/                   # faster-whisper wrapper (WhisperSTT)
-├── tts/                   # GenieTTSClient (voice cloning)
+├── tts/                   # TTSBackend protocol + registry (piper default, genie voice cloning), chunker
 ├── transport/             # WS serializer + transport-auth gate (trust-network | device-identity)
 ├── edge/                  # __main__: edge/satellite client (wake word, VAD, audio I/O, WS client)
 ├── eval/                  # route_harness + fixtures.jsonl (headless routing eval)
@@ -59,7 +59,7 @@ Always use the project `.venv` (the default `python` is miniconda and lacks deps
 cp .env.example .env && cp config.yaml.example config.yaml   # then edit
 
 PYTHONPATH=. .venv/bin/python -m pytest tests/ -q            # all tests
-bash scripts/run_voice_stack.sh                              # Genie TTS + server
+bash scripts/run_voice_stack.sh                              # Genie TTS + server (genie backend only)
 .venv/bin/python -m vocascade                               # server only
 .venv/bin/python -m vocascade.edge                          # edge client (mic + wake word)
 PYTHONPATH=. .venv/bin/python -m vocascade.eval.route_harness "what time is it"
@@ -89,9 +89,15 @@ No `conftest.py`/`pytest.ini`; flat discovery under `tests/`.
   they fall through to Hermes. Toggle with `skills.smalltalk.gate`.
 - **Transport auth (OQ-3)**: `transport_auth_mode` MUST be explicit
   (`trust-network` | `device-identity`); the server refuses to start otherwise.
-- **TTS degradation**: if any of `GENIE_ONNX_MODEL_DIR` / `GENIE_REFERENCE_AUDIO`
-  / `GENIE_REFERENCE_TEXT` is unset, TTS runs text-only. `VOICE_SATELLITE_SKIP_GENIE_INIT=true`
-  skips TTS init.
+- **Pluggable TTS**: `TTS_BACKEND` picks the voice from a plain registry
+  (`vocascade/tts/protocol.py`): `piper` (default — in-process CPU voice,
+  stock voice auto-downloads to `TTS_MODELS_DIR`, `TTS_VOICE=female|male`)
+  or `genie` (custom voice cloning). Unknown names fail startup fast.
+  Pre-`TTS_BACKEND` Genie installs must set `TTS_BACKEND=genie`.
+- **TTS degradation**: if the selected backend can't load its voice (genie:
+  any of `GENIE_ONNX_MODEL_DIR` / `GENIE_REFERENCE_AUDIO` / `GENIE_REFERENCE_TEXT`
+  unset; piper: voice missing and not downloadable), TTS runs text-only.
+  `VOICE_SATELLITE_SKIP_GENIE_INIT=true` skips TTS warmup/init entirely.
 - **Single WS session**: a module-level `_session_lock` allows one active `/ws`
   connection; concurrent connects are rejected with close code 1008.
 - **Ports**: server `8005` (current `.env`), Genie TTS `127.0.0.1:8000`. A stale
