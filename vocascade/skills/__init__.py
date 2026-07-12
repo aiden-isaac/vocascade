@@ -11,9 +11,14 @@ def skill(
     examples: Optional[List[str]] = None,
     keywords: Optional[List[str]] = None,
     confidence: Optional[Callable[[str], float]] = None,
+    available: Optional[Callable[[], bool]] = None,
 ):
     """
     Decorator to declare and register a skill with the global registry.
+
+    `available` is an optional zero-arg gate: return falsy (or raise — logged,
+    never fatal) to mark the skill unavailable for role claims such as
+    `waterfall.agent_skill`. Omitted means always available.
     """
     def decorator(func):
         registry.register(
@@ -22,6 +27,7 @@ def skill(
             examples=examples,
             keywords=keywords,
             confidence=confidence,
+            available=available,
         )
         return func
     return decorator

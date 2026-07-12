@@ -54,15 +54,15 @@
 {"utterance": "i'm bored", "expected_stage": "smalltalk", "expected_skill": "smalltalk", "requires_llm": false}
 {"utterance": "what's up", "expected_stage": "smalltalk", "expected_skill": "smalltalk", "requires_llm": false}
 {"utterance": "are you there", "expected_stage": "smalltalk", "expected_skill": "smalltalk", "requires_llm": false}
-{"utterance": "what are my tasks today", "expected_stage": "hermes", "expected_skill": "hermes", "requires_llm": true}
-{"utterance": "check my todoist tasks", "expected_stage": "hermes", "expected_skill": "hermes", "requires_llm": true}
-{"utterance": "what's on my calendar", "expected_stage": "hermes", "expected_skill": "hermes", "requires_llm": true}
-{"utterance": "do i have any meetings today", "expected_stage": "hermes", "expected_skill": "hermes", "requires_llm": true}
-{"utterance": "send an email to bob", "expected_stage": "hermes", "expected_skill": "hermes", "requires_llm": true}
-{"utterance": "what's the weather like", "expected_stage": "hermes", "expected_skill": "hermes", "requires_llm": true}
-{"utterance": "check the hermes server", "expected_stage": "hermes", "expected_skill": "hermes", "requires_llm": true}
-{"utterance": "what's in my inbox", "expected_stage": "hermes", "expected_skill": "hermes", "requires_llm": true}
-{"utterance": "add milk to my shopping list", "expected_stage": "hermes", "expected_skill": "hermes", "requires_llm": true}
-{"utterance": "what's the latest news", "expected_stage": "hermes", "expected_skill": "hermes", "requires_llm": true}
-{"utterance": "what's the stock price of apple", "expected_stage": "hermes", "expected_skill": "hermes", "requires_llm": true}
-{"utterance": "read my latest messages", "expected_stage": "hermes", "expected_skill": "hermes", "requires_llm": true}
+{"utterance": "what are my tasks today", "expected_stage": "agent", "expected_skill": "hermes", "requires_llm": true}
+{"utterance": "check my todoist tasks", "expected_stage": "agent", "expected_skill": "hermes", "requires_llm": true}
+{"utterance": "what's on my calendar", "expected_stage": "agent", "expected_skill": "hermes", "requires_llm": true}
+{"utterance": "do i have any meetings today", "expected_stage": "agent", "expected_skill": "hermes", "requires_llm": true}
+{"utterance": "send an email to bob", "expected_stage": "agent", "expected_skill": "hermes", "requires_llm": true}
+{"utterance": "what's the weather like", "expected_stage": "agent", "expected_skill": "hermes", "requires_llm": true}
+{"utterance": "check the hermes server", "expected_stage": "agent", "expected_skill": "hermes", "requires_llm": true}
+{"utterance": "what's in my inbox", "expected_stage": "agent", "expected_skill": "hermes", "requires_llm": true}
+{"utterance": "add milk to my shopping list", "expected_stage": "agent", "expected_skill": "hermes", "requires_llm": true}
+{"utterance": "what's the latest news", "expected_stage": "agent", "expected_skill": "hermes", "requires_llm": true}
+{"utterance": "what's the stock price of apple", "expected_stage": "agent", "expected_skill": "hermes", "requires_llm": true}
+{"utterance": "read my latest messages", "expected_stage": "agent", "expected_skill": "hermes", "requires_llm": true}

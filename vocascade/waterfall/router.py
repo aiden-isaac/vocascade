@@ -9,7 +9,7 @@ from vocascade.waterfall.types import WaterfallStage, ConfidenceResult
 from vocascade.waterfall.classifier import IntentClassifier
 from vocascade.waterfall.stages.high import HighStage
 from vocascade.waterfall.stages.medium import MediumStage
-from vocascade.waterfall.stages.hermes import HermesStage
+from vocascade.waterfall.stages.agent import AgentStage
 from vocascade.waterfall.stages.stop import StopStage
 from vocascade.waterfall.stages.converse import ConverseStage
 from vocascade.skills.registry import registry
@@ -17,7 +17,7 @@ from vocascade.skills.context import SkillContext
 
 logger = logging.getLogger("vocascade.waterfall.router")
 
-# STOP/CONVERSE/HIGH/MEDIUM/HERMES all live in stages/ now (US2/US3/US5).
+# STOP/CONVERSE/HIGH/MEDIUM/AGENT all live in stages/ now (US2/US3/US5).
 # SmalltalkStage stays here — it is the local-LLM floor (US1).
 
 # Smalltalk routing gate (FR-033): a one-word local-LLM decision that keeps the
@@ -41,7 +41,7 @@ class SmalltalkStage(WaterfallStage):
     SMALLTALK floor fallback stage (FR-030). Reports a fixed low confidence so it
     wins only when nothing above it scored higher — *and*, when a local LLM is
     available, a content-aware gate (FR-033) makes it abstain for utterances that
-    need the agent, so those fall through to the Hermes stage below it instead of
+    need the agent, so those fall through to the agent stage below it instead of
     being answered (badly) from general knowledge.
     """
 
@@ -61,12 +61,12 @@ class SmalltalkStage(WaterfallStage):
         conf = self._floor(skill_obj, utterance)
 
         # Content-aware gate: claim only genuine conversation; let data / tool /
-        # real-time / action requests drop through to the Hermes fallback.
+        # real-time / action requests drop through to the agent fallback.
         llm = self.llm or getattr(ctx, "local_llm", None)
         if self.gate and llm is not None and conf > 0.0:
             try:
                 if await self._needs_agent(utterance, llm):
-                    logger.info("Smalltalk gate: '%s' needs the agent — abstaining to Hermes.", utterance)
+                    logger.info("Smalltalk gate: '%s' needs the agent — abstaining.", utterance)
                     return ConfidenceResult(stage=self.name, confidence=0.0)
             except Exception as e:
                 # A gate failure must never starve smalltalk — answer locally.
@@ -95,15 +95,14 @@ class SmalltalkStage(WaterfallStage):
         raw = await llm.chat(messages, temperature=0.0, max_tokens=3)
         return "AGENT" in (raw or "").upper()
 
-# HermesStage (the always-async last stage) lives in stages/hermes.py (US3).
+# AgentStage (the always-async last stage) lives in stages/agent.py.
 
 
-# Stages constructed generically (HIGH/MEDIUM need injected deps, handled separately).
+# Stages constructed generically (HIGH/MEDIUM/AGENT need injected deps, handled separately).
 _STUB_STAGE_CLASSES = {
     "stop": StopStage,
     "converse": ConverseStage,
     "smalltalk": SmalltalkStage,
-    "hermes": HermesStage,
 }
 
 
@@ -115,9 +114,9 @@ def _threshold_for(name: str, thresholds: Dict[str, float]) -> float:
         return thresholds.get("medium", 0.65)
     if name == "smalltalk":
         return thresholds.get("low", 0.35)
-    if name == "hermes":
-        # HERMES reports confidence 1.0; a 0.0 threshold guarantees it always
-        # clears as the last-resort fallback.
+    if name == "agent":
+        # The AGENT stage reports confidence 1.0; a 0.0 threshold guarantees it
+        # always clears as the last-resort fallback.
         return 0.0
     if name in ("stop", "converse"):
         # Real system stages (US5): report 1.0 on a deterministic match, 0.0
@@ -127,19 +126,19 @@ def _threshold_for(name: str, thresholds: Dict[str, float]) -> float:
 
 
 def _ordered_stage_names(names: List[str]) -> List[str]:
-    """Honor FR-011: STOP first, HERMES last; keep the rest in configured order."""
+    """Honor FR-011: STOP first, AGENT last; keep the rest in configured order."""
     ordered = list(names)
     changed = False
     if "stop" in ordered and ordered[0] != "stop":
         ordered.remove("stop")
         ordered.insert(0, "stop")
         changed = True
-    if "hermes" in ordered and ordered[-1] != "hermes":
-        ordered.remove("hermes")
-        ordered.append("hermes")
+    if "agent" in ordered and ordered[-1] != "agent":
+        ordered.remove("agent")
+        ordered.append("agent")
         changed = True
     if changed:
-        logger.warning("Reordered waterfall stages to honor STOP-first/HERMES-last (FR-011): %s", ordered)
+        logger.warning("Reordered waterfall stages to honor STOP-first/AGENT-last (FR-011): %s", ordered)
     return ordered
 
 
@@ -184,16 +183,18 @@ class WaterfallRouter:
                 if trace is not None:
                     trace.append({"stage": stage.name, "error": str(e), "won": False})
 
-        # Exhaustion fallback: hermes catches everything — but only when it is
-        # actually configured (D2/D6). Local-only mode returns a no-winner
+        # Exhaustion fallback: the agent stage catches everything — but only
+        # when one was built (D2/D6). Local-only mode returns a no-winner
         # result so the pipeline can speak a can't-help notice, never silence.
-        if any(s.name == "hermes" for s in self.stages):
-            logger.warning("WaterfallRouter: no stage met its threshold. Falling back to hermes.")
+        agent_stage = next((s for s in self.stages if isinstance(s, AgentStage)), None)
+        if agent_stage is not None:
+            logger.warning("WaterfallRouter: no stage met its threshold. Falling back to the agent stage.")
             if trace is not None:
-                trace.append({"stage": "hermes", "confidence": 1.0, "threshold": 0.0,
-                              "won": True, "skill": "hermes", "fallback": True})
-            return ConfidenceResult(stage="hermes", confidence=1.0, skill_name="hermes")
-        logger.warning("WaterfallRouter: no stage met its threshold and no hermes stage (local-only).")
+                trace.append({"stage": agent_stage.name, "confidence": 1.0, "threshold": 0.0,
+                              "won": True, "skill": agent_stage.agent_skill, "fallback": True})
+            return ConfidenceResult(stage=agent_stage.name, confidence=1.0,
+                                    skill_name=agent_stage.agent_skill)
+        logger.warning("WaterfallRouter: no stage met its threshold and no agent stage (local-only).")
         if trace is not None:
             trace.append({"stage": "none", "confidence": 0.0, "threshold": 0.0,
                           "won": False, "skill": None, "exhausted": True})
@@ -203,7 +204,19 @@ class WaterfallRouter:
     def from_config(cls, config) -> "WaterfallRouter":
         """Construct the router and its stages from config (FR-011/FR-014)."""
         thresholds = config.waterfall_thresholds
-        stages_list = _ordered_stage_names(config.waterfall_stages)
+
+        # Legacy alias (harness-as-skill): the personal stage name `hermes`
+        # became the generic `agent` stage.
+        raw_stages = list(config.waterfall_stages)
+        if "hermes" in raw_stages:
+            logger.warning(
+                "waterfall.stages contains deprecated stage name 'hermes' — treating it as "
+                "'agent'. Update config.yaml to `- agent` (+ optional `waterfall.agent_skill: hermes`)."
+            )
+            raw_stages = ["agent" if n == "hermes" else n for n in raw_stages]
+        stages_list = _ordered_stage_names(raw_stages)
+
+        agent_skill = getattr(config, "agent_skill", "hermes") or "hermes"
 
         # Medium-stage deps (OQ-5): a dedicated classifier LLM (optionally a
         # cheaper model than smalltalk's) and a prompt auto-generated once at
@@ -228,12 +241,17 @@ class WaterfallRouter:
 
         stages: List[WaterfallStage] = []
         for name in stages_list:
-            # HERMES_BASE_URL empty ⇒ local-only mode (D2): a configured hermes
-            # stage is dropped with a log line, not an error, so the shipped
-            # example config works without a Hermes agent.
-            if name == "hermes" and not getattr(config, "hermes_base_url", ""):
-                logger.info("Dropping 'hermes' waterfall stage — HERMES_BASE_URL not set (local-only mode)")
-                continue
+            # The agent stage is built only when the claimed skill is usable
+            # (D2): dropped with a log line, not an error, so the shipped
+            # example config works without an agent backend (local-only mode).
+            if name == "agent":
+                if registry.get_skill(agent_skill) is None:
+                    logger.warning("Dropping 'agent' waterfall stage — skill '%s' is not registered", agent_skill)
+                    continue
+                if not registry.is_available(agent_skill):
+                    logger.info("Dropping 'agent' waterfall stage — skill '%s' is unavailable "
+                                "(its available() gate failed; local-only mode)", agent_skill)
+                    continue
             enabled = config.skills_config.get(name, {}).get("enabled", True)
             threshold = _threshold_for(name, thresholds)
 
@@ -251,6 +269,11 @@ class WaterfallRouter:
                 stage = SmalltalkStage(
                     name=name, threshold=threshold, enabled=enabled,
                     llm=classifier_llm, gate=gate,
+                )
+            elif name == "agent":
+                stage = AgentStage(
+                    name=name, threshold=threshold, enabled=enabled,
+                    agent_skill=agent_skill,
                 )
             else:
                 stage_cls = _STUB_STAGE_CLASSES.get(name)

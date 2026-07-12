@@ -163,7 +163,7 @@ Each utterance flows through an ordered **confidence waterfall** — the first
 stage to clear its threshold wins:
 
 ```
-STOP → CONVERSE → HIGH (keywords) → MEDIUM (local-LLM classifier) → SMALLTALK → HERMES
+STOP → CONVERSE → HIGH (keywords) → MEDIUM (local-LLM classifier) → SMALLTALK → AGENT
 ```
 
 - **STOP / CONVERSE** — hard stop/farewell, and multi-turn follow-up capture.
@@ -172,10 +172,12 @@ STOP → CONVERSE → HIGH (keywords) → MEDIUM (local-LLM classifier) → SMAL
   skill's example phrases.
 - **SMALLTALK** — the local LLM answers chit-chat in persona, and *abstains* for
   anything needing real data so it falls through to…
-- **HERMES** — the always-async agent. It dispatches a run, streams the reply
-  into TTS sentence-by-sentence, and delivers late results proactively. With no
-  `HERMES_BASE_URL` configured this stage is dropped (local-only mode) and the
-  assistant says it can't help with requests nothing else handled.
+- **AGENT** — the always-async last resort: whatever skill claims the role via
+  `waterfall.agent_skill` (default: the bundled Hermes reference skill). It
+  dispatches a background run, streams the reply into TTS sentence-by-sentence,
+  and delivers late results proactively. When the claimed skill isn't usable
+  (e.g. no `HERMES_BASE_URL` configured) the stage is dropped (local-only mode)
+  and the assistant says it can't help with requests nothing else handled.
 
 ```mermaid
 graph TD
@@ -183,7 +185,7 @@ graph TD
     Edge <-->|WebSocket /ws| Server[vocascade server]
     Server --> Waterfall[Confidence waterfall + skills]
     Waterfall -->|local| LocalLLM[Local LLM 'fast brain']
-    Waterfall -->|fallback| Hermes[Hermes agent 'heavy brain']
+    Waterfall -->|fallback| Agent[Agent skill 'heavy brain']
     Server <-->|HTTP| GenieTTS[Genie TTS server]
 ```
 
@@ -192,6 +194,31 @@ graph TD
 Drop a file in `user_skills/` with an `@skill` decorator and a `config.yaml`
 entry — no changes to the pipeline, STT, or TTS. See `user_skills/alarm.py` for a
 worked example.
+
+## Bring your own agent
+
+The waterfall's last stage is generic: any skill can be the "heavy brain".
+[`vocascade/skills/base_skills/hermes.py`](vocascade/skills/base_skills/hermes.py)
+is the working reference — copy it to `user_skills/my_agent.py`, swap the
+backend calls, and claim the role in `config.yaml`:
+
+```yaml
+waterfall:
+  stages: [stop, converse, high, medium, smalltalk, agent]
+  agent_skill: my_agent
+```
+
+The skill SDK gives an agent skill everything the bundled one uses:
+
+- **Streaming**: make the handler an async generator — each yielded string is
+  spoken as it arrives.
+- **Async dispatch**: `ctx.task_broker` runs long work in the background
+  (`None` when no backend is configured — degrade gracefully).
+- **Proactive delivery**: `ctx.notify("…")` queues speech for the next idle
+  moment, so late results never talk over the user.
+- **Availability**: `@skill(name="my_agent", available=lambda: ...)` — return
+  falsy and the agent stage isn't built, keeping the local-only fallback
+  behavior instead of a broken agent.
 
 ## More
 

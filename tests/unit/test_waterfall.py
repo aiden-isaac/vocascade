@@ -226,7 +226,7 @@ class _FakeConfig:
         self.waterfall_stages = stages
         self.waterfall_thresholds = {"high": 0.95, "medium": 0.65, "low": 0.35}
         self.skills_config = {}
-        self.hermes_base_url = "http://hermes.test/v1"  # configured unless a test clears it
+        self.agent_skill = "hermes"  # the AGENT fallback role's claimed skill
         self.llm_base_url = ""  # no classifier LLM built (no network)
         self.llm_api_key = None
         self.llm_model = "x"
@@ -239,44 +239,78 @@ class _FakeConfig:
 
 
 class TestFromConfig(_RegistryIsolated, TestCase):
+    def setUp(self):
+        super().setUp()
+        # The AGENT stage is built only when its claimed skill is registered
+        # and available — give every test a usable default claimant.
+        registry.register(name="hermes", handler=_dummy)
+
     def test_builds_stages_in_order(self):
         router = WaterfallRouter.from_config(
-            _FakeConfig(["stop", "high", "medium", "smalltalk", "hermes"])
+            _FakeConfig(["stop", "high", "medium", "smalltalk", "agent"])
         )
         self.assertEqual([s.name for s in router.stages],
-                         ["stop", "high", "medium", "smalltalk", "hermes"])
+                         ["stop", "high", "medium", "smalltalk", "agent"])
 
-    def test_enforces_stop_first_hermes_last(self):
+    def test_enforces_stop_first_agent_last(self):
         router = WaterfallRouter.from_config(
-            _FakeConfig(["high", "hermes", "stop", "smalltalk"])
+            _FakeConfig(["high", "agent", "stop", "smalltalk"])
         )
         names = [s.name for s in router.stages]
         self.assertEqual(names[0], "stop")
-        self.assertEqual(names[-1], "hermes")
+        self.assertEqual(names[-1], "agent")
 
-    def test_hermes_stage_dropped_without_url(self):
-        # D2: HERMES_BASE_URL empty ⇒ local-only mode; a configured hermes
+    def test_agent_stage_dropped_when_skill_unavailable(self):
+        # D3: the claimed skill's available() gate fails ⇒ local-only mode; the
         # stage is dropped with a log line, not an error.
+        registry.register(name="gated", handler=_dummy, available=lambda: False)
         router = WaterfallRouter.from_config(
-            _FakeConfig(["stop", "high", "smalltalk", "hermes"], hermes_base_url="")
+            _FakeConfig(["stop", "high", "smalltalk", "agent"], agent_skill="gated")
         )
         self.assertEqual([s.name for s in router.stages], ["stop", "high", "smalltalk"])
 
+    def test_agent_stage_dropped_when_skill_unregistered(self):
+        router = WaterfallRouter.from_config(
+            _FakeConfig(["stop", "smalltalk", "agent"], agent_skill="nope")
+        )
+        self.assertNotIn("agent", [s.name for s in router.stages])
+
+    def test_third_party_skill_claims_role(self):
+        # Bring-your-own-agent: any registered skill can hold the fallback role.
+        registry.register(name="my_agent", handler=_dummy)
+        router = WaterfallRouter.from_config(
+            _FakeConfig(["stop", "smalltalk", "agent"], agent_skill="my_agent")
+        )
+        agent = router.stages[-1]
+        self.assertEqual(agent.name, "agent")
+        self.assertEqual(agent.agent_skill, "my_agent")
+
+    def test_legacy_hermes_stage_name_aliased(self):
+        # Pre-harness-as-skill configs list `- hermes`; it must keep working as
+        # an agent stage claiming hermes, with a deprecation warning.
+        with self.assertLogs("vocascade.waterfall.router", level="WARNING") as logs:
+            router = WaterfallRouter.from_config(
+                _FakeConfig(["stop", "smalltalk", "hermes"])
+            )
+        self.assertEqual(router.stages[-1].name, "agent")
+        self.assertEqual(router.stages[-1].agent_skill, "hermes")
+        self.assertTrue(any("deprecated" in m for m in logs.output))
+
     def test_thresholds_from_config(self):
         router = WaterfallRouter.from_config(
-            _FakeConfig(["high", "medium", "smalltalk", "hermes"])
+            _FakeConfig(["high", "medium", "smalltalk", "agent"])
         )
         by = {s.name: s.threshold for s in router.stages}
         self.assertEqual(by["high"], 0.95)
         self.assertEqual(by["medium"], 0.65)
         self.assertEqual(by["smalltalk"], 0.35)
-        self.assertEqual(by["hermes"], 0.0)
+        self.assertEqual(by["agent"], 0.0)
 
     def test_system_stage_thresholds(self):
         # STOP/CONVERSE are real system stages (US5): they win on a deterministic
         # 1.0 match against a 0.5 bar, and report 0.0 (no short-circuit) otherwise.
         router = WaterfallRouter.from_config(
-            _FakeConfig(["stop", "converse", "smalltalk", "hermes"])
+            _FakeConfig(["stop", "converse", "smalltalk", "agent"])
         )
         by = {s.name: s.threshold for s in router.stages}
         self.assertEqual(by["stop"], 0.5)
@@ -284,7 +318,7 @@ class TestFromConfig(_RegistryIsolated, TestCase):
 
     def test_disabled_stage_flag_respected(self):
         router = WaterfallRouter.from_config(
-            _FakeConfig(["high", "smalltalk", "hermes"],
+            _FakeConfig(["high", "smalltalk", "agent"],
                         skills_config={"smalltalk": {"enabled": False}})
         )
         by = {s.name: s.enabled for s in router.stages}

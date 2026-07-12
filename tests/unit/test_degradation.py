@@ -101,7 +101,7 @@ class TestClassifierDegrades(IsolatedAsyncioTestCase):
 
     def test_classifier_built_with_short_timeout(self):
         class C(_Cfg):
-            waterfall_stages = ["medium", "smalltalk", "hermes"]
+            waterfall_stages = ["medium", "smalltalk", "agent"]
             waterfall_thresholds = {"high": 0.95, "medium": 0.65, "low": 0.35}
             skills_config = {}
             llm_base_url = "http://localhost:9/v1"   # set → classifier LLM built (no call)
@@ -155,17 +155,17 @@ class TestLocalOnlyExhaustion(IsolatedAsyncioTestCase):
     def tearDown(self):
         registry.clear()
 
-    async def test_no_winner_without_hermes_returns_no_skill(self):
+    async def test_no_winner_without_agent_returns_no_skill(self):
         router = WaterfallRouter([HighStage(name="high", threshold=0.95)], {})
         result = await router.resolve("what's the weather", _ctx())
         self.assertIsNone(result.skill_name)
         self.assertEqual(result.stage, "none")
 
-    async def test_no_winner_with_hermes_still_falls_back(self):
-        from vocascade.waterfall.stages.hermes import HermesStage
+    async def test_no_winner_with_agent_stage_still_falls_back(self):
+        from vocascade.waterfall.stages.agent import AgentStage
         router = WaterfallRouter(
             [HighStage(name="high", threshold=0.95),
-             HermesStage(name="hermes", threshold=0.0, enabled=False)], {})
+             AgentStage(name="agent", threshold=0.0, enabled=False)], {})
         result = await router.resolve("what's the weather", _ctx())
         self.assertEqual(result.skill_name, "hermes")
 
