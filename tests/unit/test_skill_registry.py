@@ -39,6 +39,34 @@ class TestSkillRegistry(unittest.TestCase):
             async def handler2(intent, entities, ctx):
                 return "2"
 
+    def test_available_defaults_to_true(self):
+        @skill(name="no_gate")
+        async def handler(intent, entities, ctx):
+            return "ok"
+
+        self.assertTrue(registry.is_available("no_gate"))
+
+    def test_falsy_gate_is_unavailable(self):
+        @skill(name="gated_off", available=lambda: False)
+        async def handler(intent, entities, ctx):
+            return "ok"
+
+        self.assertFalse(registry.is_available("gated_off"))
+
+    def test_raising_gate_is_unavailable_not_fatal(self):
+        def boom():
+            raise RuntimeError("broken gate")
+
+        @skill(name="gate_raises", available=boom)
+        async def handler(intent, entities, ctx):
+            return "ok"
+
+        with self.assertLogs("vocascade.skills.registry", level="WARNING"):
+            self.assertFalse(registry.is_available("gate_raises"))
+
+    def test_unregistered_skill_is_unavailable(self):
+        self.assertFalse(registry.is_available("never_registered"))
+
     def test_user_skill_import_isolation(self):
         # Create a temporary directory for user skills
         temp_dir = tempfile.mkdtemp()

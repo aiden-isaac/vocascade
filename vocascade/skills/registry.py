@@ -22,6 +22,9 @@ class Skill:
     confidence: Optional[Callable[[str], float]] = None
     config: Dict[str, Any] = field(default_factory=dict)
     source: str = "bundled"  # "bundled" or "user"
+    # Zero-arg availability gate: falsy (or raising) means the skill cannot hold
+    # roles such as waterfall.agent_skill. None = always available.
+    available: Optional[Callable[[], bool]] = None
 
 class SkillRegistry:
     """Registry holding all registered voice skills."""
@@ -37,7 +40,8 @@ class SkillRegistry:
         keywords: Optional[List[str]] = None,
         confidence: Optional[Callable[[str], float]] = None,
         config: Optional[Dict[str, Any]] = None,
-        source: Optional[str] = None
+        source: Optional[str] = None,
+        available: Optional[Callable[[], bool]] = None
     ) -> None:
         """
         Registers a new skill. Raises ValueError if the name is already registered.
@@ -65,7 +69,8 @@ class SkillRegistry:
             keywords=keywords or [],
             confidence=confidence,
             config=config or {},
-            source=source
+            source=source,
+            available=available
         )
         self.skills[name] = skill_obj
         logger.info(f"Registered skill '{name}' (source: {source})")
@@ -86,6 +91,21 @@ class SkillRegistry:
     def get_skill(self, name: str) -> Optional[Skill]:
         """Retrieve a registered skill by name."""
         return self.skills.get(name)
+
+    def is_available(self, name: str) -> bool:
+        """True when the skill is registered and its `available` gate (if any)
+        passes. A raising gate means unavailable — a broken user skill must
+        never crash startup."""
+        skill_obj = self.skills.get(name)
+        if skill_obj is None:
+            return False
+        if skill_obj.available is None:
+            return True
+        try:
+            return bool(skill_obj.available())
+        except Exception as e:
+            logger.warning("Skill '%s' available() gate raised (%s); treating as unavailable", name, e)
+            return False
 
     def get_all_skills(self) -> List[Skill]:
         """Retrieve all registered skills."""

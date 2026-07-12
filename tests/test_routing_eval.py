@@ -5,7 +5,7 @@ Three layers:
   • Deterministic fixtures (no LLM) — STOP/HIGH/smalltalk-floor routing must hit
     its expected stage with ≥95% accuracy (SC-004/SC-009). Runs in CI.
   • Smalltalk gate (fake LLM) — proves the FR-033 fix wiring deterministically:
-    an agent-class utterance makes smalltalk abstain so the Hermes stage wins,
+    an agent-class utterance makes smalltalk abstain so the agent stage wins,
     while genuine chit-chat keeps the smalltalk floor. Runs in CI.
   • Live routing — the `requires_llm` fixtures against the real local LLM; this
     self-skips unless `LLM_BASE_URL` is reachable.
@@ -20,6 +20,7 @@ import importlib
 import pkgutil
 import unittest
 from pathlib import Path
+from unittest import mock
 from urllib.parse import urlparse
 
 from vocascade.eval.route_harness import RouteHarness
@@ -52,7 +53,7 @@ def _register_bundled_skills():
 
 class _DetConfig:
     """No-LLM config → medium skipped, smalltalk gate inert: fully deterministic."""
-    waterfall_stages = ["stop", "converse", "high", "medium", "smalltalk", "hermes"]
+    waterfall_stages = ["stop", "converse", "high", "medium", "smalltalk", "agent"]
     waterfall_thresholds = {"high": 0.95, "medium": 0.65, "low": 0.35}
     skills_config = {
         "datetime": {"enabled": True},
@@ -62,7 +63,7 @@ class _DetConfig:
         "stop": {"enabled": True},
     }
     tts_character_name = "default"
-    hermes_base_url = "http://hermes.test/v1"  # configured → hermes stage kept (D2)
+    agent_skill = "hermes"  # the reference skill claims the AGENT fallback role
     llm_base_url = ""
     llm_api_key = None
     llm_model = "x"
@@ -73,9 +74,18 @@ class _DetConfig:
     medium_band_high = 0.8
 
 
+def _with_hermes_available(case: unittest.TestCase):
+    """The reference skill's available() gate reads HERMES_BASE_URL; pretend a
+    backend is configured so the agent stage is built (D2)."""
+    env = mock.patch.dict(os.environ, {"HERMES_BASE_URL": "http://hermes.test/v1"})
+    env.start()
+    case.addCleanup(env.stop)
+
+
 class TestRoutingEvalDeterministic(unittest.TestCase):
     def setUp(self):
         _register_bundled_skills()
+        _with_hermes_available(self)
         self.harness = RouteHarness(_DetConfig(), discover=False)
 
     def test_deterministic_fixtures_meet_accuracy_bar(self):
@@ -115,18 +125,19 @@ class _FakeGateLLM:
 
 
 class TestSmalltalkGate(unittest.TestCase):
-    """FR-033: the gate must let agent-class utterances fall through to Hermes."""
+    """FR-033: the gate must let agent-class utterances fall through to the agent stage."""
 
     def setUp(self):
         _register_bundled_skills()
+        _with_hermes_available(self)
         self.harness = RouteHarness(_DetConfig(), llm=_FakeGateLLM(), discover=False)
 
-    def test_agent_query_abstains_to_hermes(self):
+    def test_agent_query_abstains_to_agent_stage(self):
         for utt in ["what are my tasks today", "check my todoist tasks",
                     "what's the weather like", "check the hermes server"]:
             decision = asyncio.run(self.harness.route(utt))
-            self.assertEqual(decision.winning_stage, "hermes",
-                             f"'{utt}' should fall through to hermes, got {decision.winning_stage}")
+            self.assertEqual(decision.winning_stage, "agent",
+                             f"'{utt}' should fall through to the agent stage, got {decision.winning_stage}")
 
     def test_chitchat_keeps_the_smalltalk_floor(self):
         for utt in ["how are you", "tell me a joke", "who are you"]:
@@ -167,7 +178,7 @@ class TestRoutingEvalLive(unittest.TestCase):
         _register_bundled_skills()
         self.harness = RouteHarness(load_config(), discover=False)
 
-    def test_agent_fixtures_route_to_hermes(self):
+    def test_agent_fixtures_route_to_agent_stage(self):
         rows = [r for r in _load_fixtures() if r.get("requires_llm")]
         misses = []
         for r in rows:

@@ -1,11 +1,11 @@
 """
-tests/unit/test_hermes_stage.py — HERMES stage streamed + proactive delivery (US3 / T225).
+tests/unit/test_hermes_skill.py — Hermes agent skill streaming + proactive delivery (US3 / T225).
 
-Exercises the broker live-sink layer and the stage's streaming generator with a
-fake run client: message.delta → batched sentences into TTS, terminal-only runs
-(the OQ-1 / snapshot-reconcile shape) still delivering their output, proactive
-fallback when no live turn is attached, and in-flight tasks surviving a session
-end (FR-061).
+Exercises the broker live-sink layer and the reference skill's streaming
+generator with a fake run client: message.delta → batched sentences into TTS,
+terminal-only runs (the OQ-1 / snapshot-reconcile shape) still delivering their
+output, proactive fallback when no live turn is attached, and in-flight tasks
+surviving a session end (FR-061).
 """
 
 import asyncio
@@ -15,7 +15,7 @@ from unittest import IsolatedAsyncioTestCase
 from vocascade.hermes_run_client import RunEvent, RunEventKind, RunHandle, Capabilities
 from vocascade.delivery import DeliveryCoordinator
 from vocascade.task_broker import TaskBroker
-from vocascade.waterfall.stages.hermes import (
+from vocascade.skills.base_skills.hermes import (
     stream_hermes_reply, _drain_segments, _clean_for_speech,
 )
 from vocascade.skills.context import SkillContext, ToolBag

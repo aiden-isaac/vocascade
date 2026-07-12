@@ -97,6 +97,11 @@ class AdapterConfig:
     medium_band_high: float = 0.8            # classifier confidence clamp ceiling
     classifier_timeout_seconds: float = 6.0  # short — a hung LLM must not stall routing (US7)
 
+    # Waterfall AGENT fallback role (harness-as-skill): which registered skill
+    # claims the generic last-resort `agent` stage. Defaulted for direct
+    # AdapterConfig construction (tests).
+    agent_skill: str = "hermes"
+
     # Latency masking fillers (US4; from config.yaml `latency`).
     filler_mode: str = "hybrid"              # pool | llm | hybrid
     filler_interval_seconds: float = 3.0     # gap before the first follow-up filler
@@ -181,6 +186,9 @@ def load_config() -> AdapterConfig:
     waterfall = yaml_config["waterfall"]
     if not isinstance(waterfall, dict) or "stages" not in waterfall or "thresholds" not in waterfall:
         raise ValueError(f"Configuration file '{config_path}': 'waterfall' section must contain 'stages' and 'thresholds'")
+
+    # Which skill claims the AGENT fallback role (harness-as-skill).
+    agent_skill = str(waterfall.get("agent_skill") or "hermes").strip() or "hermes"
 
     # Medium-stage classifier config (OQ-5) — all optional with defaults.
     classifier_model = waterfall.get("classifier_model") or None
@@ -315,6 +323,7 @@ def load_config() -> AdapterConfig:
         medium_band_low=medium_band_low,
         medium_band_high=medium_band_high,
         classifier_timeout_seconds=classifier_timeout_seconds,
+        agent_skill=agent_skill,
 
         filler_mode=filler_mode,
         filler_interval_seconds=filler_interval_seconds,

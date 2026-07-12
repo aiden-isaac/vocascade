@@ -12,7 +12,7 @@ vocascade/                 # The single application package (no third-party voic
 ├── __main__.py            # Bootstrap + uvicorn launcher (health report)
 ├── config.py              # Frozen AdapterConfig; loads config.yaml (structure) + .env (secrets)
 ├── pipeline/              # Custom asyncio VoicePipeline + stages (vad, stt, router, tts, latency)
-├── waterfall/             # Confidence router + stages (stop, converse, high, medium, hermes) + classifier
+├── waterfall/             # Confidence router + stages (stop, converse, high, medium, agent) + classifier
 ├── skills/                # @skill registry, SkillContext, base_skills/ (datetime, timers, smalltalk, hermes, stop)
 ├── session/              # state, state_machine, teardown, summary (session-end memory gist)
 ├── gateway/               # local_llm (fast brain), auth (Ed25519), hermes_client (chat fallback)
@@ -44,17 +44,20 @@ Each utterance flows through an ordered **confidence waterfall** — the first
 stage to clear its threshold wins:
 
 ```
-STOP → CONVERSE → HIGH (keyword skills) → MEDIUM (local-LLM classifier) → SMALLTALK → HERMES
+STOP → CONVERSE → HIGH (keyword skills) → MEDIUM (local-LLM classifier) → SMALLTALK → AGENT
 ```
 
 **Two-brain dispatch.** The local LLM ("fast brain") answers smalltalk and runs
 the medium classifier directly. Anything needing real data or external actions
-falls through to **HERMES** ("heavy brain"), which **dispatches asynchronously**
-(`task_broker.py`) and returns immediately with a short spoken handoff; the real
-result arrives seconds-to-minutes later and is spoken **proactively** via
-`delivery.py` (an idle-gated FIFO — nothing speaks while the user/bot is talking).
-Tasks outlive voice sessions. `hermes_run_client.py` is the only thing that
-speaks HTTP to Hermes (async runs API, reconcile-on-reconnect).
+falls through to the **AGENT** stage ("heavy brain") — a generic fallback that
+routes to whatever skill `waterfall.agent_skill` names (default: the bundled
+`base_skills/hermes.py` reference skill). An agent skill **dispatches
+asynchronously** (`ctx.task_broker` → `task_broker.py`) and returns immediately
+with a short spoken handoff; the real result arrives seconds-to-minutes later
+and is spoken **proactively** via `delivery.py` (an idle-gated FIFO — nothing
+speaks while the user/bot is talking). Tasks outlive voice sessions.
+`hermes_run_client.py` is the only thing that speaks HTTP to Hermes (async runs
+API, reconcile-on-reconnect).
 
 ## Commands
 
@@ -85,17 +88,25 @@ No `conftest.py`/`pytest.ini`; flat discovery under `tests/`. CI runs
   Missing required values fail fast with a located message.
 - **Two brains, one required**: the LLM (`LLM_BASE_URL` + `LLM_MODEL`, BYOK —
   any OpenAI-compatible endpoint, no defaults, fail-fast) handles smalltalk +
-  the medium classifier + the smalltalk gate; Hermes (`HERMES_BASE_URL`) is the
-  always-async fallback and is OPTIONAL — empty means local-only mode (hermes
-  stage dropped, waterfall exhaustion speaks a can't-help notice). The local
-  LLM is never given tool schemas.
+  the medium classifier + the smalltalk gate; the agent skill (default Hermes,
+  `HERMES_BASE_URL`) is the always-async fallback and is OPTIONAL — an
+  unavailable agent skill means local-only mode (agent stage dropped, waterfall
+  exhaustion speaks a can't-help notice). The local LLM is never given tool
+  schemas.
+- **Bring your own agent (harness-as-skill)**: the waterfall's last stage is
+  the generic `agent`; `waterfall.agent_skill` in `config.yaml` names the skill
+  that claims it (default `hermes`). Any skill qualifies: streaming
+  async-generator handler + `ctx.task_broker` / `ctx.notify` + an optional
+  zero-arg `available` gate on `@skill` (falsy/raising ⇒ stage not built).
+  `base_skills/hermes.py` is the copyable reference; legacy `- hermes` in the
+  stage list is aliased to `agent` with a deprecation warning.
 - **LLM failure UX**: `LocalLLM` classifies failures (`LLMAuthError` /
   `LLMUnreachableError`); the first classified failure per session is spoken
   specifically ("I can't reach my language model…"), later ones use the generic
   fallback. Startup health report probes both endpoints (3s timeout, never
   blocks startup).
 - **Smalltalk gate (FR-033)**: smalltalk abstains for data/action utterances so
-  they fall through to Hermes. Toggle with `skills.smalltalk.gate`.
+  they fall through to the agent stage. Toggle with `skills.smalltalk.gate`.
 - **Transport auth (OQ-3)**: `transport_auth_mode` MUST be explicit
   (`trust-network` | `device-identity`); the server refuses to start otherwise.
 - **Pluggable TTS**: `TTS_BACKEND` picks the voice from a plain registry

@@ -29,9 +29,13 @@ class SkillContext:
     config: Dict[str, Any] = field(default_factory=dict)
     emit_filler: Optional[Callable[[str], Awaitable[None]]] = None
     local_llm: Any = None
-    # App-level Hermes TaskBroker (US3). Present only for the hermes skill;
-    # additive per the skill-SDK contract. None when no backend is wired.
+    # App-level async-run broker (US3): stable SDK surface for ANY skill, not
+    # just the bundled agent skill. `await ctx.task_broker.dispatch(prompt,
+    # session_id=...)` runs work in the background; late completions are
+    # delivered proactively. None when no backend is configured — handle it.
     task_broker: Any = None
-    # Speak something proactively later, idle-gated (US6 — e.g. a timer firing).
-    # `await ctx.notify("Your timer is up.")`. None when no delivery is wired.
+    # Proactive delivery (US6): stable SDK surface for any skill. Schedules
+    # speech for the next idle moment (idle-gated FIFO), including from
+    # background tasks — `await ctx.notify("Your timer is up.")`. None when no
+    # delivery is wired.
     notify: Optional[Callable[[str], Awaitable[None]]] = None

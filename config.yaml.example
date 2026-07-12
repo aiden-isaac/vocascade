@@ -16,7 +16,12 @@ waterfall:
     - high
     - medium
     - smalltalk
-    - hermes
+    - agent
+  # Which skill claims the AGENT fallback role (bring your own agent): the
+  # bundled `hermes` reference skill by default, or any skill you drop into
+  # user_skills/. The stage is built only when that skill is registered and
+  # available (hermes: HERMES_BASE_URL set in .env).
+  agent_skill: hermes
   thresholds:
     high: 0.95
     medium: 0.65
@@ -39,7 +44,7 @@ skills:
     filler: "thinking"
     # Content-aware gate (FR-033): when true, smalltalk abstains for utterances
     # that need the agent (personal data, real-time info, actions) so they fall
-    # through to Hermes instead of being answered from general knowledge.
+    # through to the agent stage instead of being answered from general knowledge.
     gate: true
   hermes:
     enabled: true
