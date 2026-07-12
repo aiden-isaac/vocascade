@@ -74,4 +74,8 @@
 - [x] 6.2 Stranger-path dry run on this machine: fresh clone → quickstart
       commands only → wake word ("hey jarvis") → spoken answer; fix any
       undocumented step it surfaces
-- [ ] 6.3 Get OQ1 (license) confirmed by the owner before merge
+- [x] 6.3 Get OQ1 (license) confirmed by the owner before merge
+      > RESOLVED 2026-07-12: owner confirmed **AGPL-3.0-only** (network clause
+      > matters for a hosted server; sole-author dual-licensing keeps a future
+      > commercial app open). LICENSE + `pyproject.toml` already carry it —
+      > placeholder is now the decision.
