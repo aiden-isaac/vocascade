@@ -27,10 +27,15 @@ user_skills/               # User-provided skills, auto-discovered at startup
 static/                    # index.html (browser client), fillers/, wakeword/
 scripts/                   # run_voice_stack.sh, generate_fillers.py, etc.
 tests/                     # unit/, integration/, contract/
+pyproject.toml             # packaging: deps, [edge] extra, console scripts
+Dockerfile, docker-compose.yaml   # flagship host install (no audio hardware in the container)
+deploy/                    # vocascade-edge.service (systemd user unit)
+docs/protocol.md           # edge<->host WS contract (public, versioned)
 ```
 
-Entry points: `python -m vocascade` (server), `python -m vocascade.edge` (edge
-client), `python -m vocascade.setup_server` (localhost config GUI, :8099).
+Entry points: `vocascade` (server), `vocascade-edge` (edge client) — console
+scripts from `pyproject.toml`; the `python -m vocascade[...edge]` forms still
+work, plus `python -m vocascade.setup_server` (localhost config GUI, :8099).
 
 ## Architecture (the moving parts)
 
@@ -54,20 +59,24 @@ speaks HTTP to Hermes (async runs API, reconcile-on-reconnect).
 ## Commands
 
 Always use the project `.venv` (the default `python` is miniconda and lacks deps).
+The package is installed editable (`pip install -e ".[edge]"` from `pyproject.toml`)
+— no `PYTHONPATH` tricks, and `requirements.txt` is gone.
 
 ```bash
 cp .env.example .env && cp config.yaml.example config.yaml   # then edit
+.venv/bin/pip install -e ".[edge]"                           # once per venv
 
-PYTHONPATH=. .venv/bin/python -m pytest tests/ -q            # all tests
+.venv/bin/python -m pytest tests/ -q                         # all tests
 bash scripts/run_voice_stack.sh                              # Genie TTS + server (genie backend only)
-.venv/bin/python -m vocascade                               # server only
-.venv/bin/python -m vocascade.edge                          # edge client (mic + wake word)
-PYTHONPATH=. .venv/bin/python -m vocascade.eval.route_harness "what time is it"
-.venv/bin/python scripts/generate_fillers.py                # re-render acknowledge audio
+.venv/bin/vocascade                                          # server only (= python -m vocascade)
+.venv/bin/vocascade-edge                                     # edge client (= python -m vocascade.edge)
+.venv/bin/python -m vocascade.eval.route_harness "what time is it"
+.venv/bin/python scripts/generate_fillers.py                 # re-render acknowledge audio
+docker compose up -d                                         # host server in a container
 ```
 
-`PYTHONPATH=.` is required — tests/app import `vocascade` as a top-level package.
-No `conftest.py`/`pytest.ini`; flat discovery under `tests/`.
+No `conftest.py`/`pytest.ini`; flat discovery under `tests/`. CI runs
+`tests/unit` only, against the base deps (no `[edge]` extra).
 
 ## Gotchas
 
@@ -99,9 +108,24 @@ No `conftest.py`/`pytest.ini`; flat discovery under `tests/`.
   unset; piper: voice missing and not downloadable), TTS runs text-only.
   `VOICE_SATELLITE_SKIP_GENIE_INIT=true` skips TTS warmup/init entirely.
 - **Single WS session**: a module-level `_session_lock` allows one active `/ws`
-  connection; concurrent connects are rejected with close code 1008.
+  connection; concurrent connects are rejected with close code 1008. Documented
+  beta limitation; multi-session is the v1.1 headline.
+- **Wire protocol is public**: `docs/protocol.md` is the versioned contract for
+  all clients. The first frame on every accepted connection is
+  `{"type": "hello", "protocol_version": N}` (`vocascade.transport.PROTOCOL_VERSION`
+  — single source for server + edge). Any breaking wire change bumps it and
+  updates the doc. Downstream audio is JSON base64, NOT binary — the edge
+  client decodes `{"type": "audio"}` frames.
+- **Wake word default**: `WAKE_WORD_MODEL=hey_jarvis` resolves against the
+  models bundled inside the openwakeword package (no download); an existing
+  file path is used as-is (custom models). Unresolvable → edge exits with an
+  actionable error, it does not silently disable wake word. openwakeword is
+  pinned `<0.6` (0.6 renamed the Model kwarg and unbundled the models).
 - **Ports**: server `8005` (current `.env`), Genie TTS `127.0.0.1:8000`. A stale
   process on `:8005` makes the stack appear to "shut down on startup" (`ss -ltnp | grep :8005`).
+- **Docker builds**: `.dockerignore` is an allowlist — new runtime assets
+  outside `vocascade/`/`static/`/`user_skills/` must be added there or the
+  image won't contain them.
 
 ## Spec workflow
 

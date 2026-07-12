@@ -1,0 +1,33 @@
+# vocascade edge client — systemd USER unit (deployment spec).
+#
+# A user unit (not a system unit) because the edge client needs the user's
+# audio session (PipeWire/PulseAudio sockets live in the login session).
+#
+# Install:
+#   mkdir -p ~/.config/systemd/user
+#   cp deploy/vocascade-edge.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now vocascade-edge
+#   loginctl enable-linger "$USER"     # keep it running when logged out
+#
+# Logs:  journalctl --user -u vocascade-edge -f
+#
+# Assumes `pip install "vocascade[edge]"` into ~/.local (pip install --user)
+# or an activated venv — adjust ExecStart to the venv's bin path if you used
+# one, e.g. %h/vocascade/.venv/bin/vocascade-edge.
+
+[Unit]
+Description=vocascade edge client (mic, wake word, audio out)
+After=default.target
+
+[Service]
+# WS_URL, WAKE_WORD_MODEL etc. come from an env file next to your install.
+# Point this at the .env you configured (or delete the line and rely on
+# defaults: ws://localhost:8005/ws, hey_jarvis).
+EnvironmentFile=-%h/.vocascade/edge.env
+ExecStart=%h/.local/bin/vocascade-edge
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

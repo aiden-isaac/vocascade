@@ -1,0 +1,57 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "vocascade"
+version = "0.9.0"
+description = "Self-hosted voice assistant: wake word, local STT/TTS, and a confidence waterfall pointed at your own LLM"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "AGPL-3.0-only"
+license-files = ["LICENSE"]
+authors = [{ name = "Aiden Isaac" }]
+keywords = ["voice-assistant", "speech", "wake-word", "self-hosted", "llm"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Multimedia :: Sound/Audio :: Speech",
+]
+# Floors = versions the maintainer's venv actually runs; piper-tts pinned exactly
+# (voice-model format compatibility across piper releases is not guaranteed).
+dependencies = [
+    "fastapi>=0.136",
+    "uvicorn>=0.47",
+    "websockets>=16.0",
+    "python-dotenv>=1.2",
+    "faster-whisper>=1.2",
+    "numpy>=2.4",
+    "aiohttp>=3.13",
+    "httpx>=0.28",
+    "cryptography>=48.0",
+    "silero-vad>=6.2",
+    "PyYAML>=6.0",
+    "piper-tts==1.4.2",
+]
+
+[project.optional-dependencies]
+# Edge/satellite client capture deps (lazy-imported by vocascade.edge).
+# openwakeword <0.6: 0.6 renamed Model(wakeword_model_paths=...) and stopped
+# bundling the pre-trained models the default wake word resolves against.
+edge = [
+    "pyaudio>=0.2.14",
+    "openwakeword>=0.4,<0.6",
+    "onnxruntime>=1.24",
+]
+
+[project.scripts]
+vocascade = "vocascade.__main__:main"
+vocascade-edge = "vocascade.edge.__main__:main"
+
+[project.urls]
+Homepage = "https://github.com/aiden-isaac/vocascade"
+
+[tool.setuptools.packages.find]
+include = ["vocascade*"]

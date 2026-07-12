@@ -21,6 +21,7 @@ from fastapi.testclient import TestClient
 
 from vocascade.config import load_config
 from vocascade.skills.registry import registry
+from vocascade.transport import PROTOCOL_VERSION
 
 
 def _config_with_smalltalk_enabled():
@@ -83,6 +84,11 @@ class TestServerWebSocket(unittest.TestCase):
 
             with TestClient(app) as client:
                 with client.websocket_connect("/ws") as ws:
+                    # hello is the first frame on every connection (ws-protocol).
+                    hello = json.loads(ws.receive_text())
+                    self.assertEqual(hello["type"], "hello")
+                    self.assertEqual(hello["protocol_version"], PROTOCOL_VERSION)
+
                     # One complete utterance (client-side VAD already endpointed it).
                     ws.send_bytes(b"\x00" * 3200)
 
@@ -124,6 +130,7 @@ class TestServerWebSocket(unittest.TestCase):
 
             with TestClient(app) as client:
                 with client.websocket_connect("/ws") as ws:
+                    self.assertEqual(json.loads(ws.receive_text())["type"], "hello")
                     ws.send_text(json.dumps({"type": "wakeword"}))
                     # active_listening status, then the pre-rendered ack audio.
                     msgs = [json.loads(ws.receive_text()) for _ in range(2)]
@@ -142,8 +149,10 @@ class TestServerWebSocket(unittest.TestCase):
 
             with TestClient(app) as client:
                 with client.websocket_connect("/ws"):
-                    # A second concurrent session is rejected with an error frame.
+                    # A second concurrent session still gets hello first, then
+                    # the rejection error frame (ws-protocol spec).
                     with client.websocket_connect("/ws") as ws2:
+                        self.assertEqual(json.loads(ws2.receive_text())["type"], "hello")
                         err = json.loads(ws2.receive_text())
                         self.assertEqual(err["type"], "error")
 

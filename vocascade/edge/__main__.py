@@ -21,6 +21,7 @@ connection/handshake logic stays importable and unit-testable without a mic.
 """
 
 import asyncio
+import base64
 import json
 import logging
 import os
@@ -34,21 +35,89 @@ from vocascade.gateway.auth import (
     sign_challenge,
     public_key_to_b64,
 )
+from vocascade.transport import PROTOCOL_VERSION
 
 logger = logging.getLogger("vocascade.edge")
 
 TRUST_NETWORK = "trust-network"
 DEVICE_IDENTITY = "device-identity"
 
+# Default wake word: a permissively licensed (Apache-2.0) model bundled inside
+# the openwakeword package — a fresh install wakes with zero manual model steps.
+DEFAULT_WAKE_WORD = "hey_jarvis"
+
 
 class AuthError(Exception):
     """The transport handshake was rejected or violated the protocol."""
+
+
+class WakeWordError(Exception):
+    """WAKE_WORD_MODEL could not be resolved to a usable .onnx model."""
+
+
+def resolve_wake_word_model(value: str) -> str:
+    """
+    Resolve WAKE_WORD_MODEL to an .onnx file path (wake-word-default spec).
+
+    An existing file path is used as-is (no provisioning — custom/offline models
+    keep working unchanged). Anything else is treated as the name of a model
+    bundled with the installed openwakeword package (e.g. ``hey_jarvis``).
+    Raises ``WakeWordError`` with an actionable message when neither applies.
+    """
+    if os.path.exists(value):
+        return value
+
+    from pathlib import Path
+    import openwakeword
+    models_dir = Path(openwakeword.__file__).parent / "resources" / "models"
+    matches = sorted(models_dir.glob(f"{value}*.onnx")) if value else []
+    if matches:
+        logger.info("Provisioned bundled wake word model %r -> %s", value, matches[0])
+        return str(matches[0])
+
+    bundled = ", ".join(sorted(p.stem for p in models_dir.glob("*_v*.onnx")))
+    raise WakeWordError(
+        f"WAKE_WORD_MODEL={value!r} is neither an existing .onnx file nor a "
+        f"bundled openwakeword model (bundled: {bundled}). Set WAKE_WORD_MODEL "
+        f"in .env to a model file path or one of the bundled names."
+    )
 
 
 class ClientState(Enum):
     LISTENING = "LISTENING"
     CONNECTING = "CONNECTING"
     STREAMING = "STREAMING"
+
+
+async def consume_hello(ws, timeout: float = 5.0) -> int:
+    """
+    Read the server's hello — the first frame on every accepted connection
+    (ws-protocol spec: ``{"type": "hello", "protocol_version": N}``) — and
+    check it against this client's PROTOCOL_VERSION.
+
+    Returns the server's version on an exact match. Raises ``AuthError`` on a
+    version mismatch, a server that predates protocol versioning, a rejection
+    ``error`` frame (e.g. session already active), or a timeout.
+    """
+    try:
+        raw = await asyncio.wait_for(ws.recv(), timeout=timeout)
+    except asyncio.TimeoutError as e:
+        raise AuthError("timed out waiting for the server hello") from e
+    msg = json.loads(raw)
+    mtype = msg.get("type")
+    if mtype == "error":
+        raise AuthError(msg.get("message", "connection rejected by server"))
+    if mtype != "hello":
+        raise AuthError(
+            f"expected hello, got {mtype!r} — the server predates protocol "
+            f"versioning; update vocascade (host) and vocascade-edge together")
+    server_version = msg.get("protocol_version")
+    if server_version != PROTOCOL_VERSION:
+        raise AuthError(
+            f"protocol version mismatch: server speaks v{server_version}, this "
+            f"client speaks v{PROTOCOL_VERSION} — update vocascade (host) and "
+            f"vocascade-edge together")
+    return server_version
 
 
 async def perform_client_handshake(ws, mode: str, identity_key_path: str,
@@ -142,13 +211,12 @@ class SatelliteClient:
         except Exception as e:
             logger.error(f"Failed to initialize audio streams: {e}")
 
-        model_path = self.config.get("wake_word_model")
-        if model_path and os.path.exists(model_path):
-            self.oww_model = Model(wakeword_model_paths=[model_path])
-            logger.info(f"Loaded wake word model: {model_path}")
-        else:
-            self.oww_model = None
-            logger.warning(f"Wake word model not found at {model_path}. Wake word detection disabled.")
+        # Fail fast with an actionable message — an edge client without a wake
+        # word is broken, not degraded (wake-word-default spec).
+        model_path = resolve_wake_word_model(
+            self.config.get("wake_word_model") or DEFAULT_WAKE_WORD)
+        self.oww_model = Model(wakeword_model_paths=[model_path])
+        logger.info(f"Loaded wake word model: {model_path}")
 
     def stop_audio(self):
         if self.stream_in:
@@ -176,9 +244,10 @@ class SatelliteClient:
             return
 
         try:
+            await consume_hello(self.ws)
             await perform_client_handshake(self.ws, self.auth_mode, self.identity_key_path)
         except AuthError as e:
-            self._set_status(f"Transport authentication failed: {e}. Not streaming.")
+            self._set_status(f"Handshake failed: {e}. Not streaming.")
             await self._close_ws()
             self.state = ClientState.LISTENING
             return
@@ -220,9 +289,22 @@ class SatelliteClient:
         try:
             while self.state == ClientState.STREAMING and self.ws:
                 message = await self.ws.recv()
+                pcm = None
                 if isinstance(message, bytes):
-                    if self.stream_out:
-                        await asyncio.to_thread(self.stream_out.write, message)
+                    pcm = message
+                else:
+                    # Downstream audio is a JSON frame with base64 PCM
+                    # (docs/protocol.md) — the same shape the browser client
+                    # decodes. Other JSON types (status, transcript, …) are
+                    # informational; the edge ignores them.
+                    try:
+                        msg = json.loads(message)
+                    except ValueError:
+                        continue
+                    if msg.get("type") == "audio":
+                        pcm = base64.b64decode(msg["data"])
+                if pcm and self.stream_out:
+                    await asyncio.to_thread(self.stream_out.write, pcm)
                 self.last_audio_time = time.time()
         except websockets.exceptions.ConnectionClosed:
             await self.handle_server_close()
@@ -297,7 +379,7 @@ def _load_edge_config() -> dict:
 
     return {
         "ws_url": os.getenv("WS_URL", "ws://localhost:8000/ws"),
-        "wake_word_model": os.getenv("WAKE_WORD_MODEL", "static/wakeword/eden_wakeword.onnx"),
+        "wake_word_model": os.getenv("WAKE_WORD_MODEL") or DEFAULT_WAKE_WORD,
         "wake_word_threshold": float(os.getenv("WAKE_WORD_THRESHOLD", "0.5")),
         "audio_in_rate": int(os.getenv("AUDIO_IN_SAMPLE_RATE", "16000")),
         "audio_out_rate": int(os.getenv("AUDIO_OUT_SAMPLE_RATE", "32000")),
@@ -309,7 +391,12 @@ def _load_edge_config() -> dict:
 def main():
     logging.basicConfig(level=logging.INFO)
     client = SatelliteClient(_load_edge_config())
-    asyncio.run(client.run_loop())
+    try:
+        asyncio.run(client.run_loop())
+    except WakeWordError as e:
+        # Actionable message, not a stack trace (wake-word-default spec).
+        logger.error("%s", e)
+        raise SystemExit(1) from None
 
 
 if __name__ == "__main__":

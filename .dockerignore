@@ -1,0 +1,11 @@
+# Allowlist: the image needs only the package, its static assets, and the
+# packaging metadata. Everything else (venvs, models, personal data, git) is
+# excluded by default so working-tree junk can never bloat the build context.
+*
+!vocascade
+!static
+!user_skills
+!pyproject.toml
+!README.md
+!LICENSE
+**/__pycache__

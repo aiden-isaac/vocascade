@@ -69,22 +69,43 @@
 
 - [x] 8.1 Add repeat/timing mode to `eval/route_harness` printing p50/p95 for
       the classification path (MEDIUM classifier + smalltalk gate)
-- [ ] 8.2 Run against a cloud fast-brain and a local endpoint; record numbers
+- [x] 8.2 Run against a cloud fast-brain and a local endpoint; record numbers
       in this change's notes — no routing changes
-      > DEFERRED: no LLM endpoint available at implementation time (frizzt
-      > endpoint no longer resolves; no local model, no cloud key). Tooling
-      > verified working (`--time` mode ran; per-stage p50/p95 printed).
-      > Run when an endpoint exists:
-      > `PYTHONPATH=. .venv/bin/python -m vocascade.eval.route_harness --time 20 "how are you today"`
+      > MEASURED 2026-07-12 — local endpoint (Ollama `llama3.1:8b`,
+      > `http://localhost:11434/v1`), 20 runs each, model pre-warmed:
+      >
+      > | utterance | winner | total p50/p95 | medium p50/p95 | smalltalk p50/p95 |
+      > |---|---|---|---|---|
+      > | "how are you today" | smalltalk | 967.8 / 1281.9 ms | 675.2 / 890.0 ms | 293.9 / 391.6 ms |
+      > | "what's the weather in tokyo right now" | hermes | 945.7 / 1082.4 ms | 687.9 / 767.8 ms | 259.8 / 314.2 ms |
+      >
+      > Classifier (MEDIUM) dominates at ~0.7 s; gate abstain adds ~0.3 s.
+      > No routing changes. Cloud fast-brain half NOT run — still no cloud
+      > key; local-only accepted by owner (BYOK means numbers vary per
+      > endpoint anyway). Command: `.venv/bin/python -m vocascade.eval.route_harness --time 20 "<utterance>"`
 
 ## 9. Verify
 
 - [x] 9.1 Full test suite green (`PYTHONPATH=. .venv/bin/python -m pytest tests/ -q`)
-- [ ] 9.2 End-to-end: fresh `.env` from examples + GUI-entered LLM config →
+- [x] 9.2 End-to-end: fresh `.env` from examples + GUI-entered LLM config →
       server starts, health report verdicts correct, smalltalk answers;
       then break the key and confirm the spoken notice
-      > PARTIAL: fail-fast on missing LLM_BASE_URL verified live (located
-      > message names the key + setup GUI). Probe verdict mapping, spoken
-      > notices, and local-only mode covered by unit tests. The live voice
-      > loop (smalltalk answer + broken-key notice) needs a real LLM —
-      > blocked on the same missing endpoint as 8.2.
+      > PARTIAL (2026-07-05): fail-fast on missing LLM_BASE_URL verified live
+      > (located message names the key + setup GUI). Probe verdict mapping,
+      > spoken notices, and local-only mode covered by unit tests.
+      > VERIFIED LIVE 2026-07-12 against Ollama `llama3.1:8b` — the previously
+      > blocked voice loop, driven over the real `/ws` (synthesized PCM
+      > utterance, per `docs/protocol.md`):
+      > - happy path: hello v1 → wakeword → binary audio → transcript
+      >   "How are you today?" → smalltalk claims → spoken answer (848 KB audio)
+      > - probe verdicts: warm endpoint → OK (probe chat 200); dead endpoint →
+      >   UNREACHABLE warning, server still starts
+      > - broken LLM (dead port, not key — Ollama ignores API keys; the auth
+      >   branch stays unit-test-covered): first classified failure spoke the
+      >   specific notice "I can't reach my language model right now. Please
+      >   check that your endpoint is running." (200 KB audio)
+      > Caveat: a cold Ollama (model unloaded after ~5 min idle) exceeds the
+      > 3 s probe timeout → misleading UNREACHABLE verdict at startup even
+      > though requests succeed moments later. Timeout maps to the same
+      > verdict as connection-refused. Possible follow-up: distinguish
+      > timeout ("endpoint slow/loading") from unreachable in `probe_llm`.

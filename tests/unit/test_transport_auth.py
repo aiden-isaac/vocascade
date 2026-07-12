@@ -15,8 +15,9 @@ import unittest
 from pathlib import Path
 from unittest import IsolatedAsyncioTestCase, TestCase
 
+from vocascade.transport import PROTOCOL_VERSION
 from vocascade.transport.server import TransportAuth, AuthResult, TRUST_NETWORK, DEVICE_IDENTITY
-from vocascade.edge.__main__ import perform_client_handshake, AuthError
+from vocascade.edge.__main__ import perform_client_handshake, consume_hello, AuthError
 from vocascade.gateway.auth import (
     load_or_generate_keypair, public_key_to_b64, verify_signature, sign_challenge,
     load_authorized_keys,
@@ -217,6 +218,56 @@ class TestAuthPrimitives(TestCase):
         self.assertEqual(load_authorized_keys(None), set())
         self.assertEqual(load_authorized_keys(Path(tmp.name) / "missing"), set())
         tmp.cleanup()
+
+
+# --- hello / protocol version (ws-protocol spec) ------------------------------
+
+class _RecvOnlyWS:
+    """Client-side double: recv() pops scripted server frames."""
+
+    def __init__(self, *frames):
+        self._frames = list(frames)
+
+    async def recv(self):
+        return json.dumps(self._frames.pop(0))
+
+
+class TestConsumeHello(IsolatedAsyncioTestCase):
+    async def test_matching_version_proceeds(self):
+        ws = _RecvOnlyWS({"type": "hello", "protocol_version": PROTOCOL_VERSION})
+        self.assertEqual(await consume_hello(ws), PROTOCOL_VERSION)
+
+    async def test_version_mismatch_fails_loudly(self):
+        ws = _RecvOnlyWS({"type": "hello", "protocol_version": PROTOCOL_VERSION + 1})
+        with self.assertRaises(AuthError) as ctx:
+            await consume_hello(ws)
+        msg = str(ctx.exception)
+        # Names both versions and the remedy (ws-protocol spec).
+        self.assertIn(f"v{PROTOCOL_VERSION + 1}", msg)
+        self.assertIn(f"v{PROTOCOL_VERSION}", msg)
+        self.assertIn("update", msg)
+
+    async def test_pre_versioning_server_rejected(self):
+        # An old server's first frame is auth_challenge, not hello.
+        ws = _RecvOnlyWS({"type": "auth_challenge", "nonce": "n1"})
+        with self.assertRaises(AuthError) as ctx:
+            await consume_hello(ws)
+        self.assertIn("update", str(ctx.exception))
+
+    async def test_rejection_error_frame_surfaced(self):
+        ws = _RecvOnlyWS({"type": "error", "message": "Session already active. Please wait."})
+        with self.assertRaises(AuthError) as ctx:
+            await consume_hello(ws)
+        self.assertIn("Session already active", str(ctx.exception))
+
+    async def test_hello_timeout(self):
+        class _Hang:
+            async def recv(self):
+                await asyncio.sleep(10)
+
+        with self.assertRaises(AuthError) as ctx:
+            await consume_hello(_Hang(), timeout=0.01)
+        self.assertIn("timed out", str(ctx.exception))
 
 
 # --- edge client handshake rejection path ------------------------------------

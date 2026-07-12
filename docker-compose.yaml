@@ -1,0 +1,23 @@
+# vocascade host server (deployment spec). Quickstart:
+#   cp .env.example .env && cp config.yaml.example config.yaml   # then edit
+#   docker compose up -d
+#
+# The edge client runs natively on the machine with the mic/speaker — see
+# README "Split topology". To point the container at an LLM served on this
+# same machine (Ollama, llama.cpp, …), use host.docker.internal in .env:
+#   LLM_BASE_URL=http://host.docker.internal:11434/v1
+services:
+  vocascade:
+    build: .
+    ports:
+      - "8005:8005"
+    env_file: .env
+    volumes:
+      - ./config.yaml:/app/config.yaml:ro
+      - vocascade-data:/data   # piper voices + whisper cache + task journal
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+
+volumes:
+  vocascade-data:
